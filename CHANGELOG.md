@@ -461,9 +461,157 @@
 | TODO-01b | ~~确认 Q11（科室作息）~~ | `开发计划.md` 8.1 | 阶段 2 开工 | **已完成**（06:00–11:30 / 13:00–17:30） |
 | TODO-02 | ~~`设计.md` 修订至 V1.2~~ | 文档 | 阶段 0 结束前 | **已完成**（见 [未发布] → 文档） |
 | TODO-03 | ~~建立 `README.md` 与仓库骨架~~ | 阶段 0 T0.1 | 阶段 0 | **已完成** |
-| TODO-03b | 后端骨架切换为 FastAPI，接入 Alembic | 阶段 0 T0.2/T0.4 | **依赖可安装**（见 `docs/setup.md`） | 阻塞 |
-| TODO-04 | 验证 WeasyPrint 中文渲染（字体检查已通过，渲染待验） | R3 / D03 | **依赖可安装** | 阻塞 |
-| TODO-05 | ~~补齐 8.2.2/8.2.3/8.2.4 三套模板参数表并落成种子~~ | P-22 / T3.2 / R1 | 阶段 3 开工 | **已完成**（三份种子，37 个测试） |
-| TODO-06 | 阶段 1：认证、用户与患者 | 开发计划 阶段 1 | **依赖可安装** | 阻塞 |
+| TODO-03b | ~~后端骨架切换为 FastAPI，接入 Alembic~~ | 阶段 0 T0.2/T0.4 | — | **已完成**（`app/main.py` 为 FastAPI；迁移 001–005 由 `app/db/migrations` 接管） |
+| TODO-04 | ~~验证 WeasyPrint 中文渲染~~ —— **方案已改为 reportlab + `STSong-Light`** | R3 / D03 | — | **已完成**（D03 修订，不再需要 WeasyPrint，「依赖可安装」的阻塞随之消失） |
+| TODO-05 | ~~补齐 8.2.2/8.2.3/8.2.4 三套模板参数表并落成种子~~ | P-22 / T3.2 / R1 | 阶段 3 开工 | **已完成**（四份种子，含模板 4 套 / 29 条明细） |
+| TODO-06 | ~~阶段 1：认证、用户与患者~~ | 开发计划 阶段 1 | — | **已完成**（阶段 1–5 全部交付，见 [未发布]） |
 | TODO-07 | 清除 `backend/data/_test_tmp/` 下 65 个空目录 | 环境清理 | 需要逐个目录的权限修复 | 低优先级（已 gitignore，无业务数据） |
 | TODO-08 | `option_set` 增加 `variant` 列，让全局层支持同一 `code` 的多套选项 | 3.6.4 / seed/options.py | 无（需一次迁移） | 待办（当前只导入主变体，17 套变体被计数跳过） |
+| TODO-09 | **PDF 生成模板仍需细致修改**（版式/内容细节待定） | D03 / Q10 / 阶段 5 打印 | 无（**明确推迟**） | **已登记，推迟到安卓 App 功能全部实现之后** |
+| TODO-10 | 安卓 App：骨架、排期页、记录页、同步引擎 | T1.6 / T2.7 / T2.8 / T3.8 / T4.4 / T4.5 | Flutter/Android 环境（已就绪，见 TODO-11） | 待办（当前唯一未开工的大块） |
+| TODO-11 | ~~Flutter / Android 构建环境验证~~ | T0.5 / `docs/setup.md` | 无 | **已完成**（Flutter SDK + Android SDK + AVD 均已就绪；详见 [未发布] → 文档） |
+
+### 待办补充说明
+
+#### TODO-09：PDF 生成模板（推迟项，不是缺陷登记）
+
+**状态**：已记录，**明确推迟**到安卓 App 功能全部实现之后再动手。
+
+**提出人/时间**：科室侧 2026-10-03 复验时提出，结论是"先记录，不要现在改"。
+
+**当前 PDF 实现的实际能力**（用于界定问题边界，均已实测）：
+
+- 方案为 `reportlab` + 内置 CID 字体 `STSong-Light`（D03），**不用** WeasyPrint；
+- 三套打印接口：按日期汇总、单患者总览、单患者按日汇总；
+- `tests/test_summary_and_admin.py::TestPdfRendering` 覆盖：中文字体注册、非空白页、
+  多页页码、页脚含打印时间、无签名栏（Q10）、空数据也能出表；
+  `tests/test_pdf_smoke.py` 会用 `pypdf` 反向提取文本校验中文命中；
+- `scripts/verify_stage5.py` 用真实 uvicorn + pypdf 反向校验 PDF 文本层。
+
+**待讨论的具体问题（下次开工前需先明确，当前尚未细化）**：
+
+- 版式与字段取舍：哪些列必印、哪些可省、列宽与换行策略；
+- 抬头/页脚/落款的具体文案与位置；
+- 表格跨页、行高、以及长参数摘要的截断或折行规则；
+- 是否需要按科室习惯调整打印纸张、边距与字号。
+
+> 之所以推迟：PDF 属于"看效果才能定"的产出，在没有安卓端录入的真实数据形态之前，
+> 改版式很可能白改一轮。等 App 能真实产生记录后再照着真实数据调整更省事。
+> 因此**现在不改** PDF 相关代码，只登记待办。
+
+#### TODO-11：Flutter / Android 环境验证结论（2026-10-03，已实测通过）
+
+`flutter doctor -v` **在本机手动运行全部通过**（Chrome / Visual Studio 两项与安卓无关，忽略）：
+
+| 组件 | 位置 / 取值 | 实测结果 |
+|---|---|---|
+| Flutter SDK | `D:\Program Files\flutter` | **3.47.6 stable**，framework `5fc346839b`，engine `692136cb65` |
+| Dart | 随 SDK 自带 | **3.13.5** |
+| Android SDK | `D:\Android\sdk` | platform **android-37.0**、build-tools **36.0.0**、NDK、cmdline-tools `latest` |
+| adb / platform-tools | `D:\Android\sdk\platform-tools\adb.exe` | 存在 |
+| 模拟器 | `D:\Android\sdk\emulator` | emulator 37.2.12.0；AVD **`rehab_pixel8`** |
+| JDK（Gradle 用） | Android Studio 自带 `jbr`：OpenJDK **25.0.3** | **licenses 全部已接受**（doctor 明确报告） |
+| 设备 | Windows desktop + Edge(web) | doctor 报 2 available |
+
+**镜像配置（已固化，doctor 回显确认生效）**：
+
+```
+PUB_HOSTED_URL             = https://pub.flutter-io.cn        （doctor: Pub download mirror）
+FLUTTER_STORAGE_BASE_URL   = https://storage.flutter-io.cn    （doctor: Flutter download mirror）
+```
+
+另外**把 Flutter SDK 自身的 git `origin` 改成了清华镜像**
+`https://mirrors.tuna.tsinghua.edu.cn/git/flutter-sdk.git`（原为 `github.com/flutter/flutter.git`）。
+原因：`flutter` 启动时会 `git fetch` 自身仓库，`github.com` 在本机不可达时会让**所有** `flutter`
+命令静默卡死（实测 `flutter --version` 无任何输出地挂住）。清华镜像已实测含当前提交
+`5fc346839b5`，且同步了 2000+ refs，可安全替代。
+> 原 `.git/config` 已备份为 `.git/config.github-backup` 与 `.git/config.before-mirror`，需要时可还原。
+
+**同时写入的用户级环境变量**（作为兜底，避免换终端丢失）：
+
+```
+ANDROID_HOME       = D:\Android\sdk
+ANDROID_SDK_ROOT   = D:\Android\sdk
+JAVA_HOME          = C:\Program Files\Java\jdk-17
+Path              += D:\Android\sdk\platform-tools
+```
+> `JAVA_HOME` 指向 `C:\Program Files\Java\jdk-17`（**注意 `D:\Program Files\Java` 是空目录**，
+> 不要被它误导）；Gradle 实际会用 Android Studio 自带的 JDK 25，doctor 已确认可用。
+> PATH 变更需**重开终端**才生效。
+
+**★ 本机关键坑：`flutter` 必须在非受限环境运行**
+
+DSH 沙箱（`workspace-write`）下，`flutter` 无法写入用户目录（analytics / 日志 / 缓存），
+表现为**完全静默地卡死**——没有 stdout、没有 stderr、进程也不退出。这不是网络问题，
+也不是项目问题：同一台机器、同一条命令，非受限模式下 **15 秒**跑完（各检查项耗时
+271ms / 754ms / 520ms / 469ms / 1.2s）。因此后续 Flutter 相关操作（`pub get`、`build apk`、
+`flutter run`）都需要在非受限环境下执行，**不要**把它误判成网络慢而盲目延长等待时间。
+
+> 仓库里 `app/` 尚未创建，`.gitignore` 已预留 `app/.dart_tool/`、`app/build/`、
+> `app/pubspec.lock` 等条目。
+
+#### TODO-11 补充：Gradle 构建加速与 JDK 修正（2026-10-03，已实测出 APK）
+
+首次跑 Android 构建时卡在 `Running Gradle task 'assembleDebug'...` 很久，排查后确认是
+**两个独立问题**，都已修好：
+
+**(1) Gradle 仓库全部指向国外源**
+
+Flutter 的 `android/settings.gradle.kts` 把插件仓库声明在 **`pluginManagement`** 里
+（`google()` / `mavenCentral()` / `gradlePluginPortal()`），AGP 与 Kotlin 插件都从那里解析。
+原有的 `~/.gradle/init.gradle` **只对 `allprojects` 生效，管不到 `pluginManagement` 和
+`buildscript`**，所以镜像形同虚设。
+
+已把它重写为覆盖三层：`beforeSettings` 注入 `pluginManagement`、`settingsEvaluated` 注入
+`dependencyResolutionManagement`、`allprojects` 注入项目级与 `buildscript` 仓库；
+镜像用**阿里云**（`maven.aliyun.com/repository/{public,google,gradle-plugin,central}`）
++ **华为云**兜底，插在原有仓库**前面**，官方源保留作兜底。
+> 原文件已备份为 `~/.gradle/init.gradle.huawei-backup`。
+
+**★ 踩到的坑**：Flutter 用 `RepositoriesMode.PREFER_SETTINGS`，该模式**禁止**向项目级仓库
+添加任何 maven 仓库，第一版脚本无条件注入，导致构建直接失败：
+`Build was configured to prefer settings repositories over project repositories but repository
+'maven' was added by settings file`。最终版**先读 `repositoriesMode`，只有 `PREFER_PROJECT`
+时才碰项目级仓库**。
+
+**(2) Gradle wrapper 的发行版 hash 目录对不上**
+
+`gradle-wrapper.properties` 里的 `distributionUrl` 指向 `services.gradle.org`（国内不可达），
+wrapper 按下行 URL 的哈希建目录，于是**已有的 234 MB 缓存（另一个 hash 目录）永远命中不到**，
+每次都新建一个空目录 + 0 字节 `.part`，并卡在
+`Timeout of 120000 reached waiting for exclusive access to file: ...gradle-9.3.1-all.zip`。
+
+修法：把 `distributionUrl` 改为**腾讯云镜像**
+`https://mirrors.cloud.tencent.com/gradle/gradle-9.3.1-all.zip`
+（阿里云 `mirrors.aliyun.com/gradle/`、华为云 `mirrors.huaweicloud.com/gradle/` 同样可用），
+并清掉遗留的 `.lck`。**新 Flutter 工程默认生成 `services.gradle.org`，每个新工程都要改这一行。**
+
+**(3) `JAVA_HOME` 指向的是空壳目录**
+
+`C:\Program Files\Java\jdk-17` **不是有效 JDK**（整个目录只有一个空的 `lib`，没有 `bin`），
+导致 `gradlew` 直接报 `JAVA_HOME is set to an invalid directory`。
+`flutter doctor` 之所以能通过，是因为它自己找到了 Android Studio 自带的 JBR。
+已把用户级 `JAVA_HOME` 改为 **`D:\Program Files\Android\Android Studio\jbr`**（OpenJDK 25.0.3）。
+
+**实测结果**：
+
+| 步骤 | 结果 |
+|---|---|
+| `flutter create --platforms=android` + `pub get` | 通过（依赖走 `pub.flutter-io.cn`） |
+| `gradle assembleDebug`（阿里云仓库镜像） | **BUILD SUCCESSFUL**，8 分 37 秒，产出 `app-debug.apk` |
+| `gradlew help`（腾讯云发行版镜像） | **BUILD SUCCESSFUL**，1 分 4 秒 |
+| **`flutter build apk --debug`（最终验证）** | **成功，38 秒**，产出 `app-debug.apk` **165,457,302 字节** |
+
+对比修复前的同一条命令：**120 秒超时后失败**（`Timeout of 120000 reached waiting for
+exclusive access to file` → `Gradle threw an error while downloading artifacts from the network`）。
+
+> 结论：**安卓构建链路已全程打通并实际产出 APK**。除了上述镜像配置，也要记住
+> "flutter / gradle 必须在非受限环境运行"这一条（受限沙箱下会静默卡死）。
+
+**新工程必做的一件事**：`flutter create` 生成的
+`android/gradle/wrapper/gradle-wrapper.properties` 默认指向 `services.gradle.org`，
+**每个新 Flutter 工程都要把 `distributionUrl` 改成国内镜像**，否则 wrapper 会因
+hash 目录对不上而反复尝试下载并超时。`~/.gradle/init.gradle` 是全局的，一次改好即可。
+
+> 原 `~/.gradle/init.gradle` 在重写前**没能成功备份**（现已按原内容补为
+> `~/.gradle/init.gradle.huawei-backup`，需要回滚时覆盖回去即可）。
