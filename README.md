@@ -43,7 +43,7 @@
 | 文档 | `设计.md` 修订至 V1.2/V1.3（半日制排期、无审批流请假、Q11 作息、PDF 方案修订） | **已完成**（跨文档校验 156 项 0 失败） |
 | 种子数据 | 字典 4/29/89 + 患者反应 27 条 + 全局选项集 47 套/208 项 + 模板 4 套，全部幂等导入 | **已完成** |
 | 中文 PDF | **reportlab + 内置 CID 字体 `STSong-Light`**，三套模板经 pypdf 反向文本校验 | **已完成**（D03 修订，Q10 版式） |
-| 测试 | **538 个测试全部通过、0 skip**；端到端 183 项 + **浏览器 UI 验收 55 项** | **已完成** |
+| 测试 | **543 个测试全部通过、0 skip**；端到端 183 项 + **浏览器 UI 验收 66 项** | **已完成** |
 | 接口 | **87 个**（认证、用户、患者、排期、休息、请假、字典读写、选项集、记录、同步、汇总、打印、模板、审计、后台） | **已完成** |
 | 管理后台 Web | **React 19 + Vite 8 + Ant Design 6 + TS**，13 个模块全部实现，构建通过（`admin/`） | **已完成**（T5.4 前端） |
 | 安卓 App | Flutter 骨架、排期页、记录页、同步引擎（T1.6/T2.7/T2.8/T3.8/T4.4/T4.5） | 未开始 |
@@ -152,7 +152,7 @@ npm run build          # 生产构建 → dist/
 **Vite 构建需要非受限环境**（Windows 下它会调用 `net use`，受限环境中报 `spawn EPERM`）；
 `tsc` 类型检查不受影响。
 
-**在真实浏览器里验收后台**（55 项检查，含登录、逐页导航与一次真实表单提交）：
+**在真实浏览器里验收后台**（66 项检查，含登录、逐页导航与一次真实表单提交）：
 
 ```powershell
 # 需要三样同时就绪：后端(8000)、Vite dev(5173)、Edge 带调试端口
@@ -173,11 +173,11 @@ Playwright）。这一步不是可选项 —— 类型检查与构建**测不出
 ├─ docs/          setup.md（环境）、后续补 api.md / data-model.md / sync-protocol.md
 ├─ backend/
 │  ├─ app/        core（配置/作息/健康）· db（存储/迁移）· cli.py · main.py
-│  │  └─ db/migrations/   001 表结构、002 触发器（时间戳与留痕策略的唯一来源）
-│  ├─ seed/       字典种子（幂等，按 code upsert；待阶段 3 补全）
-│  ├─ scripts/    运维与验证脚本
-│  └─ tests/      88 个测试（标准库 unittest）
+│  │  └─ db/migrations/   001–005（表结构、触发器、可见归属视图、同步、模板 code）
+│  ├─ seed/       四份种子（字典 4/29/89、反应 27、选项集 47/208、模板 4/29；幂等 upsert）
+│  ├─ scripts/    6 个验收脚本（http + 阶段 1–5）· check_docs_consistency.py · verify_admin_ui.py（CDP）
+│  └─ tests/      543 个测试（标准库 unittest）
 ├─ app/           Flutter 客户端（待建）
-├─ admin/         管理后台 React + Ant Design（待建）
+├─ admin/         管理后台 React 19 + Vite 8 + Ant Design 6（13 个模块已实现）
 └─ deploy/        Docker Compose + Nginx（待建）
 ```

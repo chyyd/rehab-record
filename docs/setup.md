@@ -1,6 +1,7 @@
 # 环境搭建与运行（setup）
 
-**当前状态**：M0 骨架已交付并全部验证（127 个测试通过，0 skip）。
+**当前状态**：阶段 0–5 后端已交付并全部验证（**543 个测试通过、0 skip**；端到端 183 项、
+跨文档一致性 156 项、浏览器 UI 验收 66 项）。
 
 ---
 
@@ -20,14 +21,14 @@ DSH 自带的 `dsh-primary-runtime` Python 3.12 **不要用** —— 那个环�
 `uvicorn 0.35.0`、`pydantic 2.11.3`、`PyJWT 2.10.1`、`Jinja2 3.1.6`、`reportlab 4.4.6`、
 `pypdf 6.6.0`、`pytest 8.4.1`、`httpx 0.28.1`、`ruff 0.15.20`。
 
-**尚未安装（按需启用，均有兜底方案）**：
+**可选依赖（当前本机已装；缺失时有兜底，不装也能跑）**：
 
-| 包 | 用途 | 兜底 |
+| 包 | 用途 | 未装时的兜底 |
 |---|---|---|
-| `argon2-cffi` | 密码哈希 | 标准库 `hashlib.scrypt` / `pbkdf2_hmac` |
-| `APScheduler` | 请假到期恢复、每日备份 | 标准库 `threading.Timer` 或系统计划任务 |
+| `argon2-cffi` 25.1.0 | 密码哈希 | 标准库 `hashlib.scrypt` / `pbkdf2_hmac` |
+| `APScheduler` 3.11.3 | 请假到期恢复、每日备份 | 标准库 `threading.Timer` 或系统计划任务 |
 
-需要时安装（当前 pip 源为清华镜像，可用）：
+需要重装或换机器时：
 
 ```powershell
 & $py -m pip install argon2-cffi APScheduler
@@ -60,9 +61,14 @@ $py = "C:\Users\youda\AppData\Local\Programs\Python\Python313\python.exe"
 
 ```powershell
 cd backend
-& $py -m unittest discover -s tests -t . -v      # 127 个测试
-& $py scripts\verify_http.py                     # HTTP 端到端
-& $py scripts\check_docs_consistency.py          # 跨文档一致性（103 项）
+& $py -m unittest discover -s tests -t . -v      # 543 个测试
+& $py scripts\verify_http.py                     # 阶段 0 HTTP 端到端（14 项）
+& $py scripts\verify_stage1.py                   # 阶段 1 认证与患者（23 项）
+& $py scripts\verify_stage2.py                   # 阶段 2 排期与请假（29 项）
+& $py scripts\verify_stage3.py                   # 阶段 3 字典与治疗记录（34 项）
+& $py scripts\verify_stage4.py                   # 阶段 4 离线与同步（29 项）
+& $py scripts\verify_stage5.py                   # 阶段 5 汇总打印、后台与模板种子（54 项）
+& $py scripts\check_docs_consistency.py          # 跨文档一致性（156 项）
 ```
 
 ---
@@ -113,8 +119,9 @@ cd backend
 
 ## 5. 后续（阶段 1+）
 
-系统 Python 3.13 已具备 FastAPI / SQLAlchemy / Alembic / PyJWT / reportlab，
-阶段 0 剩余部分（FastAPI 骨架、Alembic 接管迁移）与阶段 1–5 可以直接开工。
+系统 Python 3.13 已具备 FastAPI / SQLAlchemy / Alembic / PyJWT / reportlab / pypdf，
+阶段 0–5 后端与管理后台 Web 均已交付并验证完毕。**剩余未开工的只有安卓 App**
+（Flutter 环境尚未安装），见 `README.md` 进度表与 `开发计划.md` 末尾的下一步。
 
 **不建议**为本项目另建 venv：当前系统 Python 已装好全部所需包，另建 venv 需要重新下载安装，
 反而引入不必要的失败点。如果后续要隔离，再迁到 venv 也不影响仓库内容。
