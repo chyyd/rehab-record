@@ -1,0 +1,2135 @@
+{
+  "option_sets": [
+    {
+      "code": "accuracy",
+      "name": "正确率",
+      "scope": "global",
+      "variant": 0,
+      "is_primary": true,
+      "input_types": [
+        "select"
+      ],
+      "items": [
+        {
+          "value": "<25%",
+          "label": "<25%",
+          "sort": 0
+        },
+        {
+          "value": "25–50%",
+          "label": "25–50%",
+          "sort": 10
+        },
+        {
+          "value": "50–75%",
+          "label": "50–75%",
+          "sort": 20
+        },
+        {
+          "value": ">75%",
+          "label": ">75%",
+          "sort": 30
+        }
+      ]
+    },
+    {
+      "code": "articulation_organ",
+      "name": "发音器官",
+      "scope": "global",
+      "variant": 0,
+      "is_primary": true,
+      "input_types": [
+        "multi_select"
+      ],
+      "items": [
+        {
+          "value": "唇",
+          "label": "唇",
+          "sort": 0
+        },
+        {
+          "value": "舌",
+          "label": "舌",
+          "sort": 10
+        },
+        {
+          "value": "下颌",
+          "label": "下颌",
+          "sort": 20
+        },
+        {
+          "value": "软腭",
+          "label": "软腭",
+          "sort": 30
+        },
+        {
+          "value": "面颊",
+          "label": "面颊",
+          "sort": 40
+        }
+      ]
+    },
+    {
+      "code": "assist_mode",
+      "name": "辅助方式",
+      "scope": "global",
+      "variant": 0,
+      "is_primary": true,
+      "input_types": [
+        "multi_select",
+        "select"
+      ],
+      "items": [
+        {
+          "value": "手势",
+          "label": "手势",
+          "sort": 0
+        },
+        {
+          "value": "图片",
+          "label": "图片",
+          "sort": 10
+        },
+        {
+          "value": "文字",
+          "label": "文字",
+          "sort": 20
+        },
+        {
+          "value": "语音提示",
+          "label": "语音提示",
+          "sort": 30
+        },
+        {
+          "value": "交流辅具",
+          "label": "交流辅具",
+          "sort": 40
+        }
+      ]
+    },
+    {
+      "code": "assist_mode",
+      "name": "辅助方式",
+      "scope": "global",
+      "variant": 1,
+      "is_primary": false,
+      "input_types": [
+        "multi_select",
+        "select"
+      ],
+      "items": [
+        {
+          "value": "玩具",
+          "label": "玩具",
+          "sort": 0
+        },
+        {
+          "value": "图片",
+          "label": "图片",
+          "sort": 10
+        },
+        {
+          "value": "绘本",
+          "label": "绘本",
+          "sort": 20
+        },
+        {
+          "value": "游戏",
+          "label": "游戏",
+          "sort": 30
+        },
+        {
+          "value": "音乐",
+          "label": "音乐",
+          "sort": 40
+        }
+      ]
+    },
+    {
+      "code": "assist_mode",
+      "name": "辅助方式",
+      "scope": "global",
+      "variant": 2,
+      "is_primary": false,
+      "input_types": [
+        "multi_select",
+        "select"
+      ],
+      "items": [
+        {
+          "value": "完全辅助",
+          "label": "完全辅助",
+          "sort": 0
+        },
+        {
+          "value": "部分辅助",
+          "label": "部分辅助",
+          "sort": 10
+        },
+        {
+          "value": "监护",
+          "label": "监护",
+          "sort": 20
+        },
+        {
+          "value": "独立",
+          "label": "独立",
+          "sort": 30
+        }
+      ]
+    },
+    {
+      "code": "assistance_level",
+      "name": "辅助程度",
+      "scope": "global",
+      "variant": 0,
+      "is_primary": true,
+      "input_types": [
+        "select"
+      ],
+      "items": [
+        {
+          "value": "完全辅助",
+          "label": "完全辅助",
+          "sort": 0
+        },
+        {
+          "value": "最大辅助",
+          "label": "最大辅助",
+          "sort": 10
+        },
+        {
+          "value": "中等辅助",
+          "label": "中等辅助",
+          "sort": 20
+        },
+        {
+          "value": "最小辅助",
+          "label": "最小辅助",
+          "sort": 30
+        },
+        {
+          "value": "监护",
+          "label": "监护",
+          "sort": 40
+        },
+        {
+          "value": "独立",
+          "label": "独立",
+          "sort": 50
+        }
+      ]
+    },
+    {
+      "code": "assistance_level",
+      "name": "辅助程度",
+      "scope": "global",
+      "variant": 1,
+      "is_primary": false,
+      "input_types": [
+        "select"
+      ],
+      "items": [
+        {
+          "value": "完全辅助",
+          "label": "完全辅助",
+          "sort": 0
+        },
+        {
+          "value": "部分辅助",
+          "label": "部分辅助",
+          "sort": 10
+        },
+        {
+          "value": "监护",
+          "label": "监护",
+          "sort": 20
+        },
+        {
+          "value": "独立",
+          "label": "独立",
+          "sort": 30
+        }
+      ]
+    },
+    {
+      "code": "assistive_device",
+      "name": "辅助器具",
+      "scope": "global",
+      "variant": 0,
+      "is_primary": true,
+      "input_types": [
+        "multi_select"
+      ],
+      "items": [
+        {
+          "value": "沐浴椅",
+          "label": "沐浴椅",
+          "sort": 0
+        },
+        {
+          "value": "防滑垫",
+          "label": "防滑垫",
+          "sort": 10
+        },
+        {
+          "value": "扶手",
+          "label": "扶手",
+          "sort": 20
+        },
+        {
+          "value": "长柄刷",
+          "label": "长柄刷",
+          "sort": 30
+        }
+      ]
+    },
+    {
+      "code": "body_part",
+      "name": "部位",
+      "scope": "global",
+      "variant": 0,
+      "is_primary": true,
+      "input_types": [
+        "multi_select"
+      ],
+      "items": [
+        {
+          "value": "肩",
+          "label": "肩",
+          "sort": 0
+        },
+        {
+          "value": "肘",
+          "label": "肘",
+          "sort": 10
+        },
+        {
+          "value": "腕",
+          "label": "腕",
+          "sort": 20
+        },
+        {
+          "value": "手",
+          "label": "手",
+          "sort": 30
+        },
+        {
+          "value": "髋",
+          "label": "髋",
+          "sort": 40
+        },
+        {
+          "value": "膝",
+          "label": "膝",
+          "sort": 50
+        },
+        {
+          "value": "踝",
+          "label": "踝",
+          "sort": 60
+        },
+        {
+          "value": "足",
+          "label": "足",
+          "sort": 70
+        }
+      ]
+    },
+    {
+      "code": "body_part",
+      "name": "部位",
+      "scope": "global",
+      "variant": 1,
+      "is_primary": false,
+      "input_types": [
+        "multi_select"
+      ],
+      "items": [
+        {
+          "value": "唇",
+          "label": "唇",
+          "sort": 0
+        },
+        {
+          "value": "舌",
+          "label": "舌",
+          "sort": 10
+        },
+        {
+          "value": "颊",
+          "label": "颊",
+          "sort": 20
+        },
+        {
+          "value": "软腭",
+          "label": "软腭",
+          "sort": 30
+        },
+        {
+          "value": "咽后壁",
+          "label": "咽后壁",
+          "sort": 40
+        }
+      ]
+    },
+    {
+      "code": "body_part",
+      "name": "部位",
+      "scope": "global",
+      "variant": 2,
+      "is_primary": false,
+      "input_types": [
+        "multi_select"
+      ],
+      "items": [
+        {
+          "value": "舌骨上肌群",
+          "label": "舌骨上肌群",
+          "sort": 0
+        },
+        {
+          "value": "舌骨下肌群",
+          "label": "舌骨下肌群",
+          "sort": 10
+        },
+        {
+          "value": "咽部",
+          "label": "咽部",
+          "sort": 20
+        }
+      ]
+    },
+    {
+      "code": "bolus_size",
+      "name": "一口量",
+      "scope": "global",
+      "variant": 0,
+      "is_primary": true,
+      "input_types": [
+        "select"
+      ],
+      "items": [
+        {
+          "value": "1ml",
+          "label": "1ml",
+          "sort": 0
+        },
+        {
+          "value": "3ml",
+          "label": "3ml",
+          "sort": 10
+        },
+        {
+          "value": "5ml",
+          "label": "5ml",
+          "sort": 20
+        },
+        {
+          "value": "10ml",
+          "label": "10ml",
+          "sort": 30
+        },
+        {
+          "value": "20ml",
+          "label": "20ml",
+          "sort": 40
+        }
+      ]
+    },
+    {
+      "code": "clothing_type",
+      "name": "衣物类型",
+      "scope": "global",
+      "variant": 0,
+      "is_primary": true,
+      "input_types": [
+        "multi_select"
+      ],
+      "items": [
+        {
+          "value": "上衣",
+          "label": "上衣",
+          "sort": 0
+        },
+        {
+          "value": "裤子",
+          "label": "裤子",
+          "sort": 10
+        },
+        {
+          "value": "鞋子",
+          "label": "鞋子",
+          "sort": 20
+        },
+        {
+          "value": "袜子",
+          "label": "袜子",
+          "sort": 30
+        },
+        {
+          "value": "辅具",
+          "label": "辅具",
+          "sort": 40
+        }
+      ]
+    },
+    {
+      "code": "communication_mode",
+      "name": "交流方式",
+      "scope": "global",
+      "variant": 0,
+      "is_primary": true,
+      "input_types": [
+        "multi_select"
+      ],
+      "items": [
+        {
+          "value": "手势",
+          "label": "手势",
+          "sort": 0
+        },
+        {
+          "value": "图片交换",
+          "label": "图片交换",
+          "sort": 10
+        },
+        {
+          "value": "交流板",
+          "label": "交流板",
+          "sort": 20
+        },
+        {
+          "value": "语音生成设备",
+          "label": "语音生成设备",
+          "sort": 30
+        }
+      ]
+    },
+    {
+      "code": "completion",
+      "name": "完成度",
+      "scope": "global",
+      "variant": 0,
+      "is_primary": true,
+      "input_types": [
+        "select"
+      ],
+      "items": [
+        {
+          "value": "0–25%",
+          "label": "0–25%",
+          "sort": 0
+        },
+        {
+          "value": "25–50%",
+          "label": "25–50%",
+          "sort": 10
+        },
+        {
+          "value": "50–75%",
+          "label": "50–75%",
+          "sort": 20
+        },
+        {
+          "value": "75–100%",
+          "label": "75–100%",
+          "sort": 30
+        }
+      ]
+    },
+    {
+      "code": "direction",
+      "name": "方向",
+      "scope": "global",
+      "variant": 0,
+      "is_primary": true,
+      "input_types": [
+        "multi_select"
+      ],
+      "items": [
+        {
+          "value": "前",
+          "label": "前",
+          "sort": 0
+        },
+        {
+          "value": "后",
+          "label": "后",
+          "sort": 10
+        },
+        {
+          "value": "上",
+          "label": "上",
+          "sort": 20
+        },
+        {
+          "value": "下",
+          "label": "下",
+          "sort": 30
+        },
+        {
+          "value": "内",
+          "label": "内",
+          "sort": 40
+        },
+        {
+          "value": "外",
+          "label": "外",
+          "sort": 50
+        },
+        {
+          "value": "旋转",
+          "label": "旋转",
+          "sort": 60
+        }
+      ]
+    },
+    {
+      "code": "feeding_mode",
+      "name": "进食方式",
+      "scope": "global",
+      "variant": 0,
+      "is_primary": true,
+      "input_types": [
+        "select"
+      ],
+      "items": [
+        {
+          "value": "经口",
+          "label": "经口",
+          "sort": 0
+        },
+        {
+          "value": "鼻饲管",
+          "label": "鼻饲管",
+          "sort": 10
+        },
+        {
+          "value": "胃造瘘",
+          "label": "胃造瘘",
+          "sort": 20
+        }
+      ]
+    },
+    {
+      "code": "feeding_posture",
+      "name": "进食姿势",
+      "scope": "global",
+      "variant": 0,
+      "is_primary": true,
+      "input_types": [
+        "multi_select"
+      ],
+      "items": [
+        {
+          "value": "坐位90°",
+          "label": "坐位90°",
+          "sort": 0
+        },
+        {
+          "value": "坐位60°",
+          "label": "坐位60°",
+          "sort": 10
+        },
+        {
+          "value": "半卧位",
+          "label": "半卧位",
+          "sort": 20
+        },
+        {
+          "value": "低头吞咽",
+          "label": "低头吞咽",
+          "sort": 30
+        },
+        {
+          "value": "转头吞咽",
+          "label": "转头吞咽",
+          "sort": 40
+        }
+      ]
+    },
+    {
+      "code": "food_texture",
+      "name": "食物性状",
+      "scope": "global",
+      "variant": 0,
+      "is_primary": true,
+      "input_types": [
+        "select"
+      ],
+      "items": [
+        {
+          "value": "稀流质",
+          "label": "稀流质",
+          "sort": 0
+        },
+        {
+          "value": "浓流质",
+          "label": "浓流质",
+          "sort": 10
+        },
+        {
+          "value": "糊状",
+          "label": "糊状",
+          "sort": 20
+        },
+        {
+          "value": "半固体",
+          "label": "半固体",
+          "sort": 30
+        },
+        {
+          "value": "固体",
+          "label": "固体",
+          "sort": 40
+        }
+      ]
+    },
+    {
+      "code": "food_texture",
+      "name": "食物性状",
+      "scope": "global",
+      "variant": 1,
+      "is_primary": false,
+      "input_types": [
+        "select"
+      ],
+      "items": [
+        {
+          "value": "普食",
+          "label": "普食",
+          "sort": 0
+        },
+        {
+          "value": "软食",
+          "label": "软食",
+          "sort": 10
+        },
+        {
+          "value": "半流质",
+          "label": "半流质",
+          "sort": 20
+        },
+        {
+          "value": "流质",
+          "label": "流质",
+          "sort": 30
+        },
+        {
+          "value": "糊状",
+          "label": "糊状",
+          "sort": 40
+        }
+      ]
+    },
+    {
+      "code": "gait_type",
+      "name": "步态类型",
+      "scope": "global",
+      "variant": 0,
+      "is_primary": true,
+      "input_types": [
+        "multi_select"
+      ],
+      "items": [
+        {
+          "value": "偏瘫步态",
+          "label": "偏瘫步态",
+          "sort": 0
+        },
+        {
+          "value": "剪刀步态",
+          "label": "剪刀步态",
+          "sort": 10
+        },
+        {
+          "value": "慌张步态",
+          "label": "慌张步态",
+          "sort": 20
+        },
+        {
+          "value": "共济失调步态",
+          "label": "共济失调步态",
+          "sort": 30
+        }
+      ]
+    },
+    {
+      "code": "insertion_route",
+      "name": "置入途径",
+      "scope": "global",
+      "variant": 0,
+      "is_primary": true,
+      "input_types": [
+        "select"
+      ],
+      "items": [
+        {
+          "value": "经口",
+          "label": "经口",
+          "sort": 0
+        },
+        {
+          "value": "经鼻",
+          "label": "经鼻",
+          "sort": 10
+        }
+      ]
+    },
+    {
+      "code": "intelligibility",
+      "name": "清晰度",
+      "scope": "global",
+      "variant": 0,
+      "is_primary": true,
+      "input_types": [
+        "select"
+      ],
+      "items": [
+        {
+          "value": "<25%",
+          "label": "<25%",
+          "sort": 0
+        },
+        {
+          "value": "25–50%",
+          "label": "25–50%",
+          "sort": 10
+        },
+        {
+          "value": "50–75%",
+          "label": "50–75%",
+          "sort": 20
+        },
+        {
+          "value": ">75%",
+          "label": ">75%",
+          "sort": 30
+        }
+      ]
+    },
+    {
+      "code": "intensity",
+      "name": "强度",
+      "scope": "global",
+      "variant": 0,
+      "is_primary": true,
+      "input_types": [
+        "select"
+      ],
+      "items": [
+        {
+          "value": "低",
+          "label": "低",
+          "sort": 0
+        },
+        {
+          "value": "中",
+          "label": "中",
+          "sort": 10
+        },
+        {
+          "value": "高",
+          "label": "高",
+          "sort": 20
+        }
+      ]
+    },
+    {
+      "code": "items",
+      "name": "项目",
+      "scope": "global",
+      "variant": 0,
+      "is_primary": true,
+      "input_types": [
+        "multi_select"
+      ],
+      "items": [
+        {
+          "value": "烹饪",
+          "label": "烹饪",
+          "sort": 0
+        },
+        {
+          "value": "整理",
+          "label": "整理",
+          "sort": 10
+        },
+        {
+          "value": "清洁",
+          "label": "清洁",
+          "sort": 20
+        },
+        {
+          "value": "洗衣",
+          "label": "洗衣",
+          "sort": 30
+        },
+        {
+          "value": "购物",
+          "label": "购物",
+          "sort": 40
+        }
+      ]
+    },
+    {
+      "code": "items",
+      "name": "项目",
+      "scope": "global",
+      "variant": 1,
+      "is_primary": false,
+      "input_types": [
+        "multi_select"
+      ],
+      "items": [
+        {
+          "value": "洗脸",
+          "label": "洗脸",
+          "sort": 0
+        },
+        {
+          "value": "刷牙",
+          "label": "刷牙",
+          "sort": 10
+        },
+        {
+          "value": "梳头",
+          "label": "梳头",
+          "sort": 20
+        },
+        {
+          "value": "剃须",
+          "label": "剃须",
+          "sort": 30
+        },
+        {
+          "value": "化妆",
+          "label": "化妆",
+          "sort": 40
+        }
+      ]
+    },
+    {
+      "code": "joint",
+      "name": "关节",
+      "scope": "global",
+      "variant": 0,
+      "is_primary": true,
+      "input_types": [
+        "select"
+      ],
+      "items": [
+        {
+          "value": "肩",
+          "label": "肩",
+          "sort": 0
+        },
+        {
+          "value": "肘",
+          "label": "肘",
+          "sort": 10
+        },
+        {
+          "value": "腕",
+          "label": "腕",
+          "sort": 20
+        },
+        {
+          "value": "髋",
+          "label": "髋",
+          "sort": 30
+        },
+        {
+          "value": "膝",
+          "label": "膝",
+          "sort": 40
+        },
+        {
+          "value": "踝",
+          "label": "踝",
+          "sort": 50
+        },
+        {
+          "value": "脊柱",
+          "label": "脊柱",
+          "sort": 60
+        }
+      ]
+    },
+    {
+      "code": "language_dimension",
+      "name": "语言维度",
+      "scope": "global",
+      "variant": 0,
+      "is_primary": true,
+      "input_types": [
+        "multi_select"
+      ],
+      "items": [
+        {
+          "value": "听理解",
+          "label": "听理解",
+          "sort": 0
+        },
+        {
+          "value": "口语表达",
+          "label": "口语表达",
+          "sort": 10
+        },
+        {
+          "value": "复述",
+          "label": "复述",
+          "sort": 20
+        },
+        {
+          "value": "命名",
+          "label": "命名",
+          "sort": 30
+        },
+        {
+          "value": "阅读",
+          "label": "阅读",
+          "sort": 40
+        },
+        {
+          "value": "书写",
+          "label": "书写",
+          "sort": 50
+        }
+      ]
+    },
+    {
+      "code": "maneuver_type",
+      "name": "手法类型",
+      "scope": "global",
+      "variant": 0,
+      "is_primary": true,
+      "input_types": [
+        "multi_select"
+      ],
+      "items": [
+        {
+          "value": "用力吞咽",
+          "label": "用力吞咽",
+          "sort": 0
+        },
+        {
+          "value": "门德尔松手法",
+          "label": "门德尔松手法",
+          "sort": 10
+        },
+        {
+          "value": "声门上吞咽",
+          "label": "声门上吞咽",
+          "sort": 20
+        },
+        {
+          "value": "超声门上吞咽",
+          "label": "超声门上吞咽",
+          "sort": 30
+        },
+        {
+          "value": "Masako训练",
+          "label": "Masako训练",
+          "sort": 40
+        },
+        {
+          "value": "Shaker训练",
+          "label": "Shaker训练",
+          "sort": 50
+        }
+      ]
+    },
+    {
+      "code": "mmt_grade",
+      "name": "MMT肌力分级",
+      "scope": "global",
+      "variant": 0,
+      "is_primary": true,
+      "input_types": [
+        "select"
+      ],
+      "items": [
+        {
+          "value": "0",
+          "label": "0",
+          "sort": 0
+        },
+        {
+          "value": "1",
+          "label": "1",
+          "sort": 10
+        },
+        {
+          "value": "2",
+          "label": "2",
+          "sort": 20
+        },
+        {
+          "value": "3",
+          "label": "3",
+          "sort": 30
+        },
+        {
+          "value": "4",
+          "label": "4",
+          "sort": 40
+        },
+        {
+          "value": "5",
+          "label": "5",
+          "sort": 50
+        }
+      ]
+    },
+    {
+      "code": "mmt_grade",
+      "name": "MMT肌力分级",
+      "scope": "global",
+      "variant": 1,
+      "is_primary": false,
+      "input_types": [
+        "select"
+      ],
+      "items": [
+        {
+          "value": "0–5",
+          "label": "0–5",
+          "sort": 0
+        }
+      ]
+    },
+    {
+      "code": "mobilization_grade",
+      "name": "松动等级",
+      "scope": "global",
+      "variant": 0,
+      "is_primary": true,
+      "input_types": [
+        "select"
+      ],
+      "items": [
+        {
+          "value": "Ⅰ级",
+          "label": "Ⅰ级",
+          "sort": 0
+        },
+        {
+          "value": "Ⅱ级",
+          "label": "Ⅱ级",
+          "sort": 10
+        },
+        {
+          "value": "Ⅲ级",
+          "label": "Ⅲ级",
+          "sort": 20
+        },
+        {
+          "value": "Ⅳ级",
+          "label": "Ⅳ级",
+          "sort": 30
+        },
+        {
+          "value": "Ⅴ级",
+          "label": "Ⅴ级",
+          "sort": 40
+        }
+      ]
+    },
+    {
+      "code": "pitch",
+      "name": "音调",
+      "scope": "global",
+      "variant": 0,
+      "is_primary": true,
+      "input_types": [
+        "select"
+      ],
+      "items": [
+        {
+          "value": "偏低",
+          "label": "偏低",
+          "sort": 0
+        },
+        {
+          "value": "正常",
+          "label": "正常",
+          "sort": 10
+        },
+        {
+          "value": "偏高",
+          "label": "偏高",
+          "sort": 20
+        }
+      ]
+    },
+    {
+      "code": "position",
+      "name": "体位",
+      "scope": "global",
+      "variant": 0,
+      "is_primary": true,
+      "input_types": [
+        "select"
+      ],
+      "items": [
+        {
+          "value": "仰卧",
+          "label": "仰卧",
+          "sort": 0
+        },
+        {
+          "value": "俯卧",
+          "label": "俯卧",
+          "sort": 10
+        },
+        {
+          "value": "坐位",
+          "label": "坐位",
+          "sort": 20
+        },
+        {
+          "value": "站立",
+          "label": "站立",
+          "sort": 30
+        },
+        {
+          "value": "侧卧",
+          "label": "侧卧",
+          "sort": 40
+        }
+      ]
+    },
+    {
+      "code": "position",
+      "name": "体位",
+      "scope": "global",
+      "variant": 1,
+      "is_primary": false,
+      "input_types": [
+        "select"
+      ],
+      "items": [
+        {
+          "value": "坐位",
+          "label": "坐位",
+          "sort": 0
+        },
+        {
+          "value": "站立",
+          "label": "站立",
+          "sort": 10
+        },
+        {
+          "value": "单腿站立",
+          "label": "单腿站立",
+          "sort": 20
+        }
+      ]
+    },
+    {
+      "code": "posture_type",
+      "name": "姿势类型",
+      "scope": "global",
+      "variant": 0,
+      "is_primary": true,
+      "input_types": [
+        "multi_select"
+      ],
+      "items": [
+        {
+          "value": "低头吞咽",
+          "label": "低头吞咽",
+          "sort": 0
+        },
+        {
+          "value": "转头吞咽",
+          "label": "转头吞咽",
+          "sort": 10
+        },
+        {
+          "value": "侧方吞咽",
+          "label": "侧方吞咽",
+          "sort": 20
+        },
+        {
+          "value": "空吞咽",
+          "label": "空吞咽",
+          "sort": 30
+        },
+        {
+          "value": "交互吞咽",
+          "label": "交互吞咽",
+          "sort": 40
+        }
+      ]
+    },
+    {
+      "code": "resistance",
+      "name": "阻力",
+      "scope": "global",
+      "variant": 0,
+      "is_primary": true,
+      "input_types": [
+        "select"
+      ],
+      "items": [
+        {
+          "value": "徒手",
+          "label": "徒手",
+          "sort": 0
+        },
+        {
+          "value": "弹力带",
+          "label": "弹力带",
+          "sort": 10
+        },
+        {
+          "value": "沙袋",
+          "label": "沙袋",
+          "sort": 20
+        },
+        {
+          "value": "器械",
+          "label": "器械",
+          "sort": 30
+        }
+      ]
+    },
+    {
+      "code": "scene",
+      "name": "场景",
+      "scope": "global",
+      "variant": 0,
+      "is_primary": true,
+      "input_types": [
+        "select"
+      ],
+      "items": [
+        {
+          "value": "面对面交流",
+          "label": "面对面交流",
+          "sort": 0
+        },
+        {
+          "value": "电话沟通",
+          "label": "电话沟通",
+          "sort": 10
+        },
+        {
+          "value": "社区活动",
+          "label": "社区活动",
+          "sort": 20
+        }
+      ]
+    },
+    {
+      "code": "scene",
+      "name": "场景",
+      "scope": "global",
+      "variant": 1,
+      "is_primary": false,
+      "input_types": [
+        "select"
+      ],
+      "items": [
+        {
+          "value": "治疗室",
+          "label": "治疗室",
+          "sort": 0
+        },
+        {
+          "value": "模拟场景",
+          "label": "模拟场景",
+          "sort": 10
+        },
+        {
+          "value": "社区",
+          "label": "社区",
+          "sort": 20
+        }
+      ]
+    },
+    {
+      "code": "side",
+      "name": "侧别",
+      "scope": "global",
+      "variant": 0,
+      "is_primary": true,
+      "input_types": [
+        "select"
+      ],
+      "items": [
+        {
+          "value": "左",
+          "label": "左",
+          "sort": 0
+        },
+        {
+          "value": "右",
+          "label": "右",
+          "sort": 10
+        },
+        {
+          "value": "双侧",
+          "label": "双侧",
+          "sort": 20
+        }
+      ]
+    },
+    {
+      "code": "side",
+      "name": "侧别",
+      "scope": "global",
+      "variant": 1,
+      "is_primary": false,
+      "input_types": [
+        "select"
+      ],
+      "items": [
+        {
+          "value": "左",
+          "label": "左",
+          "sort": 0
+        },
+        {
+          "value": "右",
+          "label": "右",
+          "sort": 10
+        },
+        {
+          "value": "无",
+          "label": "无",
+          "sort": 20
+        }
+      ]
+    },
+    {
+      "code": "speech_rate",
+      "name": "语速",
+      "scope": "global",
+      "variant": 0,
+      "is_primary": true,
+      "input_types": [
+        "select"
+      ],
+      "items": [
+        {
+          "value": "很慢",
+          "label": "很慢",
+          "sort": 0
+        },
+        {
+          "value": "慢",
+          "label": "慢",
+          "sort": 10
+        },
+        {
+          "value": "中等",
+          "label": "中等",
+          "sort": 20
+        },
+        {
+          "value": "正常",
+          "label": "正常",
+          "sort": 30
+        }
+      ]
+    },
+    {
+      "code": "stimulus_mode",
+      "name": "刺激方式",
+      "scope": "global",
+      "variant": 0,
+      "is_primary": true,
+      "input_types": [
+        "multi_select"
+      ],
+      "items": [
+        {
+          "value": "冰刺激",
+          "label": "冰刺激",
+          "sort": 0
+        },
+        {
+          "value": "触觉刺激",
+          "label": "触觉刺激",
+          "sort": 10
+        },
+        {
+          "value": "压力刺激",
+          "label": "压力刺激",
+          "sort": 20
+        },
+        {
+          "value": "振动刺激",
+          "label": "振动刺激",
+          "sort": 30
+        }
+      ]
+    },
+    {
+      "code": "support_surface",
+      "name": "支撑面",
+      "scope": "global",
+      "variant": 0,
+      "is_primary": true,
+      "input_types": [
+        "select"
+      ],
+      "items": [
+        {
+          "value": "硬地",
+          "label": "硬地",
+          "sort": 0
+        },
+        {
+          "value": "软垫",
+          "label": "软垫",
+          "sort": 10
+        },
+        {
+          "value": "泡沫轴",
+          "label": "泡沫轴",
+          "sort": 20
+        },
+        {
+          "value": "平衡板",
+          "label": "平衡板",
+          "sort": 30
+        }
+      ]
+    },
+    {
+      "code": "tableware",
+      "name": "餐具",
+      "scope": "global",
+      "variant": 0,
+      "is_primary": true,
+      "input_types": [
+        "select"
+      ],
+      "items": [
+        {
+          "value": "普通餐具",
+          "label": "普通餐具",
+          "sort": 0
+        },
+        {
+          "value": "改良餐具",
+          "label": "改良餐具",
+          "sort": 10
+        },
+        {
+          "value": "辅助器具",
+          "label": "辅助器具",
+          "sort": 20
+        }
+      ]
+    },
+    {
+      "code": "technique",
+      "name": "技术类型",
+      "scope": "global",
+      "variant": 0,
+      "is_primary": true,
+      "input_types": [
+        "select"
+      ],
+      "items": [
+        {
+          "value": "Bobath",
+          "label": "Bobath",
+          "sort": 0
+        },
+        {
+          "value": "Brunnstrom",
+          "label": "Brunnstrom",
+          "sort": 10
+        },
+        {
+          "value": "Rood",
+          "label": "Rood",
+          "sort": 20
+        },
+        {
+          "value": "PNF",
+          "label": "PNF",
+          "sort": 30
+        }
+      ]
+    },
+    {
+      "code": "tolerance",
+      "name": "耐受情况",
+      "scope": "global",
+      "variant": 0,
+      "is_primary": true,
+      "input_types": [
+        "select"
+      ],
+      "items": [
+        {
+          "value": "良好",
+          "label": "良好",
+          "sort": 0
+        },
+        {
+          "value": "一般",
+          "label": "一般",
+          "sort": 10
+        },
+        {
+          "value": "不耐受",
+          "label": "不耐受",
+          "sort": 20
+        }
+      ]
+    },
+    {
+      "code": "train_action",
+      "name": "训练动作",
+      "scope": "global",
+      "variant": 0,
+      "is_primary": true,
+      "input_types": [
+        "multi_select"
+      ],
+      "items": [
+        {
+          "value": "唇闭合",
+          "label": "唇闭合",
+          "sort": 0
+        },
+        {
+          "value": "唇前突",
+          "label": "唇前突",
+          "sort": 10
+        },
+        {
+          "value": "舌前伸",
+          "label": "舌前伸",
+          "sort": 20
+        },
+        {
+          "value": "舌后缩",
+          "label": "舌后缩",
+          "sort": 30
+        },
+        {
+          "value": "舌侧移",
+          "label": "舌侧移",
+          "sort": 40
+        },
+        {
+          "value": "舌上抬",
+          "label": "舌上抬",
+          "sort": 50
+        },
+        {
+          "value": "鼓腮",
+          "label": "鼓腮",
+          "sort": 60
+        }
+      ]
+    },
+    {
+      "code": "train_body_part",
+      "name": "训练部位",
+      "scope": "global",
+      "variant": 0,
+      "is_primary": true,
+      "input_types": [
+        "multi_select"
+      ],
+      "items": [
+        {
+          "value": "唇",
+          "label": "唇",
+          "sort": 0
+        },
+        {
+          "value": "舌",
+          "label": "舌",
+          "sort": 10
+        },
+        {
+          "value": "颊肌",
+          "label": "颊肌",
+          "sort": 20
+        },
+        {
+          "value": "下颌",
+          "label": "下颌",
+          "sort": 30
+        },
+        {
+          "value": "软腭",
+          "label": "软腭",
+          "sort": 40
+        }
+      ]
+    },
+    {
+      "code": "train_content",
+      "name": "训练内容",
+      "scope": "global",
+      "variant": 0,
+      "is_primary": true,
+      "input_types": [
+        "multi_select"
+      ],
+      "items": [
+        {
+          "value": "口颜面肌肉训练",
+          "label": "口颜面肌肉训练",
+          "sort": 0
+        },
+        {
+          "value": "呼吸训练",
+          "label": "呼吸训练",
+          "sort": 10
+        },
+        {
+          "value": "发声训练",
+          "label": "发声训练",
+          "sort": 20
+        },
+        {
+          "value": "发音训练",
+          "label": "发音训练",
+          "sort": 30
+        },
+        {
+          "value": "韵律训练",
+          "label": "韵律训练",
+          "sort": 40
+        }
+      ]
+    },
+    {
+      "code": "train_content",
+      "name": "训练内容",
+      "scope": "global",
+      "variant": 1,
+      "is_primary": false,
+      "input_types": [
+        "multi_select"
+      ],
+      "items": [
+        {
+          "value": "语言理解",
+          "label": "语言理解",
+          "sort": 0
+        },
+        {
+          "value": "语言表达",
+          "label": "语言表达",
+          "sort": 10
+        },
+        {
+          "value": "词汇扩展",
+          "label": "词汇扩展",
+          "sort": 20
+        },
+        {
+          "value": "句子构建",
+          "label": "句子构建",
+          "sort": 30
+        },
+        {
+          "value": "社交沟通",
+          "label": "社交沟通",
+          "sort": 40
+        }
+      ]
+    },
+    {
+      "code": "train_content",
+      "name": "训练内容",
+      "scope": "global",
+      "variant": 2,
+      "is_primary": false,
+      "input_types": [
+        "multi_select"
+      ],
+      "items": [
+        {
+          "value": "嗓音训练",
+          "label": "嗓音训练",
+          "sort": 0
+        },
+        {
+          "value": "呼吸支持",
+          "label": "呼吸支持",
+          "sort": 10
+        },
+        {
+          "value": "共鸣训练",
+          "label": "共鸣训练",
+          "sort": 20
+        },
+        {
+          "value": "音调训练",
+          "label": "音调训练",
+          "sort": 30
+        }
+      ]
+    },
+    {
+      "code": "train_content",
+      "name": "训练内容",
+      "scope": "global",
+      "variant": 3,
+      "is_primary": false,
+      "input_types": [
+        "multi_select"
+      ],
+      "items": [
+        {
+          "value": "流畅性训练",
+          "label": "流畅性训练",
+          "sort": 0
+        },
+        {
+          "value": "语速控制",
+          "label": "语速控制",
+          "sort": 10
+        },
+        {
+          "value": "呼吸协调",
+          "label": "呼吸协调",
+          "sort": 20
+        },
+        {
+          "value": "心理疏导",
+          "label": "心理疏导",
+          "sort": 30
+        }
+      ]
+    },
+    {
+      "code": "train_content",
+      "name": "训练内容",
+      "scope": "global",
+      "variant": 4,
+      "is_primary": false,
+      "input_types": [
+        "multi_select"
+      ],
+      "items": [
+        {
+          "value": "关键点控制",
+          "label": "关键点控制",
+          "sort": 0
+        },
+        {
+          "value": "反射抑制",
+          "label": "反射抑制",
+          "sort": 10
+        },
+        {
+          "value": "促进正常运动模式",
+          "label": "促进正常运动模式",
+          "sort": 20
+        },
+        {
+          "value": "运动再学习",
+          "label": "运动再学习",
+          "sort": 30
+        }
+      ]
+    },
+    {
+      "code": "train_content",
+      "name": "训练内容",
+      "scope": "global",
+      "variant": 5,
+      "is_primary": false,
+      "input_types": [
+        "multi_select"
+      ],
+      "items": [
+        {
+          "value": "腹式呼吸",
+          "label": "腹式呼吸",
+          "sort": 0
+        },
+        {
+          "value": "缩唇呼吸",
+          "label": "缩唇呼吸",
+          "sort": 10
+        },
+        {
+          "value": "呼吸肌训练（EMST）",
+          "label": "呼吸肌训练（EMST）",
+          "sort": 20
+        }
+      ]
+    },
+    {
+      "code": "train_material",
+      "name": "训练素材",
+      "scope": "global",
+      "variant": 0,
+      "is_primary": true,
+      "input_types": [
+        "multi_select"
+      ],
+      "items": [
+        {
+          "value": "单词",
+          "label": "单词",
+          "sort": 0
+        },
+        {
+          "value": "短语",
+          "label": "短语",
+          "sort": 10
+        },
+        {
+          "value": "句子",
+          "label": "句子",
+          "sort": 20
+        },
+        {
+          "value": "短文",
+          "label": "短文",
+          "sort": 30
+        },
+        {
+          "value": "对话",
+          "label": "对话",
+          "sort": 40
+        }
+      ]
+    },
+    {
+      "code": "train_mode",
+      "name": "训练方式",
+      "scope": "global",
+      "variant": 0,
+      "is_primary": true,
+      "input_types": [
+        "select"
+      ],
+      "items": [
+        {
+          "value": "重复朗读",
+          "label": "重复朗读",
+          "sort": 0
+        },
+        {
+          "value": "图片命名",
+          "label": "图片命名",
+          "sort": 10
+        },
+        {
+          "value": "模仿发音",
+          "label": "模仿发音",
+          "sort": 20
+        },
+        {
+          "value": "自主发音",
+          "label": "自主发音",
+          "sort": 30
+        }
+      ]
+    },
+    {
+      "code": "train_mode",
+      "name": "训练方式",
+      "scope": "global",
+      "variant": 1,
+      "is_primary": false,
+      "input_types": [
+        "select"
+      ],
+      "items": [
+        {
+          "value": "等长",
+          "label": "等长",
+          "sort": 0
+        },
+        {
+          "value": "等张",
+          "label": "等张",
+          "sort": 10
+        },
+        {
+          "value": "等速",
+          "label": "等速",
+          "sort": 20
+        }
+      ]
+    },
+    {
+      "code": "transfer_mode",
+      "name": "转移方式",
+      "scope": "global",
+      "variant": 0,
+      "is_primary": true,
+      "input_types": [
+        "select"
+      ],
+      "items": [
+        {
+          "value": "独立转移",
+          "label": "独立转移",
+          "sort": 0
+        },
+        {
+          "value": "辅助转移",
+          "label": "辅助转移",
+          "sort": 10
+        },
+        {
+          "value": "机械辅助",
+          "label": "机械辅助",
+          "sort": 20
+        }
+      ]
+    },
+    {
+      "code": "transfer_type",
+      "name": "转移类型",
+      "scope": "global",
+      "variant": 0,
+      "is_primary": true,
+      "input_types": [
+        "select"
+      ],
+      "items": [
+        {
+          "value": "床-椅",
+          "label": "床-椅",
+          "sort": 0
+        },
+        {
+          "value": "椅-轮椅",
+          "label": "椅-轮椅",
+          "sort": 10
+        },
+        {
+          "value": "入浴",
+          "label": "入浴",
+          "sort": 20
+        },
+        {
+          "value": "入厕",
+          "label": "入厕",
+          "sort": 30
+        }
+      ]
+    },
+    {
+      "code": "treatment_area",
+      "name": "治疗部位",
+      "scope": "global",
+      "variant": 0,
+      "is_primary": true,
+      "input_types": [
+        "multi_select"
+      ],
+      "items": [
+        {
+          "value": "上肢",
+          "label": "上肢",
+          "sort": 0
+        },
+        {
+          "value": "下肢",
+          "label": "下肢",
+          "sort": 10
+        },
+        {
+          "value": "躯干",
+          "label": "躯干",
+          "sort": 20
+        },
+        {
+          "value": "头颈",
+          "label": "头颈",
+          "sort": 30
+        }
+      ]
+    },
+    {
+      "code": "valve_type",
+      "name": "瓣膜类型",
+      "scope": "global",
+      "variant": 0,
+      "is_primary": true,
+      "input_types": [
+        "select"
+      ],
+      "items": [
+        {
+          "value": "Passy-Muir",
+          "label": "Passy-Muir",
+          "sort": 0
+        },
+        {
+          "value": "其他",
+          "label": "其他",
+          "sort": 10
+        }
+      ]
+    },
+    {
+      "code": "visual_condition",
+      "name": "视觉条件",
+      "scope": "global",
+      "variant": 0,
+      "is_primary": true,
+      "input_types": [
+        "select"
+      ],
+      "items": [
+        {
+          "value": "睁眼",
+          "label": "睁眼",
+          "sort": 0
+        },
+        {
+          "value": "闭眼",
+          "label": "闭眼",
+          "sort": 10
+        }
+      ]
+    },
+    {
+      "code": "walk_mode",
+      "name": "步行方式",
+      "scope": "global",
+      "variant": 0,
+      "is_primary": true,
+      "input_types": [
+        "select"
+      ],
+      "items": [
+        {
+          "value": "平行杠内",
+          "label": "平行杠内",
+          "sort": 0
+        },
+        {
+          "value": "助行器",
+          "label": "助行器",
+          "sort": 10
+        },
+        {
+          "value": "手杖",
+          "label": "手杖",
+          "sort": 20
+        },
+        {
+          "value": "独立",
+          "label": "独立",
+          "sort": 30
+        }
+      ]
+    }
+  ]
+}

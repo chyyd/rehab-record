@@ -1,0 +1,424 @@
+# 变更日志
+
+本文件记录本项目的**全部重要变更**，包括代码、数据模型、接口、文档与决策。
+格式参照 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)；版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
+
+## 记录规则（务必遵守）
+
+1. **每一次改动都要在这里留一条**，不允许"先改后补"或不补。改动提交前先写日志。
+2. 分类固定用：`新增` / `变更` / `修复` / `移除` / `安全` / `文档` / `决策`。
+3. 每条至少包含：**改了什么**、**为什么**、**影响面**（模型 / 接口 / 前端 / 部署 / 数据迁移）。涉及数据模型或接口的，必须写明是否需要迁移与是否破坏兼容。
+4. 待发布的改动写入 `[未发布]` 段；发版时把该段移到对应版本号下并补日期。
+5. 影响 `设计.md` 的改动，必须同步修改 `设计.md` 并在条目中注明章节与版本号变化。
+6. **未决问题时**用 `决策` 条目登记选项与结论，结论定了再补一条 `变更`。
+7. 破坏性变更必须在条目开头加 **【破坏性】**。
+
+---
+
+## [未发布]
+
+
+### 新增
+
+- **阶段 1：认证、用户与患者（`开发计划.md` 阶段 1）**。22 个接口，**205 个测试全部通过**（144 → 205），另有 23 项真实 uvicorn 端到端验证。
+  - **密码哈希 `app/core/security.py`**：**优先 argon2**（环境已装 `argon2-cffi`），**无则回落标准库 `hashlib.scrypt`**；两种格式带前缀区分，换库或调参不会让旧密码失效；`needs_rehash()` 支持登录时顺手升级参数。空哈希、损坏哈希、非法 scrypt 参数一律校验失败——**空哈希绝不能变成"万能密码"**。
+  - **JWT**：access 30 天 + refresh 90 天（D01）。令牌带 `typ` 字段，**校验时必须检查类型**，否则 refresh token 能当 access token 用（常见漏洞，已写测试钉死）。refresh token 只存 **sha256 哈希**入库，并采用**轮换**：刷新即作废旧令牌，重放会失败。
+  - **认证接口**：`/auth/login`、`/auth/refresh`、`/auth/logout`、`/auth/me`、`/auth/password`。登录失败**不区分"工号不存在"与"密码错误"**，避免工号被枚举；账号停用一律拒绝，且**已发放的 token 立即失效**；改密码/重置密码会吊销该用户全部会话。
+  - **用户管理（管理员专属）**：CRUD、重置密码、查看活跃会话、踢下线。含**"必须保留至少一名在用管理员"**的保护——否则没人能管理系统了。治疗师只能操作自己的会话。
+  - **患者与归属**：管理员 CRUD（含注意事项）；治疗师可读自己的/未分配的/临时相关的，可**认领**未分配患者、**放弃**自己的归属；管理员可**指定/清除**归属。任何归属变更都写 `patient_assignment_history`。出院**不可逆**（Q9）。
+  - **`v_patient_visibility` 视图（迁移 003）+ `visible_therapist()` 语义**：本系统最关键的一条业务规则落地为**全系统唯一的 SQL 实现**——原归属（`assigned_therapist_id`）与可见归属（`visible_therapist_id`）严格区分；单日假临时释放期间原归属**永不修改**，可见归属变为 NULL；临时认领后可见归属变为认领者。**判定临时指派是否有效采用读时兜底**（同时看 `status` 与 `expires_at`），因此定时清理任务漏跑也不会让归属显示出错（R8）。
+  - **统一错误翻译 `app/core/domain_errors.py`**：services 层不依赖 FastAPI（抛 `DomainError`），由**唯一一处**翻译成 D08 响应体。401 按 HTTP 规范带 `WWW-Authenticate: Bearer`。
+  - **`app/core/clock.py`**：全系统统一的时间戳格式（UTC + 毫秒 + `Z`），并提供 `period_expiry()` 把请假到期时点按 Q11 作息转成库格式。
+  - **`python -m app.cli create-admin`**：初始管理员引导命令（密码支持环境变量 `KB_ADMIN_PASSWORD` 或交互式输入，避免进 shell 历史）。
+  - **测试**：`tests/test_auth_and_patients.py` **61 个**（认证边界、令牌类型混用、会话吊销、用户管理权限、患者数据级权限、归属变更、可见归属解析），`tests/api_base.py` 提供"必须显式以某个身份请求"的测试基类；`scripts/verify_stage1.py` 走完整业务流程（23 项）。
+
+
+- **FastAPI 应用骨架（阶段 0 / T0.2、T0.4）**：`app/main.py` 从 M0 的标准库 ASGI 实现迁移到 FastAPI。
+  - **应用工厂** `create_app()`：便于测试构造独立实例、便于以后按环境调整配置；`app = create_app()` 供 `uvicorn app.main:app` 直接引用。
+  - `app/api/v1/health.py`：健康检查路由，`/api/v1/health`（版本化）与 `/health`（不带前缀，供容器编排探活）指向同一实现；`status='down'` 时返回 **503**，让编排系统能正确判死。
+  - **`/api/v1/health` 的响应体结构与 M0 阶段完全一致**（前端与部署脚本不需要跟着改），并有测试专门守护字段名。
+  - 启动方式：`python -m app.main [--host] [--port] [--reload]`；`/docs` 提供 Swagger UI、`/openapi.json` 可生成。
+- **统一错误响应体（D08）**：`app/core/errors.py`。
+  - 统一结构 `{"code": ..., "message": ..., "details": {...}}`；`AppError` 基类 + `BadRequestError` / `UnauthorizedError` / `ForbiddenError` / `NotFoundError` / `ConflictError` 子类。
+  - 三类异常处理器把出口收敛成一种格式：业务异常（`AppError`）、HTTP 异常（404/405 等，**不再是 FastAPI 默认的 `{"detail": ...}`**）、pydantic 校验错误（422，压平成 `details.fields` 便于前端定位到字段）。
+  - 未预期异常统一 500，**记录完整堆栈但不把内部细节回给客户端**（有测试断言响应里不出现异常原文）。
+- **依赖注入入口（D10 的前置）**：`app/core/deps.py` 提供 `get_app_settings` 依赖。它**刻意不加 `lru_cache`** —— 多包一层会让测试里的 `get_settings.cache_clear()` 失效，导致健康检查指向真实库而不是临时库（这个坑实际踩到过）。
+- **接口测试 `backend/tests/test_api.py`（17 个）**：用 `TestClient` 覆盖健康检查两种路径、库不存在时 503、零迁移时 degraded、统一错误体（404/405/422/409/500）、OpenAPI 与 Swagger 可访问、未预期异常不泄露内部信息。
+- **`scripts/verify_http.py` 重写**：改为启动**真实 uvicorn 服务器**再发 HTTP 请求（此前是手写的 ASGI 桥接），并自动选取空闲端口（避免与残留进程撞端口）。覆盖 14 项，全部通过。
+- **后端 M0 骨架（零第三方依赖）**：阶段 0 曾拆成两步执行，M0 先交付不依赖任何外部库的部分，保证验收项可以**真实验证**而不是纸面通过。
+  - `backend/app/core/config.py`：全局配置，环境变量可覆盖（`KB_DB_PATH` / `KB_SQLITE_BUSY_TIMEOUT_MS` / `KB_SQLITE_WAL`），非法数值直接报错而不静默回退。
+  - `backend/app/core/worktime.py`：**半日制作息的唯一时间真源**（Q11 + S1）。提供 `period_interval` / `classify_period` / `normalize_period` / `period_end_datetime` 等，排期、休息、请假全部依赖它，禁止其他模块自写时间字面量。
+  - `backend/app/db/storage.py`：SQLite 访问层。连接时启用 WAL、外键、`busy_timeout` 并**校验外键真的生效**；迁移带账本（`schema_migrations`）与校验和，重复执行安全；`inspect()` 用**只读连接**做健康探测（不会顺手创建空库）。
+  - `backend/app/db/migrations/001_initial_schema.sql`：S1 + M01–M18 的全部 21 张表、索引、两个视图。含两条关键部分唯一索引（治疗师半日唯一、患者半日唯一）与多条 CHECK 约束（枚举、scope 与字段自洽、JSON 合法性）。
+  - `backend/app/db/migrations/002_triggers.sql`：**全部触发器的唯一来源**——`updated_at` 自动维护、提交后修改留痕与 `edit_count` 累加。
+  - `backend/app/core/health.py`：健康检查。`status` 三态：`ok` / `degraded`（有未应用迁移、非 WAL 等）/ `down`（JSON1 或外键不可用，拒绝服务）。
+  - `backend/app/main.py`：最小 ASGI 应用（标准库实现，过渡用），暴露 `/api/v1/health`；依赖恢复后替换为 FastAPI，但**保留** `health.py` 与 `worktime.py`，响应体结构不变。
+  - `backend/app/cli.py`：运维 CLI——`init` / `migrate` / `health` / `periods` / `tables`。
+  - `backend/tests/`：**125 个测试，全部通过**（1 个 skip：未装 WeasyPrint）。覆盖迁移幂等与校验和、外键与 JSON1、S1 排期不变量、Q2 患者半日唯一、休息块 scope 自洽、请假状态机、Q11 到期时点、记录留痕与 `edit_count`、选项集与模板的 scope 约束，以及三份种子的幂等导入。
+  - **字典种子（`backend/seed/`）**：把 `设计.md` 8.2 的四套高频模板表变成机器可读数据，落地 `开发计划.md` 最高风险 R1 的对策。
+    - `seed/dict_seed.json`：**4 个主项目 / 29 个子项目 / 89 个参数**（选项类 74、数字类 15），覆盖运动、生活技能、言语、吞咽。
+    - `seed/dictionary.py`：幂等导入，**一律按 `code` upsert 不依赖自增 id**；导入前做结构校验（code 唯一、`param_key` 子项目内唯一、选择题必须有选项且默认值必须来自选项集、单选不得多默认值）；用 `SAVEPOINT` 保证中途失败整体回滚。
+    - `python -m app.cli seed`：CLI 子命令，按依赖顺序一次导入全部三份种子。
+    - 建模修正：多选题允许**多个默认值**（如"修饰训练.项目"默认 `洗脸、刷牙`），因此选择题的 `default_value` 以 **JSON 列表**存库，数字/文本仍存字符串；设计文档里的 `—` 占位符统一归一为 `NULL`。
+    - `backend/tests/test_seed.py`：**13 个测试**，覆盖种子加载与校验、规模下限保护、幂等性（第二次全部走更新、行数不变）、默认值 JSON 编码与合法性、占位符归一、`param_key` 唯一性、JSON1 可查询、失败回滚。
+  - **患者反应定义种子（`seed/response_seed.json` + `seed/responses.py`）**：把 `设计.md` 8.2 四套模板的「患者反应（多选 + 评分）」表变成 `response_def` 数据，补上 V1.1 "8.2 定义得很细但数据模型无定义可依"的缺口（3.6.5 / M04）。
+    - **27 条反应定义**：tag 14 / number 9 / select 4；按主项目为 motor 8、adl 6、speech 5、swallow 8。
+    - 取值约束落到库里：疼痛 NRS `0–10 分`、疲劳评分 `0–10 分`、呛咳 `次`、血氧 `%`、血压 `mmHg`、残留程度 `轻/中/重`、正确率变化 `提高/稳定/下降`。
+    - 导入前校验与库层 CHECK 对齐：`tag` 不得带 `value_key`、`select` 必须有选项、非 `select` 不得有选项、取值范围不得颠倒、同一主项目内 `code` 唯一；引用 `main_item.code` 时若字典未导入会给出**可读的**错误提示（导入顺序依赖）。
+  - **全局选项集种子（`seed/option_seed.json` + `seed/options.py`）**：从 `dict_seed.json` 汇总每个 `param_key` 实际使用的选项集合，落地 `设计.md` 3.6.4 的三层选项集中的全局层（M03）。
+    - **47 套全局选项集 / 208 个选项项**。
+    - 幂等：按 `(scope, dept_tag, code)` 定位选项集、按 `(option_set_id, value)` 定位选项项，重复导入新增 0。
+    - **诚实记录的建模限制**：同一 `param_key` 在不同子项目下可能有不同选项集合（如「辅助程度」有 6 项与 4 项两套，共 11 个 code、17 套变体）。当前库结构 `UNIQUE(scope, owner_user_id, dept_tag, code)` **只允许一个 code 一套全局选项**，因此全局层只导入主变体（选项最多的那套），其余 **17 套被跳过并计数、逐 code 打印提示**，不静默丢弃。选项差异仍完整保留在各子项目的 `sub_item_param_def.options_json` 里，记录页按子项目渲染不受影响。若要全局层也支持多变体，需给 `option_set` 增加 `variant` 列 —— 已列入待办。
+    - `backend/tests/test_seed_responses_options.py`：**24 个测试**，覆盖两份种子的加载与校验、反应类型与取值约束、tag/select/范围的反例拒绝、导入顺序依赖、幂等性、变体跳过计数、`(scope, code)` 唯一性、全局选项不得带 owner、失败回滚，以及**三份种子按 CLI 顺序的整体端到端幂等**。
+  - 实测（真实库连续执行两次 `python -m app.cli seed`）：第一次新增 4/29/89 + 27 + 47/208，第二次**全部新增 0、全部走更新**，行数不增长。
+  - `backend/tests/test_pdf_smoke.py`：PDF 中文渲染的前置条件。**字体检查用例真实执行**（D03/R3），渲染用例在未装 WeasyPrint 时 skip。
+  - `backend/scripts/verify_http.py`：HTTP 端到端验证（200 健康、404 结构化、405 方法不允许）。
+  - `backend/scripts/check_docs_consistency.py`：**跨文档一致性校验（可重复运行）**。检查 103 项：表名与视图是否真实存在于迁移、全部枚举取值是否与 `设计.md` 一致、两条排期唯一索引、迁移中不得出现 `'localtime'`、不得使用无效的 `IS NOT` 不等式、作息数值在三份文档与代码间一致、版本号一致、CHANGELOG 段落唯一性等。**当前 103 项 0 失败**。
+    - 为什么：本轮实测过"文档声明与代码实现不一致"的危害（设计文档还写着已被推翻的排期与请假模型）。把一致性变成可执行检查，避免再次漂移。
+  - `backend/pyproject.toml`：依赖按 `web` / `db` / `auth` / `pdf` / `ops` / `dev` 分组，依赖恢复后按组启用。
+  - `README.md`、`docs/setup.md`、`.gitignore`。
+  - 影响面：新增后端骨架与测试；无第三方依赖，**当前不需要 pip 与 venv**。
+- 新增 `README.md`：文档导航、必读约定（时间戳、作息、排期不变量、无审批流）、当前进度、快速开始、仓库结构。
+- 新增 `docs/setup.md`：环境限制与实测证据、依赖恢复的三条路径、运行与测试命令、健康检查三态解读、依赖恢复后要做的事、测试临时库存放原因。
+- **`开发计划.md` 升级至 V0.4**：P-22（模板参数表缺失）标记闭环；T3.2 拆出已完成的前置部分；R1（字典数据量被低估）标记为**已显著缓解**并写明剩余范围；修订记录新增 V0.4；依据文档改为 `设计.md` V1.2。
+- `开发计划.md` 升级至 **V0.3**：Q11 定稿并写入 8.1；第 8 章标记已无未决问题；M09 到期时点改为按 Q11 取值；第 9 章登记环境阻塞与阶段 0 的两步拆分；新增修订记录表。
+- **`开发计划.md`（V0.2）**：Q1–Q10 定稿后修订，其中 **Q1/Q2 的答案实质改变了排期模型**。
+  - **新增 S1「排期改为上午/下午半日制」**（依据 Q1）：`appointment` 增 `period`（am/pm），`start_time`/`end_time` 降级为可选排序字段、不参与冲突判定；新增两条部分唯一索引——**一个治疗师同一半日只能有一台**、**一个患者同一半日只能被一名治疗师排期**（依据 Q2：不允许同一患者同时段多人排期）。
+  - **重写 M07 冲突检测**：三条规则改为「治疗师半日占用 / 患者半日占用 / 休息或请假占用」；`rest_block` 改为按半日（`scope` + `period`）。
+  - **重写 M08 请假为无审批流**（依据 Q6）：删除 `pending/approved/rejected` 与 `approved_by`/`approved_at`；改为 `source`（自己请 / 管理员代录）、`created_by`、`recorded_at`、`cancelled_at`；**登记即生效**，撤销时回滚释放；多日假排空不自动回滚。
+  - **重写 M15 排序**：由按 `start_time` 改为按 `(date, period)` 排序。
+  - **重写 4.3 排期接口**：删除 `/schedule/check-conflict` 预检与拖拽语义，新增 `/schedule/availability`；**重写 4.4 请假接口**：删除 `/leave/pending`、`/leave/{id}/approve`、`/leave/{id}/reject`，新增 `/leave/admin`、`/leave/{id}/cancel`、`/leave/effective`。
+  - **重写阶段 2（T2.1–T2.8）与阶段 2 DoD**，新增"半日格子视图"与"内网自签 CA"工作项。
+  - 新增 P-27（排期粒度与科室实际不符）、P-28；R6 重写为"半日制与作息不匹配"并写入 `start_time` 逃生通道预案；2.4 节把"附件""同一患者多人排期""精确分钟排期""请假审批流"明确列入一期不做。
+  - 新增 **Q11（科室作息时间）** 为当前唯一未定项，不阻塞阶段 0/1，最迟阶段 2 开工前定稿。
+  - 为什么：Q1 与 Q2 的答案与 `设计.md` 3.4 的"点时间段 / 拖拽改时间"模型直接冲突，必须先把排期模型改对，否则阶段 2 整体返工。
+  - 影响面：**数据模型（`appointment`、`rest_block`、`leave_record`）**、接口（排期、请假）、前端（排期页改为半日格子）、阶段 2 工期。**尚未落到 `设计.md`**，`设计.md` 3.4/3.5 仍是旧模型，需随 V1.2 修订同步。
+- **`开发计划.md`（V0.1）**：把 `设计.md` V1.1 转化为可执行开发计划。
+  - 内容：设计文档评估与问题清单（P-01～P-26）、技术选型细化（D01～D10）、数据模型修订提案（M01～M18）、仓库结构规划、接口清单扩充（对 5.3 的补全）、五阶段开发计划（阶段 0–5）与逐阶段 DoD、测试策略、风险清单（R1～R10）、待确认问题（Q1～Q10）、近期行动清单。
+  - 为什么：`设计.md` 是业务设计文档，缺少可直接开发所需的字段、接口与同步机制定义；不做这一步会在阶段 3 前后集中爆发返工。
+  - 影响面：文档（无代码影响）。
+- **`CHANGELOG.md`**：建立变更日志制度与记录规则。
+  - 为什么：项目要求对每一次改动留痕；本系统本身包含审计日志需求，开发过程同样需要可追溯。
+  - 影响面：文档。
+- **阶段 2：排期、休息与请假（`开发计划.md` 阶段 2）**。新增 16 个接口，**271 个测试全部通过**（205 → 271），另有 29 项真实 uvicorn 端到端验证。
+  - **排期是半日制**（S1/Q1）：单位是 `(日期, 上午|下午)`，不是具体时间点。
+  - **三条冲突规则**（M07）：① 治疗师半日 = 一台；② 患者半日 = 一名治疗师（Q2 不允许同时段多人）；③ 休息 / 已生效请假占用。规则 ①② 由库层唯一索引兜底，规则 ③ 在模型层判断（休息与请假是配置，不适合用唯一索引表达）。
+  - **为什么还要预检**：唯一索引只能给出"约束冲突"这类模糊错误，而治疗师端需要知道**到底和谁撞了**才能提示到具体那一台。索引是最后防线，预检负责可读信息。
+  - **可排性查询 `/schedule/availability`**：逐半日返回"能不能排 / 为什么不能"（`reasons`），让排期页直接把格子置灰，不需要"拖完才发现冲突"。
+  - **可选计划时间 `start_time`/`end_time`**：仅用于同日多台的先后排序，**不参与冲突判定**（S1）；一旦填写则校验必须落在所属半日的作息区间内。
+  - **休息块**：`weekly`（每周固定某天某半日）/ `date`（指定日期某半日）两种，粒度是**半日**；scope 与字段必须自洽（`weekly` 必须有 weekday 且无日期，反之亦然）。
+  - **请假无审批流**（Q6）：治疗师直接请假、管理员可代录，**登记即生效**，`status` 只有 `active`/`cancelled`。
+  - **单日假 → 临时释放**：为名下患者建 `temporary_assignment`，**原归属永不修改**；到期时点按 Q11 取所属半日区间结束时刻（上午 11:30 / 下午 17:30 / 全天次日 00:00）。
+  - **多日假 → 正式排空**：`assigned_therapist_id = NULL`，不自动恢复；撤销时**只回收仍未被认领的患者**，已被认领的在 `not_restored` 里回报给前端提示管理员。
+  - **撤销回滚**：单日假撤销会关闭该期间的临时释放（`closed_reason='leave_cancelled'`）。
+  - **`copy` 复制昨天 / 上周**：冲突格子**跳过并逐条回报**而非整体失败——复制排期本就是"尽力而为"，源日期与目标日期的休息/请假情况可能不同。
+  - **`python -m app.cli close-expired`**：清理过期临时指派。**这只是清理，不是判定依据**——视图读时也检查 `expires_at`，所以任务漏跑归属显示依然正确（R8）。
+  - **`ApiRouter`（`app/api/router.py`）**：统一解决 FastAPI 的 204 约束（见下方修复），让路由代码不必再记得这件事。
+  - **测试**：`tests/test_schedule_and_leave.py` **66 个**，覆盖两条不变量、三条冲突规则、可排性原因、休息块自洽性、单日/多日假副作用与撤销回滚、复制排期跳过、权限边界；`scripts/verify_stage2.py` 走完整业务流程（29 项）。
+- **阶段 3：字典、治疗记录与患者反应（`开发计划.md` 阶段 3）**。新增 20 个接口，**341 个测试全部通过**（271 → 341），另有 34 项真实 uvicorn 端到端验证。
+  - **字典读取（`models/dictionary.py`）**：主项目 → 子项目 → 参数三层，`/dict/tree` 一次返回整棵树（记录页要一次拿到结构来渲染表单，逐个请求会有 N 次往返）。字典是**只读**引用数据，写入由种子与后台负责，业务接口不会意外改到字典。
+  - **选项解析（`services/options.py`）**：严格按 **个人 → 科室 → 全局 → 参数自带 `options_json`** 的顺序解析，并返回 `source` 说明最终用了哪一层。
+    - 关键点：当三层覆盖都不存在时**必须回落到该子项目自己的内置选项**，而不是某个全局"最大集合"——因为同一 `param_key` 在不同子项目下可能有多套选项（如「辅助程度」6 项与 4 项）。
+    - 治疗师可维护 `scope='personal'` 的个人快捷选项，**只影响自己**。
+  - **参数带入优先级（Q7 定稿）**：**上次值 → 个人默认 → 科室默认 → 全局默认 → 字典默认**，每个参数都带上 `value_source` 供前端提示"这是上次的值"。实测：先提交一条把`体位`设为仰卧，再次打开表单时该参数确实带回 `仰卧` 且来源为 `last_value`。
+  - **治疗记录状态机**：`draft → submitted → locked`。
+    - **草稿**：任意修改，**不留痕、不计 `edit_count`**（治疗师在写的时候不该产生审计噪声）。
+    - **已提交**：实质修改由**库层触发器**写 `audit_log` 并累加 `edit_count` —— 留痕不能只依赖应用代码自觉，所以这条规则落在 `002_triggers.sql` 而不是 service 里。
+    - **已锁定**：治疗师不可改（`RECORD_LOCKED`），管理员可改且仍留痕。
+    - **序次 `seq_no`**：草稿不占号；提交时在同一事务内计算并写入，避免并发跳号（M10）。
+    - **只有草稿能删除**：已提交的记录是医疗文书，删除被拒（`409`），只能靠修改留痕。
+  - **两层快照**（防字典改名影响历史，`设计.md` 4.3）：`record_item.sub_item_name_snapshot`（子项目名称）+ `params_snapshot_json`（每个参数的**当时的**显示名、取值与选项文本）。实测把字典里的子项目改名后再读记录，历史仍显示原名。
+  - **参数校验**：未知 `param_key` 直接拒绝（防止前端拼错键导致数据静默丢失）、取值必须来自解析后的选项、数字范围、多选必须是数组、子项目必须属于所给主项目、同一子项目不得重复。
+  - **患者反应（`models/response_def.py` + `services/records.normalize_responses`）**：落地 `设计.md` 4.2.2 的 `tags` + `items` 结构。写库时**补写 `label` / `value_key` / `unit` 快照**，因此字典改名后历史记录仍能正确展示。校验：标签类不得带取值、需取值的反应不得放进 `tags`、数值型必须给值且在范围内、单选必须命中选项、同一反应不得重复。
+    - 反应定义按主项目区分：`oral_residue`（口腔残留）只在吞咽项目下可用，在运动项目下会被拒。
+    - `/response-defs/grouped` 为每个主项目**附带全科通用反应**，前端不必自己拼回退逻辑。
+  - **数据级权限复用**：新增 `services/visibility.py`，把"我能看到哪些患者"收敛成一处。记录列表、时间轴、单条访问都用它，避免"列表看不到、直接猜 URL 能拿到"的越权。**管理员返回 `None` 表示不加限制**，不把全表编号读进内存。
+  - **时间轴 `/timeline`**：按日期倒序，带主项目名称，支持 `scope=mine/temp/visible` 与日期范围筛选。注意它是**独立 router** 且在 `records.router` 之前注册 —— 否则 `/records/timeline` 会被 `/records/{record_id}` 吞掉。
+  - **测试**：`tests/test_records.py` **70 个**，覆盖选项解析四层顺序、带入值五级优先级、状态机与留痕、两层快照抗改名、参数与反应的各类非法输入、跨患者越权、时间轴排序与筛选；`scripts/verify_stage3.py` 走完整业务流程（34 项）。
+- **阶段 4：离线与同步（`开发计划.md` M06、`设计.md` 5.4）**。新增 3 个接口与 1 个迁移，**377 个测试全部通过**（341 → 377），另有 29 项真实 uvicorn 端到端验证。
+  - **迁移 `004_sync_support.sql`**：给 `patient` / `appointment` / `treatment_record` 加 `client_uuid`，并建**部分唯一索引**（`WHERE client_uuid IS NOT NULL`）。用部分索引是因为历史数据与服务端直接创建的数据没有 `client_uuid`，不排除 NULL 会让唯一性语义变含糊。
+  - **幂等推送 `POST /sync/push`**：客户端在本地生成 UUIDv4 并随变更上报，服务端据此 upsert。弱网下"服务端已写入但响应丢失 → 客户端整批重试"是常态，实测整批重推后记录数与排期数都不变。
+  - **游标拉取 `GET /sync/pull`**：**`change_log.id` 就是游标**，不用时间戳——时间戳会因客户端时钟偏移而漏数据。无新变更时游标**不前移**（推到 max 会跳过中间的空洞）。额外返回 `latest_cursor`，供"按实体过滤做首次全量同步"时确定终点。
+  - **`entities` 过滤的语义已写明**：被过滤掉的变更不返回、游标仍前进，因此它**只适合首次全量同步**；之后应不带过滤地增量拉取并在客户端筛选。这是接口的已知行为，在 docstring、`/sync/info` 的 `note` 与测试里都写明了，而不是留成隐含陷阱。
+  - **冲突分层（乐观锁 + 按状态分流）**：推送带 `base_revision`，与服务端 `revision` 不一致即为冲突。
+
+    | 场景 | 策略 |
+    |---|---|
+    | 记录仍是草稿 | **客户端优先**（治疗师正在写的内容不该被覆盖） |
+    | 记录已提交 / 已锁定 | **服务端优先**，回报 `server_status` 与 `server_revision` |
+    | 排期、字典类 | 服务端优先 |
+
+  - **重试与冲突是两件事**：客户端重推自己创建的变更时通常**不带** `base_revision`。若把它当作"缺少基线版本 → 服务端优先"，弱网下每次重试都会判成冲突，幂等性就形同虚设。因此识别为"同 `client_uuid` 已存在 → 重试"时按客户端优先（`reason=idempotent_retry`），而"首次推送且无基线"才拒绝（`reason=missing_base_revision`）。
+  - **一条冲突不阻断整批**：离线队列常攒几十条，因一条冲突就整批退回，客户端很难恢复。逐条独立处理，三态分别回报（`applied` / `skipped` / `conflicts`）。
+  - **范围限制**：一期只允许**治疗记录与排期**离线写（`设计.md` 5.4 末尾"缩小同步面"），推送患者或未知实体直接 422 并回报 `allowed`；单批上限 200、单次拉取上限 500，**超限明确报错而不是静默截断**。
+  - **写路径接入变更日志**：排期的建/改/取消/复制、记录的建/改/提交/锁定都调用 `sync.record_change`。漏一处就会出现"业务改了但客户端拉不到"，所以每处都有测试覆盖。
+  - **测试**：`tests/test_sync.py` **36 个**，覆盖幂等（同 uuid 重推、批内重复、整批重试）、游标（单调性、增量不跳、截断与过滤时的 `has_more`、`latest_cursor`）、冲突分层五类场景、`revision` 必须随每次变更推进、范围与批量边界、未认证；`scripts/verify_stage4.py` 走完整离线场景（29 项）。
+- **阶段 5：汇总打印与后台（`开发计划.md` 阶段 5，最后一个阶段）**。新增 17 个接口，**453 个测试全部通过**（377 → 453），另有 48 项真实 uvicorn 端到端验证。**接口总数 78 个。**
+  - **汇总口径（`services/summary.py`）**：三种口径 —— 按日期（可按治疗师/患者分组）、按患者每日、单患者总览。
+    - **只统计已提交与已锁定**：草稿是治疗师还没写完的东西，算进"今天治疗了多少人次"会误导排班与统计。
+    - **汇总与 PDF 同源**：两者共用同一段查询（`_fetch_rows`）。两处各写一份 SQL 迟早会跑出不同的数字，这类"报表和明细对不上"的 bug 极难排查。
+    - 参数摘要与患者反应摘要都**优先取快照里的显示名**，因此字典改名后历史汇总仍显示当时的名称。
+  - **三套 PDF（`services/pdf.py`）**：单患者汇总、按日期汇总、按患者每日汇总（`/print/...` 三个端点）。
+    - **中文用 reportlab 内置 CID 字体 `STSong-Light`**，不依赖系统字体文件（V1.3 对 V1.2 WeasyPrint 方案的修订）。
+    - `ensure_font()` 注册失败时**抛错而不是回退 Helvetica** —— 用 Helvetica 渲染中文会得到满页方框，而"文件能打开、页数正常"让人很难发现内容其实没印出来。
+    - **版式按 Q10 定稿**：抬头科室名 + 住院编号 + 姓名；页脚页码 + 打印时间；**不做签名栏**（对齐 1.4 不采集患者签字，并有测试断言 PDF 里不出现"签名"）。
+    - 表格单元格一律包成 `Paragraph`，否则长参数摘要不会换行、会溢出到页边外；空记录时出"空表 + 说明文字"而不是报错；多页时每页都有页码。
+  - **记录模板（`models/template.py`）**：科室模板（管理员维护）+ 个人模板（治疗师维护）。
+    - **`main_item_id` 必填**：库层 `record_template.main_item_id` 为 NOT NULL，且它是唯一键 `(scope, owner, main_item_id, name)` 的一部分 —— 同一治疗师在不同主项目下可以有同名模板（如"常规"），这在临床上是常见命名。模板里的子项目也必须属于该主项目。
+    - **"一键套用"只是预填，不锁定内容**（3.10 明确要求），套用接口返回可直接填入表单的 `params`，且**不产生任何治疗记录**。
+    - 个人模板**只有本人可见可改**；管理员也不代改别人的私人模板。
+    - 字典把子项目**停用**后，套用会跳过该项而不是整份失败（模板其余部分仍可用）。
+  - **审计日志查询（`models/audit.py`）**：按人、按对象、按时间范围查询（6.2 后台的"审计日志"模块），带操作人姓名。
+    - **只读**：没有任何写入/删除接口 —— 能改的审计日志就不是审计日志。测试显式断言 POST/PUT/DELETE 都返回 404/405。
+  - **后台选项集维护**：管理员维护**科室级 / 全局**选项集（传 `dept_tag` 即科室级），改完治疗师立刻生效；个人快捷选项仍由治疗师自己维护，**管理员不能从这里删**（那是私人数据）。
+  - **权限一致性**：汇总与打印都先走 `services/visibility`，**不能成为绕过数据级权限看别人患者的入口**（有专门测试：治疗师的日期汇总 PDF 里不出现他人患者姓名）。
+  - **测试**：`tests/test_summary_and_admin.py` **76 个**，覆盖三种汇总口径与草稿排除、参数/反应摘要、模板的 scope 自洽与越权、审计日志只读性与筛选、后台选项集生效链路，以及 **PDF 反向文本校验**（用 pypdf 提取中文，确认不是方框）；`scripts/verify_stage5.py` 走完整业务流程（54 项）。
+- **补齐四大高频模板种子（`开发计划.md` D04 / T3.2 的遗留项）**。**481 个测试全部通过**（453 → 481），端到端 **183 项**，跨文档一致性 **156 项**。
+  - **遗留原因（如实记录）**：T3.2 原被标记为"已完成"，但其完成说明写的是 `dict_seed.json`（4 主项目 / 29 子项目 / 89 参数）—— 那是**字典**，不是**模板组合**。D04 明确要求"字典/选项集/反应定义/**四类模板**用可重跑的幂等种子脚本"，而 `seed/` 里没有模板种子、`record_template` 实测为 **0 行**。测试没发现是因为阶段 5 的模板测试都是**自建模板验机制**，从未断言种子里有四套标准模板。
+  - **迁移 `005_template_code.sql`**：给 `record_template` 加稳定的业务键 `code` + 部分唯一索引（`WHERE code IS NOT NULL`）。
+  - **为什么需要 `code`**：种子导入必须幂等且"种子为准"。原先按 `(scope, main_item_id, name)` 查找，而唯一索引 `ux_template_scope` **恰好含 name** —— 一旦有人改了模板名，重导种子就查不到旧行、又插一行，**产生重复模板**（实测踩到 5 套）。名称是可改的展示字段，不能当身份键；这正是字典种子一直用 `code` 的原因。
+  - **语义约定**：`code IS NOT NULL` → 种子/标准模板，可被种子重复导入更新（含改名恢复）；`code IS NULL` → 管理员或治疗师自建模板，属用户数据，**种子不碰**。
+  - **`seed/templates.py`**：把 `dict_seed.json` 新增的 `templates` 段导入为科室模板（4 套 / 29 条明细），配 `app.cli seed` 的第 ④ 步。
+  - **参数预填值直接取自字典默认值**，不另写一份参数映射：`设计.md` 8.2 的"默认值"列同时是字典默认值和模板预填值，两者同源；再维护一份就会各自漂移，而"记录页带入的值"与"模板套出来的值"不一致是极难排查的问题。
+    - 转换时**必须还原类型**：字典把选择题默认值存成 JSON 数组（单选也是长度 1 的数组），而参数值对单选是标量、对多选是数组；数字参数在字典里存的是字符串 `'10'`，模板里必须是数字 `10`。直接塞存储形式会让表单收到字符串，数字校验与统计都会出问题。
+    - **没有默认值的参数不写入** —— 预填一个 `null` 会在表单上显示成"已填"。
+  - **测试**：`tests/test_seed_templates.py` **28 个**，覆盖四套模板齐全与归属、**逐套核对子项目清单与 `设计.md` 8.2 一致**（对照清单独立写在测试里，不用种子自身证明自己）、参数类型正确（数字是数字/单选是标量/多选是数组/无默认值不写入）、幂等（重导是更新而非新增、改名后仍恢复原名、个人模板不受影响）、错误输入（缺 code、code 重复、空明细、未知子项目、非科室 scope）、以及**套用参数直接建记录必须成功**（这一条能一次性抓住类型错、键名错、选项漂移）；`scripts/verify_stage5.py` 增加 6 项种子模板检查。
+- **管理后台 Web 的后端前置工作（`开发计划.md` T5.4 / D02）**。**532 个测试全部通过**（481 → 532），接口 **78 → 87 个**。
+  - **补齐字典管理写接口（9 个）**：`开发计划.md` 4.5 第 580–582 行要求 `/dict/main-items`、`/dict/sub-items`、`/dict/sub-items/{id}/params` 都提供 **GET/POST/PUT/DELETE**，但此前只实现了 GET —— 后台"字典管理"模块因此无法落地。
+    - 新增 `app/models/dictionary_admin.py`（**与只读的 `models/dictionary.py` 分离**：业务接口渲染记录表单时不该有改字典的能力）与 `app/api/v1/dictionary_admin.py`（`AdminUser` 约束）。
+    - `app/api/v1/dictionary_admin.py` 必须**先于**只读的 `dictionary.router` 注册，管理端语义优先。
+  - **删除安全（本模块最需要想清楚的部分）**：字典被历史数据引用，不能随便删。
+
+    | 对象 | 从未被使用 | 已被使用 |
+    |---|---|---|
+    | 子项目 | 物理删除 | **改为 `disabled` 停用**（响应里 `soft_deleted` + `reason` 说明，前端据此提示而不是假装删成功） |
+    | 参数定义 | 物理删除 | 同上 |
+    | 主项目 | 仅当子项目都能删掉时才删 | 报 409 并列出 `kept_sub_item_ids` |
+
+    - 判据是 `record_item.sub_item_id`（**结构化列，不是 JSON**，可靠）；另有 `record_template_item` 的外键兜底 → 仍被模板引用时同样退化为停用。
+  - **参数校验与种子口径一致**：`validate_param_payload` 复刻 `seed/dictionary.py._validate` 的规则（选择题必须有选项、非选择题不能有选项、默认值必须在选项内、单选只能一个默认值）。两处规则不一致会表现为"种子能过、后台过不了"，极难排查。
+    - 存储格式也对齐种子：单选默认值统一存成 JSON 数组（`'["坐位"]'`），数字存裸字符串（`'4'`）。`sub_item_param_def` **没有** `value_min`/`value_max`（那是 `response_def` 的字段），因此不校验数值上下限。
+  - **refresh token 支持 httpOnly Cookie**（M0 登录方案的前置）：管理后台是浏览器里的 JS，若把 90 天有效期的 refresh token 放进 `localStorage`，一次 XSS 就能偷走。
+    - 登录时**同时**以响应体与 httpOnly Cookie 交付同一个 token：Web 走 Cookie（JS 读不到），**安卓端协议不变**（继续用响应体）。
+    - Cookie 属性：`HttpOnly` + `Path=/api/v1/auth`（只在刷新/登出时发送，缩小暴露面）+ `SameSite=Lax` + 可配 `Secure`。
+    - 取用顺序 **Cookie 优先，其次请求体**；两者都没有时返回 `MISSING_REFRESH_TOKEN`（400）。登出无论走哪条路径都**清 Cookie**，避免浏览器残留已吊销凭证。
+    - `RefreshRequest.refresh_token` 改为可选；新增 `KB_CORS_ORIGINS`（配置了才挂 CORS 中间件，且此时**不能用 `*`** —— 浏览器会拒绝 `Allow-Origin: *` 与凭证同时出现）。
+  - **测试**：`tests/test_dict_admin_and_cookies.py` **51 个**，覆盖 7 类越权（含"写接口收紧后读接口不能跟着收紧"）、三级 CRUD、`code`/`param_key` 唯一性、软删与硬删的全部路径、参数校验自洽、新建字典项**真的能用于建记录**，以及 Cookie 的 HttpOnly/Path/SameSite 属性、仅凭 Cookie 刷新、Cookie 优先于请求体、登出清 Cookie 与吊销。
+- **管理后台 Web 前端（`开发计划.md` T5.4 / D02）**：React 19 + Vite 8 + Ant Design 6 + TypeScript 6，代码在 `admin/`，**已构建成功**（3175 个模块，约 720 KB gzip）。
+  - **公共基础（M0）**：登录页、布局壳（侧边菜单与路由**同源**，避免"菜单里有但点进去 404"）、请求封装、路由守卫（`RequireAuth` / `RequireAdmin`）、`useAsync` 统一 loading/error/重试三态。
+    - **令牌策略**：access token **只放内存**（刷新页面即丢，靠 Cookie 静默续），refresh token 在 httpOnly Cookie 里。
+    - **401 静默刷新并重放原请求**；并发 401 **共用同一个刷新 Promise** —— refresh 是一次性轮换，各刷各的会让先到的请求作废。
+    - `useAsync` 用请求序号丢弃过期响应，避免快速切筛选条件时旧数据盖住新界面。
+  - **13 个业务模块全部实现**：总览、患者管理、用户管理、字典管理、选项集管理、患者反应定义（只读）、科室模板、请假管理、全局排期、治疗记录、汇总与打印、审计日志、健康面板。
+  - **两处刻意的实现取舍**：
+    - **字典删除如实回报**：子项目被历史记录或模板引用时后端只停用，前端弹说明而不是显示"删除成功" —— "删了却还在"会让人以为系统坏了。
+    - **PDF 下载走 fetch 取 blob**：PDF 接口需要 `Authorization` 头，而 `<a download>` / `window.open` 带不上自定义头，直接用会拿到 401。
+  - **环境相关的三处坑（已记入 `admin/README.md`）**：
+    - 脚手架生成的 `tsconfig.json` **缺 `"jsx": "react-jsx"` 与 React 类型**，且 `@vitejs/plugin-react` 未安装 → 必须先补 `@types/react`、`@types/react-dom`、`@vitejs/plugin-react` 并显式声明 `jsx`。
+    - `index.html` 的入口写的是 `/src/main.ts`，而项目用 `main.tsx`（带 JSX）→ 构建报 `Failed to resolve /src/main.ts`。
+    - **Vite 构建在受限（沙箱）环境下会 `spawn EPERM`**（它要调用 `net use` 解析真实路径）；`tsc` 类型检查不受影响。这是环境限制，需在非受限环境构建。
+  - **联调验证**：真实起后端，确认 15 个前端依赖的接口全部 200、仅凭 Cookie 能刷新令牌、Cookie 属性正确（`HttpOnly; Path=/api/v1/auth; SameSite=Lax`）、字典写接口的建/删/越权路径符合预期。
+- **管理后台在真实浏览器中完成端到端验收**：新增 `scripts/_cdp.py`（**只用标准库**的最小 CDP/WebSocket 客户端）与 `scripts/verify_admin_ui.py`（**55 项检查全通过**），并顺手修掉一个**只在并发下才暴露的后端缺陷**。测试 532 → **538 个**。
+  - **为什么必须真开浏览器**：类型检查与构建只能证明"能编译、接口能对上"，不能证明页面真的渲染。事实证明确实如此 —— 一打开就抓到 4 个此前完全没暴露的问题（详见 `### 修复`）。
+  - **验收覆盖**：登录页 → 登录 → 总览统计卡 → **11 个模块逐页导航**（页面渲染出关键内容 + 未出现错误页）→ 字典三级联动 → 患者表格有数据行 → **打开"新建患者"弹窗并真实提交、确认写入数据库** → 无未捕获异常、无 `console.error`、无失败资源请求。
+  - **关键安全断言**：登录后 `localStorage` / `sessionStorage` 里**不含**任何令牌（access token 在内存、refresh 在 httpOnly Cookie）。
+  - **`scripts/_cdp.py`**：自己写而不是引入 Playwright/Selenium —— 本机已有 Edge，用 `--remote-debugging-port` 就能驱动，没必要为"点几下页面"拉一整套浏览器驱动（还要下载数百 MB 内核）。只实现需要的子集（文本帧、客户端掩码），并在注释里写明限制。
+  - **验收脚本本身踩到的坑（都已修）**：
+    - antd 6 把 Modal 的内容容器从 `.ant-modal-content` 改成 **`.ant-modal-container`**，沿用 v5 选择器会一直得到 0；
+    - antd 会在**两个中文字之间插空格**（按钮文本是 `保 存`），`includes('保存')` 永远匹配不上；
+    - 弹窗有开启动画，必须等表单控件出现而不是只等 `.ant-modal`；
+    - 上一轮跑完后 Cookie 仍在 Edge profile 里，页面会直接是已登录状态 —— 必须先清 Cookie/Storage 才能测登录流程；
+    - 断言"登录成功"时不能只看页面上有没有"康复科管理后台"（登录页标题里也有这几个字），要看 URL 已变为 `/` 且登录表单消失。
+
+### 决策
+- **Q11 定稿**：科室作息为**上午 06:00–11:30、下午 13:00–17:30**；休息按半日；请假到期时点取所属半日区间的结束时刻（上午假 → 11:30，下午假 → 17:30，全天假 → 次日 00:00）。
+  - 影响面：`worktime.py`（新增）、`leave_record`/`temporary_assignment`/`rest_block`、`开发计划.md` 8.1（第 8 章已无未决问题）。**`设计.md` 3.5 的"12:00–13:00"示例需随 V1.2 一并改。**
+- **时间戳格式定为 UTC ISO8601 带毫秒**（见下方"修复"第 2 条）：`strftime('%Y-%m-%dT%H:%M:%fZ','now')`。
+  - 为什么：SQLite 无时区概念，`datetime('now','localtime')` 会写出偏移错误的时间戳；带毫秒是为了同一秒内的多次修改能区分先后。
+  - 影响面：全部表的 `created_at`/`updated_at`/`recorded_at` 默认值与全部触发器；同步端判重与 `updated_at` 语义。**已写入 `开发计划.md` 与 `README.md` 的约定，`设计.md` 4.2 需随 V1.2 补充。**
+- **D01 JWT 过期策略**：一期采用 access token 30 天 + refresh token 90 天，refresh 经 `auth_session` 表可吊销。
+  - 为什么：床旁离线场景下短过期 token 会把治疗师挡在登录页，一期收益低于代价；二期再收紧并结合设备绑定。**补充**：部署已定为科室内网 + 自签证书（Q5），token 泄露面主要在内网，故更长有效期可接受。
+  - 影响面：认证模块、`auth_session` 表（新增）。**偏离** `设计.md` 5.5 的表述，需回头在 `设计.md` 中补充说明。
+- **D02 管理后台技术形态**：定为 **React + Vite + Ant Design**（依据 Q4）。代码放 `admin/`，构建产物由 Nginx 托管。
+  - 为什么：管理端以表格与表单为主（患者/用户/字典/排期/请假/审计 6 个模块），Ant Design 开箱即用，后台开发最快。
+  - 影响面：`admin/` 目录、Nginx 静态托管、阶段 5 工期。
+- **D06 部署形态**：定为 **科室内网服务器 + Docker Compose + Nginx**，TLS 用自签或内网 CA 证书（依据 Q5）。
+  - 为什么：数据不出内网，符合科室数据合规预期；自签证书成本最低。
+  - 影响面：部署方案、Flutter 端**必须内置该 CA 而不能关闭证书校验**（T2.8）、备份与恢复流程。
+- **Q1–Q10 全部定稿**（业务结论，非技术决策），详见 `开发计划.md` 8.1：
+  - Q1 排期为**上午/下午半日制**；Q2 **不允许**一个患者同一时段被多个治疗师排期；Q3 治疗师只能给可见患者排期；Q6 请假**无审批流、登记即生效**、管理员可代录；Q7 参数带入优先级 上次值 → 个人默认 → 科室默认 → 字典默认；Q8 一期不做附件；Q9 出院不可逆、暂停可逆；Q10 PDF 抬头页脚样式。
+  - 影响面：业务规则（排期、请假、权限、打印）；Q1/Q2 已触发 S1 结构性模型调整。
+- **D03 PDF 渲染方案**：定稿 WeasyPrint + HTML/CSS 模板，字体随服务打包 `Noto Sans CJK SC`；ReportLab 不作为一期方案。
+  - 为什么：HTML/CSS 排版表格与分页成本远低于手写坐标；中文只需指定字体。`设计.md` 3.9/5.1 给出的两个候选在此拍定。
+  - 影响面：打印模块、镜像构建、阶段 0 的验证项。
+- **D02 / D04–D10**：Alembic 迁移 + 幂等种子、SQLite 单进程单 worker、统一时区/错误码/分页规范、数据级权限统一走 `patient_scope_filter`（D02 已按 Q4 单独定稿，见上条）。
+  - 影响面：全局技术约定，详见 `开发计划.md` 2.1 与 2.3。
+- **数据模型修订提案 M01–M18** 已在 `开发计划.md` 2.2 节登记为**提案**。
+  - 状态：**待落地**。落地方式为首个 Alembic 迁移；落地前 `设计.md` 4.1 的 DDL 保持原文不动。
+  - 影响面：模型、接口、迁移、种子数据。
+
+### 变更
+- 仓库状态从"仅 `设计.md`"变为"设计文档 + 开发计划 + 变更日志"，进入可开工状态。
+
+### 修复
+
+- **修复 antd 6 的四处弃用属性（会在控制台刷 warning）**：`Spin` 的 `tip` → `description`、`Drawer` 的 `width` → `size`、`Space` 的 `direction` → `orientation`；以及**静态 `message.xxx()` 拿不到主题上下文**（`Static function can not consume context like dynamic theme`）。
+  - 前三个是简单改名（`Drawer size` 也接受数字，是 drop-in）。
+  - 第四个不能靠改名解决：官方要求用 `App` 组件提供的实例。新增 `components/notify.ts`，在 `App.tsx` 挂载时把 `App.useApp()` 的 `message`/`modal`/`notification` 注册进去，各页面继续用命令式的 `notify.success(...)`，既拿到正确上下文又不必把每个页面改成 hook 取用（涉及 12 个文件、约 60 处调用）。
+- **修复我自己的两处工具脚本错误**：`verify_admin_ui.py` 里用 f-string 内嵌转义引号（Python 3.12 才允许，ruff 按 3.11 语法判为非法）；`test_concurrency.py` 残留一个未使用导入。
+- **修复 SQLite 连接跨线程使用导致并发请求 500（严重，只在浏览器里才暴露）**：`sqlite3.connect()` 默认 `check_same_thread=True`，而 FastAPI 会把同步依赖（`get_db`）与路由处理函数**分别丢进 anyio 线程池，二者不保证落在同一个线程**。线程池在并发下轮转，于是"依赖里建的连接、路由里用"经常跨线程，抛 `ProgrammingError: SQLite objects created in a thread can only be used in that same thread` → 接口 500。
+  - **为什么之前 532 个测试全绿也没发现**：单请求顺序调用时，依赖与路由往往复用同一个工作线程；`TestClient` 的调用也是同步的。**这个缺陷只在真正并发时才出现**，是浏览器首屏同时发若干个请求把它逼出来的。
+  - 处置：`storage.connect()` 显式加 `check_same_thread=False`，并在注释里写清为什么这样做是安全的（连接每请求一个、不共享；不开显式事务；并发保护交给 WAL + `busy_timeout`）。
+  - 新增 `tests/test_concurrency.py`（**6 个测试**）：真线程池并发打 10 个列表接口 × 3 轮、连续 5 轮并发突发、12 个并发写患者，外加连接跨线程交接。**并做了反证**：把 `check_same_thread` 改回 `True` 后这些测试确实报出 `ProgrammingError`，改回 `False` 才通过 —— 确认它们真的能抓到这个问题，而不是"碰巧绿"。
+  - 同时如实写清测试**不**主张什么：刻意不测"多线程同时 `execute` 同一个连接"（实测会返回 `None`），因为生产是每请求一个连接，真实约束是"换个线程用没问题"，不是"多线程同时用"。
+- **修复前端 `routes.tsx` 的相对导入越出 `src/`**：`routes.tsx` 位于 `src/routes.tsx`，却把页面写成 `../pages/...`，解析到 `admin/pages/` 这个不存在的目录，导致全部 15 个页面模块 `TS2307 Cannot find module`。用 `tsc --traceResolution` 确认解析路径后才定位到 —— 报错只说"找不到模块"，不说是路径算错了。已改为 `./pages/...` 与 `./auth/...`、`./layouts/...`。
+- **修复 `index.html` 入口指向已删除的 `/src/main.ts`**：脚手架生成的入口是 `main.ts`，而本项目用 `main.tsx`（带 JSX），清理样板时删掉了 `main.ts` → 构建报 `Failed to resolve /src/main.ts`。已改为 `/src/main.tsx`。
+- **修复 Vite 8 脚手架缺失的类型与依赖**：模板生成的 `tsconfig.json` 没有 `"jsx"` 选项也没有 React 类型包，`@vitejs/plugin-react` 也不在依赖里，导致 `tsc` 报满屏 `Cannot use JSX unless the '--jsx' flag is provided`。已补 `@types/react`、`@types/react-dom`、`@vitejs/plugin-react` 并显式声明 `jsx: react-jsx`。
+- **修复 `vite.config.ts` 的 `manualChunks` 类型错误**：Vite 8 / Rollup 4 的输出类型只接受函数或数组，传对象映射会 `TS2769 No overload matches this call`。已改为函数形式。
+- **修复 `api.get` 的参数类型过窄**：第二个参数原为 `Record<string, unknown>`，而调用方传的是具名接口（如 `PageParams & { role?: string }`）。具名接口**没有索引签名**，无法赋给 `Record<string, unknown>`，会产生 6 处 `TS2345`。已改为 `object`（足够宽松，仍挡得住原始值）。
+- **修复主项目删除撞模板外键（500）**：`delete_main_item` 原先只检查"有没有启用的子项目"，然后把剩下的停用子项目与主项目一起删掉。但停用子项目可能仍被 `record_template_item` 引用，于是 `FOREIGN KEY constraint failed` → **500**。
+  - 处置：改为先逐个走 `delete_sub_item`（它自己判断能不能真删），**只有当所有子项目都真的删掉了才删主项目**；否则报 409 并回报 `kept_sub_item_ids`，提示"请改为停用主项目"。
+  - 教训：级联删除不能只检查一层。停用 ≠ 可删 —— 外键引用与业务引用是两回事，两个都要看。
+- **修复我自己的两处测试写法错误**：一处在测试里写坏了下标引号（语法错误）；另一处直接调 `treatment_model.create_record` 去验证"历史快照仍可读"，但**两层快照是在 API 层生成的**（`_prepare_items`），直接调模型不会写快照，于是断言到 `None`。已改为走 API 建记录。
+- **修复模板种子按 `name` 查找导致重复模板（幂等性缺陷）**：种子原本按 `(scope, main_item_id, name)` 查找已有模板，而唯一索引 `ux_template_scope` 恰好包含 `name`。于是**只要有人改了模板名，重导种子就查不到旧行、又插一行** —— 实测把一套模板改名后重导，`record_template` 从 4 行变成 5 行。
+  - 处置：改用稳定的 `code` 作身份键（迁移 005 加列 + 部分唯一索引），名称只作展示字段。新增测试 `test_manual_rename_is_restored_by_seed` 直接断言"改名后重导仍是 4 套且名称被恢复"。
+  - 这是一类通用教训：**可变的展示字段不能当身份键**。字典种子从一开始就用 `code` 是对的，模板种子漏了这一点。
+- **修复验收脚本之间的状态串扰**：`verify_stage3` 会留下一条**个人**选项集（`side`），而选项解析顺序是 个人 → 科室 → 全局，因此随后运行的 `verify_stage5` 会读到 personal 层而不是它刚设的 global 层，断言失败。
+  - 处置：这**不是缺陷而是正确的层叠语义** —— 我没去改解析逻辑，而是让 `verify_stage5` 先清掉该治疗师的个人选项集（`purge_option_sets`），并把检查名改成"回落到全局层"，把语义写进注释。**修的是测试的隐含假设，不是产品行为。**
+  - 暴露方式：把六个脚本在**同一个库上连跑三轮**，才让这类跨脚本串扰显形。
+- **修复五个验收脚本重跑即失败（外键顺序，共 4 处）**：验收脚本原先没清依赖行就删患者/选项集，第二次运行必定 `FOREIGN KEY constraint failed`：
+  - `patient` 之前要先清 `record_item` → `treatment_record` / `appointment` / `temporary_assignment` / `patient_assignment_history`；
+  - `option_set` 之前要先清 `option_item`；
+  - `record_template` 之前要先清 `record_template_item`。
+  - 处置：新增 `scripts/_e2e.py` 统一提供 `purge_patients` / `purge_option_sets` / `purge_templates`，**脚本不再手写 DELETE**，由公共函数按外键顺序清理。五个脚本已全部改用，并连跑三轮确认幂等。
+  - 为什么之前没发现：验收一直在**一次性干净库**上跑，干净库里没有上一轮数据 —— "每次新建库验收"会系统性掩盖这类缺陷。现在六个脚本都按"同一库可重复运行"来要求。
+- **修复 `verify_stage5.py` 重跑即失败（外键顺序）**：清理上一轮数据时先删父表 `record_template` 再删子表 `record_template_item`，而子表有外键指向父表 → 第二次运行必定 `FOREIGN KEY constraint failed`。已并入上面 `_e2e.py` 的统一清理。
+- **修复模板 `sort` 传 `null` 触发 500**：`int(item.get("sort", index * 10))` 在客户端显式传 `"sort": null` 时会执行 `int(None)` → `TypeError` → 500。`dict.get` 的默认值只在**键不存在**时生效，键存在但值为 null 时照样拿到 `None`。已改为显式判空。
+- **修复测试旁路文件永久污染工作区**：`tests/support.py` 把 `tmp_path` 直接设成共享的 `data/` 目录，于是测试写出的 `probe.pdf`、`numbers.pdf`、`bad_seed.json`、`bad_resp.json` **跑完就留在工作区里**（既脏仓库，也让并发/后续用例看到别人的残留）；`test_pdf_smoke.py` 同样漏删自己的两个 PDF。
+  - 处置：`tmp_path` 改为一个轻量记账目录 `_ScratchDir`（`__truediv__` 时登记路径），`tearDown` 统一清理；PDF 测试改用 `_scratch_path()` 登记。仍**把文件直接建在 `data/` 下而不建子目录** —— 本机 `mkdtemp` 建出的目录当前用户无权访问，这是不能碰的硬约束。
+  - 验证：连跑全量 377 个测试后，`data/` 里只剩开发库 `kf.db`（此前每次都会多出 4 个文件）。
+- **修复 `revision` 从不推进（离线同步的核心缺陷）**：`treatment_record` 的**修改、提交、锁定**三条路径都不更新 `revision`（只有排期的 `update_appointment` 做了）。而离线客户端正是靠 `revision` 判断自己手上的副本是否过期 —— 不推进就意味着**客户端永远以为自己的草稿版是最新的**，服务端改过也检测不出来，乐观锁形同虚设。
+  - 处置：三条路径都加 `revision = revision + 1`；并新增测试直接断言"新建 1 → 修改 2 → 提交 3 → 锁定 4"这一序列。
+  - 为什么之前没暴露：阶段 3 的测试只关心状态与留痕，没有任何用例读 `revision`；是阶段 4 的冲突检测把它逼了出来。
+- **修复幂等重试被误判为冲突**：`resolve_conflict` 原先把"客户端没给 `base_revision`"一律当作"服务端优先"。但客户端重推自己创建的变更时**本来就不带**基线版本，于是弱网下的每一次重试都被判成冲突 —— 幂等性名义上存在、实际不可用。
+  - 处置：新增 `is_retry` 参数。服务端已存在同 `client_uuid` 记录即视为重试，按客户端优先（`reason=idempotent_retry`）；仅"首次推送且无基线"才拒绝（`reason=missing_base_revision`）。两个原因分开回报，客户端才知道该重试还是该重新拉取。
+- **修复推送结果缺 `outcome` 字段导致 500**：`skipped` 条目直接构造了裸 dict，缺 pydantic 响应模型要求的 `outcome`，FastAPI 在**序列化**阶段抛错 → 整批返回 500（业务其实已经处理完了）。已抽出 `_skipped()` 统一构造，三态字段齐备。
+- **修复 `op` 未校验**：`op` 不在 `insert/update/delete` 时原先被默默忽略（按 update 走），而 `change_log.op` 有 CHECK 约束，属于"前端拼错键导致语义静默丢失"。已在入口显式校验并回报具体非法值。
+- **修复 `DomainError` 子类构造签名不一致（导致 6 处 500）**：`Forbidden`/`Invalid`/`NotFound`/`Conflict` 原先各自定义了 `(message, **kw)` 的构造签名，与基类的 `(code, message)` 不一致。于是 `Forbidden("RECORD_LOCKED", "该记录已锁定")` 会抛 `TypeError`，被全局兜底处理器变成 **500**（而不是应有的 403/422）。
+  - 处置：统一为 ``DomainError(message, *, code=None, details=None)``，子类只声明默认 `code` 与 `status_code`。这样 ``Invalid("取值越界")`` 用默认码、``Forbidden("...", code="RECORD_LOCKED")`` 用自定义码，两种写法都自然。
+  - 影响面：领域异常体系、所有 raise 点。经此修正，**测试从"17 个失败"变成能真实测出业务行为**——之前有一批用例是被这个 TypeError 掩盖的。
+- **修复错误码与业务编码混淆（设计缺陷）**：原先 `details={"code": ...}` 被约定为"自定义错误码"，而各处的 `code` 实际是**业务实体编码**（患者反应 code、参数 code、工号…）。两个 handler 又把 `details["code"]` 当错误码优先返回，于是客户端会收到 `{"code": "pain"}` 这种把业务编码当错误码的响应。
+  - 处置：错误码只取 `exc.code`；`details` 里改用具体键名（`response_code` / `param_key` / `option_code`），并在 `DomainError` 的文档里写明"details 不要放 code 键"。已迁移 9 处调用点。
+- **修复 `response_defs_by_main_item` 不产出通用组**：全科通用反应（`main_item_id IS NULL`）没有归入 `common`，且未并入各主项目组，前端必须自己拼回退逻辑。已改为 `common` 单独一组，并**同时并入每个主项目组**。
+- **修复 `records.py` 缺少 `Invalid` 导入**：子项目重复/主项目不匹配两处校验会抛 `NameError` 变成 500。同时把这两处的状态码从 404 改为 422 —— 它们是**参数问题**，不是"资源不存在"。
+- **修复 `seed_options` 未在阶段 3 测试中导入**：测试只导了字典与反应定义，导致"个人/科室覆盖全局"这类行为根本测不到（全部回落到内置选项）。已在测试基类中导入全部三份种子。
+- **修复 204 约束反复触发（这次从根上解决）**：删除休息块接口再次触发 `Status code 204 must not have a response body`。深挖后发现断言检查的是 `self.response_model` 是否为真值，而 FastAPI 会从返回注解推断 —— **注解写成 `-> None` 时推断出的是 `NoneType` 类本身，它在布尔判断里是真值**，于是断言失败。也就是说"函数什么都不返回"并不能满足 204。
+  - 处置：新增 `app/api/router.py` 的 `ApiRouter`，**只要 `status_code` 是 204 就显式设置 `response_model=None`**。注意必须**显式赋值**：若只是"不传"，继承实现会把它换成 `Default(None)` 占位符，而占位符对象同样是真值，断言照样失败（这个细节我试错了一轮才发现）。全部 v1 路由模块已改用 `ApiRouter`，此类问题不会再犯。
+- **修复排期创建不校验患者存在**：`create_appointment` 只做冲突检测，未确认患者存在。外键失败被 `IntegrityError` 兜底逻辑**误报成"该半日已被占用（并发冲突）"**，把调用方引向完全错误的方向。已加存在性检查并抛 `NotFound`。- **修复创建接口返回的对象缺少关联字段**：`GET /schedule` 与 `POST /schedule` 返回结构不一致——列表带 `patient_name`/`therapist_name`，创建不带（`leave` 的 `created_by_name` 同理）。原因是创建路径用了不带 JOIN 的 `get_*`。已把 JOIN 下沉到 `get_appointment`/`get_leave`，**任何路径拿到的 DTO 结构都一致**。
+- **修复撤销多日假时漏判"已被认领"**：原实现用"最后一条归属历史是否为 `multi_day_release`"判断哪些患者需要恢复；但患者被他人认领后会新增一条 `claim` 记录，导致该患者被漏掉，撤销时既没恢复也没提示。已改为取**所有**被该治疗师排空过的患者，再按当前归属判断：无人负责 → 恢复；已归他人 → 计入 `not_restored`；已回到原治疗师 → 跳过。
+- **修复 `list_patients` 的 SQL 子句顺序错误**：`WHERE` 被拼进 `FROM` 片段，导致 `LEFT JOIN` 出现在 `WHERE` 之后 → `sqlite3.OperationalError: near "LEFT": syntax error`。已改为 `FROM ... JOIN ... WHERE ... ORDER BY ... LIMIT` 的正确顺序，并用 `removeprefix("WHERE ")` 把范围条件并入统一的条件列表。
+- **修复 `mkdtemp` 陷阱在 PDF 测试里复发**：`test_pdf_smoke.py` 重写时又用 `mkdtemp` 建临时子目录，触发与之前相同的"当前用户无权访问"问题（`PermissionError`）。已统一改为在工作区 `data/` 下用 `mkstemp` 建唯一文件。
+- **修复测试配置未指向临时库**：`tests/support.py` 只 `get_settings.cache_clear()`，而 `Settings.db_path` 在实例创建时即固化，清缓存后应用会回落到真实库。已在 `setUp` 中把 `KB_DB_PATH` 指向临时库、`tearDown` 还原。这个坑在纯标准库阶段不会暴露，是引入依赖注入后才浮现的。
+- **修复 204 端点带响应体报错**：`/auth/logout`、`/auth/password`、`/users/{id}/reset-password`、`/users/{id}/sessions` 声明 204 但 FastAPI 从参数注解读出了请求体模型，触发 `Status code 204 must not have a response body`。已显式声明 `response_class=Response`，并把 logout 的 refresh token 改为查询参数。
+- **修复 scrypt 参数校验缺失**：`hashlib.scrypt` 对非法参数（如 `n` 非 2 的幂）会抛 `ValueError`，导致 `verify_password` 向上抛异常。已加参数合法性检查并把所有异常归为校验失败。
+- **修复错误码丢失**：路由里 `except NotFoundError` 捕不到 models 层抛的 `NotFound`（两者不是同一类型），导致 `USER_NOT_FOUND` 退化成 `NOT_FOUND`。已改为捕 `DomainError` 再转换。
+- **测试对新增迁移过于脆弱**：`test_migrations.py` 硬编码了迁移清单与 `schema_version=2`，新增 003 后失败。已改为从 `discover_migrations()` 动态推导，新增迁移不再需要改测试。
+- **修复 `verify_http.py` 与残留进程撞端口**：改为向系统要空闲端口。
+- **ruff 清零**：22 项问题（未用导入、超长行、`datetime.UTC` 别名、位置参数默认值调用 `Depends` 等）全部处理；`SIM105` 因审计写入刻意吞异常而在 `pyproject.toml` 中说明后忽略。
+
+
+- **修复测试环境的一个隐蔽问题：应用侧配置没指向临时库。** `tests/support.py` 原本只调 `get_settings.cache_clear()`，而 `Settings.db_path` 的默认值在实例创建时就固化了 —— 清缓存后应用会回落到真实库 `data/kf.db`。这导致 FastAPI 的健康检查读到真实库、测试断言失败（`503 != 200`）。
+  - 处置：`DbTestCase.setUp` 把 `KB_DB_PATH` 也指向临时库，`tearDown` 还原原值。这样任何 `get_settings()`（含依赖注入）都拿到临时库。
+  - 为什么值得记：这个坑在纯标准库阶段不会暴露（那时没有依赖注入二次解析配置），是引入框架后才浮现的。
+- **修复 `verify_http.py` 与残留进程撞端口**：前一次手工启动的 uvicorn 未随任务结束而退出，导致脚本硬编码的 8137 端口被占、启动即失败。处置：脚本改为 `bind(port=0)` 向系统要空闲端口。
+- **【重要】纠正一个错误的环境判断：依赖其实早就装好了，是我探错了解释器。**
+  - 前几轮我判定"本机无法安装任何第三方依赖"，并据此把目标标成阻塞。**这个结论是错的。** 我当时用的是 DSH 自带的 `dsh-primary-runtime` Python 3.12（`C:\Users\youda\.dsh\...\python.exe`），那个环境里确实一个第三方库都没有；而用户的实际环境是**系统 Python 3.13**（`C:\Users\youda\AppData\Local\Programs\Python\Python313\python.exe`），`pip` 也指向它。
+  - 系统 Python 3.13.3 里**已经装好**：`fastapi 0.116.1`、`SQLAlchemy 2.0.45`、`alembic 1.17.2`、`uvicorn 0.35.0`、`pydantic 2.11.3`、`PyJWT 2.10.1`、`Jinja2 3.1.6`、`reportlab 4.4.6`、`pypdf 6.6.0`、`pytest 8.4.1`、`httpx 0.28.1`、`ruff 0.15.20`。
+  - 我之前观察到的"HTTPS 握手失败 / pip 找不到包"是**那个错误解释器**的表现；用系统 Python 跑，125 个测试直接全绿。
+  - 处置：明确记录"必须用系统 Python 3.13"，并把 `pyproject.toml` 的 `dependencies` 从空改为真实依赖清单；`docs/setup.md` 第 0 节专门写清该用哪个解释器，避免复现同一次误判。
+  - 影响面：环境认知、`pyproject.toml`、`docs/setup.md`。**无代码改动**（项目代码在两个解释器下语法均可用）。
+  - 教训：**在断言"环境不可用"之前，先确认自己用的是不是用户实际使用的那个解释器**（`Get-Command python` / `sys.executable`）。
+
+- **【重要】PDF 方案由 WeasyPrint 改为 reportlab + 内置 CID 字体（D03 修订）**
+  - 实测：`reportlab` 4.4.6 已就绪，用内置 `UnicodeCIDFont("STSong-Light")` 渲染含中文的表格 PDF，再用 `pypdf` 反向提取文本，`康复科` / `偏瘫肢体综合训练` / `糊状` / `张三` / `30 分钟` **全部命中**，中文未出现方框。
+  - 因此**不需要 WeasyPrint**（它依赖 GTK/Pango 原生库，Windows 安装成本高），也**不需要在容器里打包 `fonts-noto-cjk`** —— 省掉了原先被列为"末期最容易翻车"的字体环节。
+  - 处置：`tests/test_pdf_smoke.py` 重写为 reportlab 方案，**4 个用例真实执行且全部通过**（此前是 1 skip）；同时用 `pypdf` 校验文本层，防止将来字体方案退化。`pyproject.toml` 的 `pdf` 组改为 `reportlab` + `pypdf`；`设计.md` 3.9/5.1 与 `开发计划.md` D03/T5.3 同步修订。
+  - 影响面：打印模块实现方式、镜像构建（不再需要 CJK 字体包）、阶段 0 的验收项、阶段 5 的 PDF 模板。
+
+- **修复 `test_pdf_smoke.py` 重写时复发 `mkdtemp` 陷阱**：新写的测试用 `mkdtemp` 建临时子目录，触发与之前相同的当前用户无权限问题（`PermissionError`）。已改为与 `tests/support.py` 一致的做法——在工作区 `data/` 下用 `mkstemp` 建唯一文件。
+  - 影响面：测试。
+- **阶段 0 的依赖阻塞（环境问题，非代码问题）**：本机**无法访问任何 PyPI 索引**，FastAPI / SQLAlchemy / Alembic / WeasyPrint 等全部第三方依赖无法安装。
+  - 实测证据：DNS 正常、TCP 443 显示可连，但 HTTPS 握手一律失败（`The SSL connection could not be established`）；pip 配置的清华镜像同样失败（`No matching distribution found`）；系统代理 `ProxyEnable=0` 但配置了 `127.0.0.1:10808`，而该端口**没有监听进程**。
+  - 处置：把阶段 0 拆为 M0（零依赖骨架，已完成）与"依赖恢复后"（FastAPI 骨架 + Alembic + 中文 PDF 验证）。恢复依赖的三条路径写入 `docs/setup.md`。
+  - 影响面：阶段 0 剩余工作、所有后续阶段；**不阻塞 M0 的验收**。
+- **修复迁移事务写法错误**：原先在 Python 侧包 `BEGIN`/`COMMIT`，但 `sqlite3.executescript` 会先提交当前事务，导致 `cannot commit - no transaction is active`，58 个测试报错。
+  - 处置：事务下移到迁移 SQL 内部（脚本自带 `BEGIN`/`COMMIT`），失败时由 SQLite 回滚，Python 侧只做幂等的 `ROLLBACK` 兜底。
+- **修复时间戳基准错误（严重）**：初版所有默认值与触发器都用了 `datetime('now','localtime')`。
+  - 为什么严重：SQLite 没有时区概念，`'localtime'` 修饰符按 UTC 计算再套本地偏移，在 +08:00 时区下写入的时间戳**比真实时间快 8 小时**——据此做的"谁在何时改了什么"全部失真，`updated_at` 也失去意义。
+  - 处置：统一改为 `strftime('%Y-%m-%dT%H:%M:%fZ','now')`，并新增回归测试：既校验格式与真实 UTC 的偏差（>5 分钟即失败），也**静态扫描迁移 SQL 中不得出现 `'localtime'`**。
+- **修复 `updated_at` 触发器静默失效**：`leave_record` / `temporary_assignment` 的刷新触发器用了 `OLD.x IS NOT NEW.x`。
+  - 为什么是静默 bug：**SQLite 没有 `IS NOT` 这个不等式运算符**，该写法不报错但条件恒不成立，触发器永不生效 → `updated_at` 永不更新 → 同步端永远拉不到变更。
+  - 处置：改为 null-safe 的 `COALESCE(a,-1) <> COALESCE(b,-1)`；`temporary_assignment` 补上缺失的 `updated_at` 列；新增两条回归测试（状态变化必须刷新、列必须存在）。
+- **修复健康检查的副作用与状态判定**：`inspect()` 原先用可写连接，`connect()` 会把不存在的库**顺手创建出来**，"库不存在"永远测不出；同时`attempt to write a readonly database` 会让空库探测直接抛错。
+  - 处置：`connect()` 增加 `read_only`（URI `mode=ro`）；`applied_migrations`/`pending_migrations`/`schema_version` 增加 `create_if_missing`，只读探测时不建账本；状态语义明确为——库不存在 → `down`，库在但零迁移 → `degraded`（附原因），JSON1/外键不可用 → `down`。
+- **修复时间解析过宽**：`strptime("6:0","%H:%M")` 在部分平台会被接受，作息配置一旦写成 `"6:0"` 会让所有半日边界比较悄悄错位。
+  - 处置：`parse_hm` 增加零填充正则校验，`"6:0"` / `"25:00"` / `"abc"` 一律拒绝。
+- **修复测试环境两处踩坑**：系统 `%TEMP%` 下清理被拒（`WinError 5`）；`tempfile.mkdtemp()` 创建的**子目录当前用户无权访问**，导致 SQLite 报 `unable to open database file`。
+  - 处置：测试临时库改为直接用唯一文件名建在 `backend/data/` 下并显式删除；原因与结论写入 `docs/setup.md` 2.1。
+- **修复工作区写入权限故障（环境）**：`D:\code\康复过程记录系统` 缺少当前用户的有效 `WRITE_OWNER`，DSH 无法为工作区设置写入权限（`SetNamedSecurityInfoW Win32 5`），写入与目录列举全部失败。已用官方诊断脚本补权限并重新读取验证生效；随后又对 `backend`、`backend/data`、`backend/data/_test_tmp` 做了一次同样的修复。
+  - 影响面：环境。文件内容与所有者未改动。
+  - 恢复命令（如需要）：
+    - `pwsh -NoProfile -File 'D:\code\dsh-acl-recovery\acl-backup-9a956a334107448b9fcc6b77a4b3ff19.json.ps1' -Path 'D:\code\康复过程记录系统' -AllowRoot 'D:\code\康复过程记录系统' -Restore 'D:\code\dsh-acl-recovery\acl-backup-9a956a334107448b9fcc6b77a4b3ff19.json'`
+    - 另两次的备份文件：`acl-backup-f4ad5642cfd841238145018ae2330dd6.json`（_test_tmp）、`acl-backup-e3f2530905014323b547090bb9ca96dc.json`（data）、`acl-backup-a26c3c4088d54cea973868a6c2bf04b0.json`（backend）。
+  - 诊断报告：`acl-report-82aab245ec8f45cd9111cebd8f01fb91.jsonl`、`acl-report-f9f51e7900e449abaaaaae58955144d5.jsonl`（均在 `D:\code\dsh-acl-recovery\`）。
+- **修复工作区写入权限故障**：`D:\code\康复过程记录系统` 缺少当前用户的有效 `WRITE_OWNER`，导致 DSH 无法为该工作区设置写入权限（`SetNamedSecurityInfoW failed (Win32 5)`），写入与目录列举全部失败。
+  - 处置：使用官方诊断脚本为当前登录用户补上完全控制权限（ACL 授予），已重新读取验证生效；文件内容与所有者均未改动。
+  - 恢复命令（如需要）：`pwsh -NoProfile -File 'D:\code\dsh-acl-recovery\acl-backup-9a956a334107448b9fcc6b77a4b3ff19.json.ps1' -Path 'D:\code\康复过程记录系统' -AllowRoot 'D:\code\康复过程记录系统' -Restore 'D:\code\dsh-acl-recovery\acl-backup-9a956a334107448b9fcc6b77a4b3ff19.json'`
+  - 诊断报告：`D:\code\dsh-acl-recovery\acl-report-82aab245ec8f45cd9111cebd8f01fb91.jsonl`
+  - 影响面：环境（无代码影响）。
+
+### 安全
+- 无。
+
+### 移除
+- 无。
+
+### 文档
+- **`设计.md` 修订至 V1.2** —— 把 V1.1 中与科室实际流程不符、以及与已落地 M0 实现不一致的部分改正，恢复"设计文档 = 业务意图"的可信度（V1.1 的 3.4/3.5/4.1 在 M0 之后已经是**过时描述**）。
+  - **3.4 排期改为半日制**：删除"精确到分钟的时间段 + 拖拽改时间"模型，改为 `(日期, 上午|下午)`；写明两条不变量（治疗师半日 = 一台、患者半日 = 一名治疗师）、`start_time`/`end_time` 降级为可选排序字段、三类冲突检测、排序规则改用视图动态计算。
+  - **3.5 休息与请假重写**：休息改为按半日；请假**无审批流、登记即生效**（删除 pending/approved/rejected）；单日假的恢复时点按 Q11 作息明确为 11:30 / 17:30 / 次日 00:00；新增"归属解析 `visible_therapist()`"为唯一真源，并写明读时兜底。
+  - **3.1 / 3.2**：登录补 `employee_no` + `password_hash`；患者状态枚举**统一为英文码**（`in_hospital`/`discharged`/`paused`），中文只作显示名，并写明出院不可逆、暂停可逆；补数据级权限与排期权限规则。
+  - **3.3**：补临时释放/临时认领/正式排空/归属历史，并强调"原归属"与"可见归属"的区别。
+  - **3.6.3 / 3.6.4**：参数键统一为 `param_key`（JSON 一律用它作键）；选项集明确 `code` 与 `param_key` 呼应、解析顺序为 个人 → 科室 → 全局 → 内置。
+  - **3.6.5（新增）患者反应定义**：补 `response_def` 表设计，解决 V1.1"8.2 定义了 NRS/Borg/呛咳次数/SpO2，但数据模型无定义可依"的缺口。
+  - **3.7**：补 `seq_no` / `session_period` / `edit_count` / `revision` 字段说明与同事务计算序次的规则；参数带入优先级写明为 上次值 → 个人默认 → 科室默认 → 字典默认。
+  - **3.9 / 3.10 / 3.11**：PDF 定稿 WeasyPrint + 必须打包 Noto CJK 字体，并写明抬头/页脚/无签名栏版式；模板落到 `record_template` 表并写明两层快照；审计强调由库层触发器兜底。
+  - **4.1 表结构整体重写**：删除有缺口的旧 DDL，改为与实现一致的表清单（21 张表）、视图、关键约束（含两条排期唯一索引与全部枚举取值）、触发器说明；明确**迁移文件是唯一真源**。
+  - **4.2 JSON 与时间格式**：`params_json` 改用 `param_key` 作键；`patient_response_json` 定为 `tags` + `items` 结构；**消除 `options_json` 一名两义**；新增时间格式约定（UTC ISO8601 带毫秒）。
+  - **4.3 关键业务规则**：按数据完整性 / 归属与请假 / 排期 / 治疗记录 / 同步分组重写。
+  - **5.1 / 5.2**：PDF 在 WeasyPrint 与 ReportLab 之间**拍定 WeasyPrint**；补 Alembic 与中文字体要求；Drift 拍定（非 sqflite）；日历注明半日格子自绘；新增管理后台技术形态。
+  - **5.3 接口清单扩充**：由 14 条扩为 6 组完整清单，补上管理员所需的用户/患者/字典/审计接口，以及临时认领、释放、归属查询、同步、按日期与按患者汇总的打印接口（V1.1 缺失这些导致 6.2 后台无法实现）。
+  - **5.4 离线与同步**：由方向性描述改为可落地协议（幂等推送、`change_log.id` 游标、`base_revision` 冲突检测、分层冲突策略、一期离线范围）。
+  - **5.5 安全与认证**：补 D01 令牌策略、自签证书下**客户端必须内置 CA 而不得关闭校验**、部署单 worker 原因。
+  - **1.4 非目标 / 1.5 术语 / 6.2 后台 / 7 MVP / 9 总结**：把 Q1/Q2/Q6/Q8 的"不做"写进非目标；术语补"半日""可见归属"；后台写明 React + Ant Design 与模块清单；MVP 补已知前置工作量（8.2.2–8.2.4 参数表待补）；结尾补**文档关系表**，明确各文档定位与两份"唯一真源"。
+  - **一致性验证**：跑了一次跨文档校验（106 项）——表名/视图/枚举取值/两条不变量/时间戳格式/`IS NOT` 禁用/作息数值/版本号/README 命令，**全部一致，0 失败**。
+  - 为什么：文档与实现不一致比没有文档更危险——V1.1 的排期与请假模型已被推翻，若继续以它为准会直接误导阶段 1–2 的开发。
+  - 影响面：文档。`设计.md` 814 → 1166 行。**无代码改动**（88 个测试仍全部通过）。
+- ~~待办：`设计.md` 需修订至 V1.2~~ —— **本轮已完成**。
+
+---
+
+## 待办登记（尚未出现在任何版本中）
+
+| 编号 | 待办 | 关联 | 阻塞对象 | 状态 |
+|---|---|---|---|---|
+| TODO-01 | ~~确认 Q1–Q10~~ | 决策 | 阶段 2 开工 | **已完成** |
+| TODO-01b | ~~确认 Q11（科室作息）~~ | `开发计划.md` 8.1 | 阶段 2 开工 | **已完成**（06:00–11:30 / 13:00–17:30） |
+| TODO-02 | ~~`设计.md` 修订至 V1.2~~ | 文档 | 阶段 0 结束前 | **已完成**（见 [未发布] → 文档） |
+| TODO-03 | ~~建立 `README.md` 与仓库骨架~~ | 阶段 0 T0.1 | 阶段 0 | **已完成** |
+| TODO-03b | 后端骨架切换为 FastAPI，接入 Alembic | 阶段 0 T0.2/T0.4 | **依赖可安装**（见 `docs/setup.md`） | 阻塞 |
+| TODO-04 | 验证 WeasyPrint 中文渲染（字体检查已通过，渲染待验） | R3 / D03 | **依赖可安装** | 阻塞 |
+| TODO-05 | ~~补齐 8.2.2/8.2.3/8.2.4 三套模板参数表并落成种子~~ | P-22 / T3.2 / R1 | 阶段 3 开工 | **已完成**（三份种子，37 个测试） |
+| TODO-06 | 阶段 1：认证、用户与患者 | 开发计划 阶段 1 | **依赖可安装** | 阻塞 |
+| TODO-07 | 清除 `backend/data/_test_tmp/` 下 65 个空目录 | 环境清理 | 需要逐个目录的权限修复 | 低优先级（已 gitignore，无业务数据） |
+| TODO-08 | `option_set` 增加 `variant` 列，让全局层支持同一 `code` 的多套选项 | 3.6.4 / seed/options.py | 无（需一次迁移） | 待办（当前只导入主变体，17 套变体被计数跳过） |

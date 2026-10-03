@@ -1,0 +1,32 @@
+/* 全局基础样式：只做必要的重置，组件样式一律交给 Ant Design。 */
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
+    'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  background: #f5f7fa;
+}
+
+/* 表格里的长文本（如注意事项、参数摘要）要能换行，否则撑破布局 */
+.ant-table-cell {
+  word-break: break-word;
+}
+
+/* 打印时只保留内容区，隐藏菜单与筛选栏 */
+@media print {
+  .ant-layout-sider,
+  .ant-layout-header,
+  .no-print {
+    display: none !important;
+  }
+  .ant-layout-content {
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+}

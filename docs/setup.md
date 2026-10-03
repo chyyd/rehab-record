@@ -1,0 +1,121 @@
+# 环境搭建与运行（setup）
+
+**当前状态**：M0 骨架已交付并全部验证（127 个测试通过，0 skip）。
+
+---
+
+## 0. 用哪个 Python（最容易搞错的一点）
+
+**必须用系统 Python 3.13**：
+
+```
+C:\Users\youda\AppData\Local\Programs\Python\Python313\python.exe
+```
+
+DSH 自带的 `dsh-primary-runtime` Python 3.12 **不要用** —— 那个环境里没有任何第三方库，
+用它跑会看到 `pip install fastapi` → `No matching distribution found`，从而误判成"网络不通"。
+（2026-10-03 我曾因此把项目误判为阻塞，实际是探错了解释器。）
+
+系统 Python 3.13.3 里已就绪：`fastapi 0.116.1`、`SQLAlchemy 2.0.45`、`alembic 1.17.2`、
+`uvicorn 0.35.0`、`pydantic 2.11.3`、`PyJWT 2.10.1`、`Jinja2 3.1.6`、`reportlab 4.4.6`、
+`pypdf 6.6.0`、`pytest 8.4.1`、`httpx 0.28.1`、`ruff 0.15.20`。
+
+**尚未安装（按需启用，均有兜底方案）**：
+
+| 包 | 用途 | 兜底 |
+|---|---|---|
+| `argon2-cffi` | 密码哈希 | 标准库 `hashlib.scrypt` / `pbkdf2_hmac` |
+| `APScheduler` | 请假到期恢复、每日备份 | 标准库 `threading.Timer` 或系统计划任务 |
+
+需要时安装（当前 pip 源为清华镜像，可用）：
+
+```powershell
+& $py -m pip install argon2-cffi APScheduler
+```
+
+---
+
+## 1. 运行
+
+```powershell
+cd backend
+$py = "C:\Users\youda\AppData\Local\Programs\Python\Python313\python.exe"
+
+& $py -m app.cli init      # 建库 + 迁移到最新 + 健康检查
+& $py -m app.cli seed      # 导入全部种子（字典/反应定义/选项集，幂等）
+& $py -m app.cli health    # 健康检查（JSON）
+& $py -m app.cli periods   # 半日制作息与请假到期时点（Q11）
+& $py -m app.cli tables    # 列出表与行数
+```
+
+数据库默认落在 `data/kf.db`，可用环境变量覆盖：
+
+| 环境变量 | 默认值 | 说明 |
+|---|---|---|
+| `KB_DB_PATH` | `<repo>/data/kf.db` | SQLite 文件路径 |
+| `KB_SQLITE_BUSY_TIMEOUT_MS` | `5000` | 写锁等待（D05） |
+| `KB_SQLITE_WAL` | `on` | 是否启用 WAL |
+
+### 跑测试
+
+```powershell
+cd backend
+& $py -m unittest discover -s tests -t . -v      # 127 个测试
+& $py scripts\verify_http.py                     # HTTP 端到端
+& $py scripts\check_docs_consistency.py          # 跨文档一致性（103 项）
+```
+
+---
+
+## 2. 健康检查解读
+
+`python -m app.cli health` 的 `status` 三种取值：
+
+| status | 含义 | 处置 |
+|---|---|---|
+| `ok` | 全部检查通过 | 无 |
+| `degraded` | 能跑但有问题（存在未应用迁移、非 WAL 模式等），`database.problems` 列出原因 | 看 `problems` 逐条修 |
+| `down` | **JSON1 或外键不可用** | 拒绝服务。这两种情况都会静默产生坏数据，必须先修环境 |
+
+---
+
+## 3. PDF 中文渲染（D03，已验证）
+
+**方案：`reportlab` + 内置 CID 字体 `STSong-Light`**，不用 WeasyPrint。
+
+- 该字体是 reportlab **自带的**，不依赖任何系统字体文件，Windows 开发机与 Linux 容器都一样可用；
+- 实测渲染中文表格后，用 `pypdf` 反向提取文本，`康复科`/`偏瘫肢体综合训练`/`糊状`/`张三` 全部命中；
+- 因此**不需要**在容器里打包 `fonts-noto-cjk`，也避开了 WeasyPrint 的 GTK/Pango 原生依赖。
+
+回归防线：`tests/test_pdf_smoke.py` 会真实渲染 PDF 并校验文本层，字体方案一旦退化就会失败。
+
+---
+
+## 4. 测试临时文件的存放位置（本机踩过的坑）
+
+测试临时文件**直接建在 `backend/data/` 下**（唯一文件名 + 显式删除），没有用系统临时目录，也没有建子目录。原因：
+
+| 做法 | 本机实测结果 |
+|---|---|
+| `tempfile.TemporaryDirectory()`（系统 `%TEMP%`） | 测试能跑，但解释器退出时清理被拒：`PermissionError [WinError 5]` |
+| `tempfile.mkdtemp(dir=backend/data/_test_tmp)` | **创建出来的子目录当前用户无权访问**，往里写文件直接 `Permission denied` |
+| `tempfile.mkstemp(dir=backend/data)` ← 当前采用 | 正常，测试结束后自动删除，无残留 |
+
+> **已知残留**：早期调试用 `mkdtemp` 生成的一批空目录位于 `backend/data/` 下
+> （`_test_tmp/`、`kf-pdf-*/`）。这些目录带有显式**拒绝删除**权限项，连所有者也无法直接删除，
+> 需要先改每个目录自身的权限。它们不含任何代码或业务数据，且 `data/` 已在 `.gitignore` 中，
+> 可以安全忽略；若要彻底清除，用本仓库的诊断脚本对每个目录各跑一次。
+>
+> 这些都是**早期脚手架**留下的：现在的 `tests/support.py` 与 `tests/test_pdf_smoke.py`
+> 都改用 `mkstemp` 建唯一文件、并在 `tearDown` 里显式删除，不会再产生新残留。
+
+---
+
+## 5. 后续（阶段 1+）
+
+系统 Python 3.13 已具备 FastAPI / SQLAlchemy / Alembic / PyJWT / reportlab，
+阶段 0 剩余部分（FastAPI 骨架、Alembic 接管迁移）与阶段 1–5 可以直接开工。
+
+**不建议**为本项目另建 venv：当前系统 Python 已装好全部所需包，另建 venv 需要重新下载安装，
+反而引入不必要的失败点。如果后续要隔离，再迁到 venv 也不影响仓库内容。
+

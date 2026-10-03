@@ -1,0 +1,67 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kf-record-backend"
+version = "0.1.0"
+description = "康复科治疗过程记录系统 — 后端"
+requires-python = ">=3.11"
+
+# 运行环境（2026-10-03 实测确定）：
+#   必须使用**系统 Python 3.13**：C:\Users\youda\AppData\Local\Programs\Python\Python313\python.exe
+#   DSH 自带的 dsh-primary-runtime Python 3.12 **不要用**，里面没有第三方库，
+#   用它跑 pip 会得到 "No matching distribution found"，从而误判成网络不通。
+dependencies = [
+    # Web（T0.2/T0.4）
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pydantic>=2.7",
+    # 数据层
+    "SQLAlchemy>=2.0",
+    "alembic>=1.13",
+    # 认证（D01 / 5.5）
+    "PyJWT>=2.8",
+    # PDF（D03 已定：reportlab + 内置 CID 字体 STSong-Light，无需 WeasyPrint）
+    "reportlab>=4.0",
+]
+
+[project.optional-dependencies]
+# PDF 内容反向校验（测试用）
+pdf = [
+    "reportlab>=4.0",
+    "pypdf>=4.0",
+]
+# 密码哈希。未安装时用标准库 hashlib.scrypt / pbkdf2_hmac 兜底
+auth = [
+    "argon2-cffi>=23.1",
+]
+# 运维：请假到期恢复、每日备份。未安装时用标准库 threading.Timer 兜底
+ops = [
+    "APScheduler>=3.10",
+]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "httpx>=0.27",
+    "ruff>=0.5",
+]
+
+[tool.setuptools]
+packages = ["app", "app.core", "app.db", "app.api", "app.api.v1", "app.models", "app.schemas", "app.services", "seed"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+extend-exclude = ["data"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM"]
+# SIM105：审计写入刻意用空 except 吞掉 sqlite 错误（审计失败不应让业务失败）。
+# 这里保留 try/except/pass 是为了让"异常被吞掉"在代码里显式可见。
+ignore = ["SIM105"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"

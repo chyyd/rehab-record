@@ -1,0 +1,1708 @@
+{
+  "main_items": [
+    {
+      "code": "motor_function",
+      "name": "运动功能障碍训练",
+      "sort": 0,
+      "sub_items": [
+        {
+          "code": "motor_function_01",
+          "name": "偏瘫肢体综合训练",
+          "sort": 0,
+          "params": [
+            {
+              "param_key": "body_part",
+              "param_name": "部位",
+              "input_type": "multi_select",
+              "options": [
+                "肩",
+                "肘",
+                "腕",
+                "手",
+                "髋",
+                "膝",
+                "踝",
+                "足"
+              ],
+              "default_value": null,
+              "required": 0,
+              "unit": null,
+              "sort": 0
+            },
+            {
+              "param_key": "side",
+              "param_name": "侧别",
+              "input_type": "select",
+              "options": [
+                "左",
+                "右",
+                "双侧"
+              ],
+              "default_value": [
+                "左"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 10
+            },
+            {
+              "param_key": "position",
+              "param_name": "体位",
+              "input_type": "select",
+              "options": [
+                "仰卧",
+                "俯卧",
+                "坐位",
+                "站立",
+                "侧卧"
+              ],
+              "default_value": [
+                "坐位"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 20
+            },
+            {
+              "param_key": "assistance_level",
+              "param_name": "辅助程度",
+              "input_type": "select",
+              "options": [
+                "完全辅助",
+                "最大辅助",
+                "中等辅助",
+                "最小辅助",
+                "监护",
+                "独立"
+              ],
+              "default_value": [
+                "中等辅助"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 30
+            },
+            {
+              "param_key": "mmt_grade",
+              "param_name": "MMT肌力分级",
+              "input_type": "select",
+              "options": [
+                "0",
+                "1",
+                "2",
+                "3",
+                "4",
+                "5"
+              ],
+              "default_value": [
+                "2"
+              ],
+              "required": 0,
+              "unit": "级",
+              "sort": 40
+            },
+            {
+              "param_key": "reps",
+              "param_name": "训练次数",
+              "input_type": "number",
+              "options": [],
+              "default_value": "10",
+              "required": 0,
+              "unit": "次",
+              "sort": 50
+            },
+            {
+              "param_key": "sets",
+              "param_name": "组数",
+              "input_type": "number",
+              "options": [],
+              "default_value": "3",
+              "required": 0,
+              "unit": "组",
+              "sort": 60
+            }
+          ]
+        },
+        {
+          "code": "motor_function_02",
+          "name": "关节松动训练",
+          "sort": 10,
+          "params": [
+            {
+              "param_key": "joint",
+              "param_name": "关节",
+              "input_type": "select",
+              "options": [
+                "肩",
+                "肘",
+                "腕",
+                "髋",
+                "膝",
+                "踝",
+                "脊柱"
+              ],
+              "default_value": [
+                "肩"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 0
+            },
+            {
+              "param_key": "side",
+              "param_name": "侧别",
+              "input_type": "select",
+              "options": [
+                "左",
+                "右",
+                "双侧"
+              ],
+              "default_value": [
+                "左"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 10
+            },
+            {
+              "param_key": "mobilization_grade",
+              "param_name": "松动等级",
+              "input_type": "select",
+              "options": [
+                "Ⅰ级",
+                "Ⅱ级",
+                "Ⅲ级",
+                "Ⅳ级",
+                "Ⅴ级"
+              ],
+              "default_value": [
+                "Ⅱ级"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 20
+            },
+            {
+              "param_key": "direction",
+              "param_name": "方向",
+              "input_type": "multi_select",
+              "options": [
+                "前",
+                "后",
+                "上",
+                "下",
+                "内",
+                "外",
+                "旋转"
+              ],
+              "default_value": null,
+              "required": 0,
+              "unit": null,
+              "sort": 30
+            },
+            {
+              "param_key": "reps",
+              "param_name": "次数",
+              "input_type": "number",
+              "options": [],
+              "default_value": "30",
+              "required": 0,
+              "unit": "次",
+              "sort": 40
+            }
+          ]
+        },
+        {
+          "code": "motor_function_03",
+          "name": "平衡功能训练",
+          "sort": 20,
+          "params": [
+            {
+              "param_key": "position",
+              "param_name": "体位",
+              "input_type": "select",
+              "options": [
+                "坐位",
+                "站立",
+                "单腿站立"
+              ],
+              "default_value": [
+                "站立"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 0
+            },
+            {
+              "param_key": "support_surface",
+              "param_name": "支撑面",
+              "input_type": "select",
+              "options": [
+                "硬地",
+                "软垫",
+                "泡沫轴",
+                "平衡板"
+              ],
+              "default_value": [
+                "硬地"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 10
+            },
+            {
+              "param_key": "visual_condition",
+              "param_name": "视觉条件",
+              "input_type": "select",
+              "options": [
+                "睁眼",
+                "闭眼"
+              ],
+              "default_value": [
+                "睁眼"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 20
+            },
+            {
+              "param_key": "assistance_level",
+              "param_name": "辅助程度",
+              "input_type": "select",
+              "options": [
+                "完全辅助",
+                "部分辅助",
+                "监护",
+                "独立"
+              ],
+              "default_value": [
+                "监护"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 30
+            },
+            {
+              "param_key": "berg_score",
+              "param_name": "Berg评分",
+              "input_type": "number",
+              "options": [],
+              "default_value": null,
+              "required": 0,
+              "unit": "分",
+              "sort": 40
+            }
+          ]
+        },
+        {
+          "code": "motor_function_04",
+          "name": "步态训练",
+          "sort": 30,
+          "params": [
+            {
+              "param_key": "walk_mode",
+              "param_name": "步行方式",
+              "input_type": "select",
+              "options": [
+                "平行杠内",
+                "助行器",
+                "手杖",
+                "独立"
+              ],
+              "default_value": [
+                "助行器"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 0
+            },
+            {
+              "param_key": "gait_type",
+              "param_name": "步态类型",
+              "input_type": "multi_select",
+              "options": [
+                "偏瘫步态",
+                "剪刀步态",
+                "慌张步态",
+                "共济失调步态"
+              ],
+              "default_value": null,
+              "required": 0,
+              "unit": null,
+              "sort": 10
+            },
+            {
+              "param_key": "walk_distance",
+              "param_name": "步行距离",
+              "input_type": "number",
+              "options": [],
+              "default_value": "20",
+              "required": 0,
+              "unit": "米",
+              "sort": 20
+            },
+            {
+              "param_key": "assistance_level",
+              "param_name": "辅助程度",
+              "input_type": "select",
+              "options": [
+                "完全辅助",
+                "部分辅助",
+                "监护",
+                "独立"
+              ],
+              "default_value": [
+                "部分辅助"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 30
+            }
+          ]
+        },
+        {
+          "code": "motor_function_05",
+          "name": "神经发育疗法",
+          "sort": 40,
+          "params": [
+            {
+              "param_key": "technique",
+              "param_name": "技术类型",
+              "input_type": "select",
+              "options": [
+                "Bobath",
+                "Brunnstrom",
+                "Rood",
+                "PNF"
+              ],
+              "default_value": [
+                "Bobath"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 0
+            },
+            {
+              "param_key": "treatment_area",
+              "param_name": "治疗部位",
+              "input_type": "multi_select",
+              "options": [
+                "上肢",
+                "下肢",
+                "躯干",
+                "头颈"
+              ],
+              "default_value": null,
+              "required": 0,
+              "unit": null,
+              "sort": 10
+            },
+            {
+              "param_key": "train_content",
+              "param_name": "训练内容",
+              "input_type": "multi_select",
+              "options": [
+                "关键点控制",
+                "反射抑制",
+                "促进正常运动模式",
+                "运动再学习"
+              ],
+              "default_value": null,
+              "required": 0,
+              "unit": null,
+              "sort": 20
+            }
+          ]
+        },
+        {
+          "code": "motor_function_06",
+          "name": "肌力训练",
+          "sort": 50,
+          "params": [
+            {
+              "param_key": "train_mode",
+              "param_name": "训练方式",
+              "input_type": "select",
+              "options": [
+                "等长",
+                "等张",
+                "等速"
+              ],
+              "default_value": [
+                "等张"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 0
+            },
+            {
+              "param_key": "resistance",
+              "param_name": "阻力",
+              "input_type": "select",
+              "options": [
+                "徒手",
+                "弹力带",
+                "沙袋",
+                "器械"
+              ],
+              "default_value": [
+                "弹力带"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 10
+            },
+            {
+              "param_key": "load",
+              "param_name": "负荷",
+              "input_type": "number",
+              "options": [],
+              "default_value": null,
+              "required": 0,
+              "unit": "kgRM",
+              "sort": 20
+            },
+            {
+              "param_key": "mmt_grade",
+              "param_name": "MMT分级",
+              "input_type": "select",
+              "options": [
+                "0–5"
+              ],
+              "default_value": null,
+              "required": 0,
+              "unit": "级",
+              "sort": 30
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "adl_skill",
+      "name": "生活技能康复训练",
+      "sort": 10,
+      "sub_items": [
+        {
+          "code": "adl_skill_01",
+          "name": "进食训练",
+          "sort": 0,
+          "params": [
+            {
+              "param_key": "feeding_mode",
+              "param_name": "进食方式",
+              "input_type": "select",
+              "options": [
+                "经口",
+                "鼻饲管",
+                "胃造瘘"
+              ],
+              "default_value": [
+                "经口"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 0
+            },
+            {
+              "param_key": "food_texture",
+              "param_name": "食物性状",
+              "input_type": "select",
+              "options": [
+                "普食",
+                "软食",
+                "半流质",
+                "流质",
+                "糊状"
+              ],
+              "default_value": [
+                "软食"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 10
+            },
+            {
+              "param_key": "assistance_level",
+              "param_name": "辅助程度",
+              "input_type": "select",
+              "options": [
+                "完全辅助",
+                "部分辅助",
+                "监护",
+                "独立"
+              ],
+              "default_value": [
+                "部分辅助"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 20
+            },
+            {
+              "param_key": "tableware",
+              "param_name": "餐具",
+              "input_type": "select",
+              "options": [
+                "普通餐具",
+                "改良餐具",
+                "辅助器具"
+              ],
+              "default_value": [
+                "普通餐具"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 30
+            }
+          ]
+        },
+        {
+          "code": "adl_skill_02",
+          "name": "穿衣训练",
+          "sort": 10,
+          "params": [
+            {
+              "param_key": "clothing_type",
+              "param_name": "衣物类型",
+              "input_type": "multi_select",
+              "options": [
+                "上衣",
+                "裤子",
+                "鞋子",
+                "袜子",
+                "辅具"
+              ],
+              "default_value": [
+                "上衣"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 0
+            },
+            {
+              "param_key": "assistance_level",
+              "param_name": "辅助程度",
+              "input_type": "select",
+              "options": [
+                "完全辅助",
+                "部分辅助",
+                "监护",
+                "独立"
+              ],
+              "default_value": [
+                "部分辅助"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 10
+            },
+            {
+              "param_key": "completion",
+              "param_name": "完成度",
+              "input_type": "select",
+              "options": [
+                "0–25%",
+                "25–50%",
+                "50–75%",
+                "75–100%"
+              ],
+              "default_value": [
+                "50–75%"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 20
+            }
+          ]
+        },
+        {
+          "code": "adl_skill_03",
+          "name": "修饰训练",
+          "sort": 20,
+          "params": [
+            {
+              "param_key": "items",
+              "param_name": "项目",
+              "input_type": "multi_select",
+              "options": [
+                "洗脸",
+                "刷牙",
+                "梳头",
+                "剃须",
+                "化妆"
+              ],
+              "default_value": [
+                "洗脸",
+                "刷牙"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 0
+            },
+            {
+              "param_key": "assistance_level",
+              "param_name": "辅助程度",
+              "input_type": "select",
+              "options": [
+                "完全辅助",
+                "部分辅助",
+                "监护",
+                "独立"
+              ],
+              "default_value": [
+                "部分辅助"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 10
+            }
+          ]
+        },
+        {
+          "code": "adl_skill_04",
+          "name": "如厕训练",
+          "sort": 30,
+          "params": [
+            {
+              "param_key": "assistance_level",
+              "param_name": "辅助程度",
+              "input_type": "select",
+              "options": [
+                "完全辅助",
+                "部分辅助",
+                "监护",
+                "独立"
+              ],
+              "default_value": [
+                "部分辅助"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 0
+            },
+            {
+              "param_key": "transfer_mode",
+              "param_name": "转移方式",
+              "input_type": "select",
+              "options": [
+                "独立转移",
+                "辅助转移",
+                "机械辅助"
+              ],
+              "default_value": [
+                "辅助转移"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 10
+            }
+          ]
+        },
+        {
+          "code": "adl_skill_05",
+          "name": "洗澡训练",
+          "sort": 40,
+          "params": [
+            {
+              "param_key": "assistance_level",
+              "param_name": "辅助程度",
+              "input_type": "select",
+              "options": [
+                "完全辅助",
+                "部分辅助",
+                "监护",
+                "独立"
+              ],
+              "default_value": [
+                "部分辅助"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 0
+            },
+            {
+              "param_key": "assistive_device",
+              "param_name": "辅助器具",
+              "input_type": "multi_select",
+              "options": [
+                "沐浴椅",
+                "防滑垫",
+                "扶手",
+                "长柄刷"
+              ],
+              "default_value": null,
+              "required": 0,
+              "unit": null,
+              "sort": 10
+            }
+          ]
+        },
+        {
+          "code": "adl_skill_06",
+          "name": "转移训练",
+          "sort": 50,
+          "params": [
+            {
+              "param_key": "transfer_type",
+              "param_name": "转移类型",
+              "input_type": "select",
+              "options": [
+                "床-椅",
+                "椅-轮椅",
+                "入浴",
+                "入厕"
+              ],
+              "default_value": [
+                "床-椅"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 0
+            },
+            {
+              "param_key": "assistance_level",
+              "param_name": "辅助程度",
+              "input_type": "select",
+              "options": [
+                "完全辅助",
+                "部分辅助",
+                "监护",
+                "独立"
+              ],
+              "default_value": [
+                "部分辅助"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 10
+            }
+          ]
+        },
+        {
+          "code": "adl_skill_07",
+          "name": "家务劳动训练",
+          "sort": 60,
+          "params": [
+            {
+              "param_key": "items",
+              "param_name": "项目",
+              "input_type": "multi_select",
+              "options": [
+                "烹饪",
+                "整理",
+                "清洁",
+                "洗衣",
+                "购物"
+              ],
+              "default_value": null,
+              "required": 0,
+              "unit": null,
+              "sort": 0
+            },
+            {
+              "param_key": "completion",
+              "param_name": "完成度",
+              "input_type": "select",
+              "options": [
+                "0–25%",
+                "25–50%",
+                "50–75%",
+                "75–100%"
+              ],
+              "default_value": null,
+              "required": 0,
+              "unit": null,
+              "sort": 10
+            }
+          ]
+        },
+        {
+          "code": "adl_skill_08",
+          "name": "社交技能训练",
+          "sort": 70,
+          "params": [
+            {
+              "param_key": "scene",
+              "param_name": "场景",
+              "input_type": "select",
+              "options": [
+                "面对面交流",
+                "电话沟通",
+                "社区活动"
+              ],
+              "default_value": [
+                "面对面交流"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 0
+            },
+            {
+              "param_key": "assistance_level",
+              "param_name": "辅助程度",
+              "input_type": "select",
+              "options": [
+                "完全辅助",
+                "部分辅助",
+                "监护",
+                "独立"
+              ],
+              "default_value": [
+                "监护"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 10
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "speech_function",
+      "name": "言语功能障碍训练",
+      "sort": 20,
+      "sub_items": [
+        {
+          "code": "speech_function_01",
+          "name": "失语症治疗",
+          "sort": 0,
+          "params": [
+            {
+              "param_key": "language_dimension",
+              "param_name": "语言维度",
+              "input_type": "multi_select",
+              "options": [
+                "听理解",
+                "口语表达",
+                "复述",
+                "命名",
+                "阅读",
+                "书写"
+              ],
+              "default_value": [
+                "口语表达"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 0
+            },
+            {
+              "param_key": "assist_mode",
+              "param_name": "辅助方式",
+              "input_type": "multi_select",
+              "options": [
+                "手势",
+                "图片",
+                "文字",
+                "语音提示",
+                "交流辅具"
+              ],
+              "default_value": [
+                "图片"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 10
+            },
+            {
+              "param_key": "accuracy",
+              "param_name": "正确率",
+              "input_type": "select",
+              "options": [
+                "<25%",
+                "25–50%",
+                "50–75%",
+                ">75%"
+              ],
+              "default_value": [
+                "50–75%"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 20
+            },
+            {
+              "param_key": "train_material",
+              "param_name": "训练素材",
+              "input_type": "multi_select",
+              "options": [
+                "单词",
+                "短语",
+                "句子",
+                "短文",
+                "对话"
+              ],
+              "default_value": [
+                "单词"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 30
+            }
+          ]
+        },
+        {
+          "code": "speech_function_02",
+          "name": "构音障碍治疗",
+          "sort": 10,
+          "params": [
+            {
+              "param_key": "train_content",
+              "param_name": "训练内容",
+              "input_type": "multi_select",
+              "options": [
+                "口颜面肌肉训练",
+                "呼吸训练",
+                "发声训练",
+                "发音训练",
+                "韵律训练"
+              ],
+              "default_value": [
+                "发音训练"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 0
+            },
+            {
+              "param_key": "articulation_organ",
+              "param_name": "发音器官",
+              "input_type": "multi_select",
+              "options": [
+                "唇",
+                "舌",
+                "下颌",
+                "软腭",
+                "面颊"
+              ],
+              "default_value": [
+                "舌"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 10
+            },
+            {
+              "param_key": "train_mode",
+              "param_name": "训练方式",
+              "input_type": "select",
+              "options": [
+                "重复朗读",
+                "图片命名",
+                "模仿发音",
+                "自主发音"
+              ],
+              "default_value": [
+                "模仿发音"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 20
+            },
+            {
+              "param_key": "intelligibility",
+              "param_name": "清晰度",
+              "input_type": "select",
+              "options": [
+                "<25%",
+                "25–50%",
+                "50–75%",
+                ">75%"
+              ],
+              "default_value": [
+                "50–75%"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 30
+            }
+          ]
+        },
+        {
+          "code": "speech_function_03",
+          "name": "口吃治疗",
+          "sort": 20,
+          "params": [
+            {
+              "param_key": "train_content",
+              "param_name": "训练内容",
+              "input_type": "multi_select",
+              "options": [
+                "流畅性训练",
+                "语速控制",
+                "呼吸协调",
+                "心理疏导"
+              ],
+              "default_value": [
+                "语速控制"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 0
+            },
+            {
+              "param_key": "speech_rate",
+              "param_name": "语速",
+              "input_type": "select",
+              "options": [
+                "很慢",
+                "慢",
+                "中等",
+                "正常"
+              ],
+              "default_value": [
+                "慢"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 10
+            }
+          ]
+        },
+        {
+          "code": "speech_function_04",
+          "name": "儿童语言康复",
+          "sort": 30,
+          "params": [
+            {
+              "param_key": "train_content",
+              "param_name": "训练内容",
+              "input_type": "multi_select",
+              "options": [
+                "语言理解",
+                "语言表达",
+                "词汇扩展",
+                "句子构建",
+                "社交沟通"
+              ],
+              "default_value": [
+                "语言表达"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 0
+            },
+            {
+              "param_key": "assist_mode",
+              "param_name": "辅助方式",
+              "input_type": "multi_select",
+              "options": [
+                "玩具",
+                "图片",
+                "绘本",
+                "游戏",
+                "音乐"
+              ],
+              "default_value": [
+                "图片"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 10
+            }
+          ]
+        },
+        {
+          "code": "speech_function_05",
+          "name": "发声障碍治疗",
+          "sort": 40,
+          "params": [
+            {
+              "param_key": "train_content",
+              "param_name": "训练内容",
+              "input_type": "multi_select",
+              "options": [
+                "嗓音训练",
+                "呼吸支持",
+                "共鸣训练",
+                "音调训练"
+              ],
+              "default_value": [
+                "呼吸支持"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 0
+            },
+            {
+              "param_key": "pitch",
+              "param_name": "音调",
+              "input_type": "select",
+              "options": [
+                "偏低",
+                "正常",
+                "偏高"
+              ],
+              "default_value": [
+                "正常"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 10
+            }
+          ]
+        },
+        {
+          "code": "speech_function_06",
+          "name": "实用交流能力训练",
+          "sort": 50,
+          "params": [
+            {
+              "param_key": "communication_mode",
+              "param_name": "交流方式",
+              "input_type": "multi_select",
+              "options": [
+                "手势",
+                "图片交换",
+                "交流板",
+                "语音生成设备"
+              ],
+              "default_value": [
+                "图片交换"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 0
+            },
+            {
+              "param_key": "scene",
+              "param_name": "场景",
+              "input_type": "select",
+              "options": [
+                "治疗室",
+                "模拟场景",
+                "社区"
+              ],
+              "default_value": [
+                "治疗室"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 10
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "code": "swallow_function",
+      "name": "吞咽功能障碍训练",
+      "sort": 30,
+      "sub_items": [
+        {
+          "code": "swallow_function_01",
+          "name": "口腔感觉训练",
+          "sort": 0,
+          "params": [
+            {
+              "param_key": "stimulus_mode",
+              "param_name": "刺激方式",
+              "input_type": "multi_select",
+              "options": [
+                "冰刺激",
+                "触觉刺激",
+                "压力刺激",
+                "振动刺激"
+              ],
+              "default_value": [
+                "冰刺激"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 0
+            },
+            {
+              "param_key": "body_part",
+              "param_name": "部位",
+              "input_type": "multi_select",
+              "options": [
+                "唇",
+                "舌",
+                "颊",
+                "软腭",
+                "咽后壁"
+              ],
+              "default_value": [
+                "舌"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 10
+            },
+            {
+              "param_key": "stim_duration",
+              "param_name": "刺激时长",
+              "input_type": "number",
+              "options": [],
+              "default_value": "5",
+              "required": 0,
+              "unit": "秒",
+              "sort": 20
+            }
+          ]
+        },
+        {
+          "code": "swallow_function_02",
+          "name": "口腔运动训练",
+          "sort": 10,
+          "params": [
+            {
+              "param_key": "train_body_part",
+              "param_name": "训练部位",
+              "input_type": "multi_select",
+              "options": [
+                "唇",
+                "舌",
+                "颊肌",
+                "下颌",
+                "软腭"
+              ],
+              "default_value": [
+                "舌"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 0
+            },
+            {
+              "param_key": "train_action",
+              "param_name": "训练动作",
+              "input_type": "multi_select",
+              "options": [
+                "唇闭合",
+                "唇前突",
+                "舌前伸",
+                "舌后缩",
+                "舌侧移",
+                "舌上抬",
+                "鼓腮"
+              ],
+              "default_value": [
+                "舌前伸"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 10
+            },
+            {
+              "param_key": "reps",
+              "param_name": "次数",
+              "input_type": "number",
+              "options": [],
+              "default_value": "10",
+              "required": 0,
+              "unit": "次",
+              "sort": 20
+            }
+          ]
+        },
+        {
+          "code": "swallow_function_03",
+          "name": "吞咽手法训练",
+          "sort": 20,
+          "params": [
+            {
+              "param_key": "maneuver_type",
+              "param_name": "手法类型",
+              "input_type": "multi_select",
+              "options": [
+                "用力吞咽",
+                "门德尔松手法",
+                "声门上吞咽",
+                "超声门上吞咽",
+                "Masako训练",
+                "Shaker训练"
+              ],
+              "default_value": [
+                "门德尔松手法"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 0
+            },
+            {
+              "param_key": "reps",
+              "param_name": "次数",
+              "input_type": "number",
+              "options": [],
+              "default_value": "10",
+              "required": 0,
+              "unit": "次",
+              "sort": 10
+            }
+          ]
+        },
+        {
+          "code": "swallow_function_04",
+          "name": "姿势治疗",
+          "sort": 30,
+          "params": [
+            {
+              "param_key": "posture_type",
+              "param_name": "姿势类型",
+              "input_type": "multi_select",
+              "options": [
+                "低头吞咽",
+                "转头吞咽",
+                "侧方吞咽",
+                "空吞咽",
+                "交互吞咽"
+              ],
+              "default_value": [
+                "低头吞咽"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 0
+            },
+            {
+              "param_key": "side",
+              "param_name": "侧别",
+              "input_type": "select",
+              "options": [
+                "左",
+                "右",
+                "无"
+              ],
+              "default_value": [
+                "无"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 10
+            }
+          ]
+        },
+        {
+          "code": "swallow_function_05",
+          "name": "呼吸功能训练",
+          "sort": 40,
+          "params": [
+            {
+              "param_key": "train_content",
+              "param_name": "训练内容",
+              "input_type": "multi_select",
+              "options": [
+                "腹式呼吸",
+                "缩唇呼吸",
+                "呼吸肌训练（EMST）"
+              ],
+              "default_value": [
+                "腹式呼吸"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 0
+            },
+            {
+              "param_key": "intensity",
+              "param_name": "强度",
+              "input_type": "select",
+              "options": [
+                "低",
+                "中",
+                "高"
+              ],
+              "default_value": [
+                "中"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 10
+            }
+          ]
+        },
+        {
+          "code": "swallow_function_06",
+          "name": "导管球囊扩张",
+          "sort": 50,
+          "params": [
+            {
+              "param_key": "insertion_route",
+              "param_name": "置入途径",
+              "input_type": "select",
+              "options": [
+                "经口",
+                "经鼻"
+              ],
+              "default_value": [
+                "经鼻"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 0
+            },
+            {
+              "param_key": "balloon_volume",
+              "param_name": "球囊容量",
+              "input_type": "number",
+              "options": [],
+              "default_value": null,
+              "required": 0,
+              "unit": "ml",
+              "sort": 10
+            },
+            {
+              "param_key": "dilation_count",
+              "param_name": "扩张次数",
+              "input_type": "number",
+              "options": [],
+              "default_value": null,
+              "required": 0,
+              "unit": "次",
+              "sort": 20
+            }
+          ]
+        },
+        {
+          "code": "swallow_function_07",
+          "name": "摄食训练",
+          "sort": 60,
+          "params": [
+            {
+              "param_key": "food_texture",
+              "param_name": "食物性状",
+              "input_type": "select",
+              "options": [
+                "稀流质",
+                "浓流质",
+                "糊状",
+                "半固体",
+                "固体"
+              ],
+              "default_value": [
+                "糊状"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 0
+            },
+            {
+              "param_key": "bolus_size",
+              "param_name": "一口量",
+              "input_type": "select",
+              "options": [
+                "1ml",
+                "3ml",
+                "5ml",
+                "10ml",
+                "20ml"
+              ],
+              "default_value": [
+                "5ml"
+              ],
+              "required": 0,
+              "unit": "ml",
+              "sort": 10
+            },
+            {
+              "param_key": "feeding_posture",
+              "param_name": "进食姿势",
+              "input_type": "multi_select",
+              "options": [
+                "坐位90°",
+                "坐位60°",
+                "半卧位",
+                "低头吞咽",
+                "转头吞咽"
+              ],
+              "default_value": [
+                "坐位90°"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 20
+            },
+            {
+              "param_key": "assist_mode",
+              "param_name": "辅助方式",
+              "input_type": "select",
+              "options": [
+                "完全辅助",
+                "部分辅助",
+                "监护",
+                "独立"
+              ],
+              "default_value": [
+                "部分辅助"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 30
+            }
+          ]
+        },
+        {
+          "code": "swallow_function_08",
+          "name": "吞咽电刺激",
+          "sort": 70,
+          "params": [
+            {
+              "param_key": "body_part",
+              "param_name": "部位",
+              "input_type": "multi_select",
+              "options": [
+                "舌骨上肌群",
+                "舌骨下肌群",
+                "咽部"
+              ],
+              "default_value": [
+                "舌骨上肌群"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 0
+            },
+            {
+              "param_key": "frequency",
+              "param_name": "频率",
+              "input_type": "number",
+              "options": [],
+              "default_value": "80",
+              "required": 0,
+              "unit": "Hz",
+              "sort": 10
+            },
+            {
+              "param_key": "intensity",
+              "param_name": "强度",
+              "input_type": "number",
+              "options": [],
+              "default_value": null,
+              "required": 0,
+              "unit": "mA",
+              "sort": 20
+            },
+            {
+              "param_key": "duration_min",
+              "param_name": "时间",
+              "input_type": "number",
+              "options": [],
+              "default_value": "20",
+              "required": 0,
+              "unit": "min",
+              "sort": 30
+            }
+          ]
+        },
+        {
+          "code": "swallow_function_09",
+          "name": "说话瓣膜佩戴",
+          "sort": 80,
+          "params": [
+            {
+              "param_key": "valve_type",
+              "param_name": "瓣膜类型",
+              "input_type": "select",
+              "options": [
+                "Passy-Muir",
+                "其他"
+              ],
+              "default_value": [
+                "Passy-Muir"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 0
+            },
+            {
+              "param_key": "wearing_duration",
+              "param_name": "佩戴时长",
+              "input_type": "number",
+              "options": [],
+              "default_value": null,
+              "required": 0,
+              "unit": "min",
+              "sort": 10
+            },
+            {
+              "param_key": "tolerance",
+              "param_name": "耐受情况",
+              "input_type": "select",
+              "options": [
+                "良好",
+                "一般",
+                "不耐受"
+              ],
+              "default_value": [
+                "良好"
+              ],
+              "required": 0,
+              "unit": null,
+              "sort": 20
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "templates": [
+    {
+      "code": "tpl_motor_function",
+      "name": "运动功能障碍训练·常规",
+      "scope": "dept",
+      "main_item_code": "motor_function",
+      "sub_item_codes": [
+        "motor_function_01",
+        "motor_function_02",
+        "motor_function_03",
+        "motor_function_04",
+        "motor_function_05",
+        "motor_function_06"
+      ],
+      "sort": 0
+    },
+    {
+      "code": "tpl_adl_skill",
+      "name": "生活技能康复训练·常规",
+      "scope": "dept",
+      "main_item_code": "adl_skill",
+      "sub_item_codes": [
+        "adl_skill_01",
+        "adl_skill_02",
+        "adl_skill_03",
+        "adl_skill_04",
+        "adl_skill_05",
+        "adl_skill_06",
+        "adl_skill_07",
+        "adl_skill_08"
+      ],
+      "sort": 10
+    },
+    {
+      "code": "tpl_speech_function",
+      "name": "言语功能障碍训练·常规",
+      "scope": "dept",
+      "main_item_code": "speech_function",
+      "sub_item_codes": [
+        "speech_function_01",
+        "speech_function_02",
+        "speech_function_03",
+        "speech_function_04",
+        "speech_function_05",
+        "speech_function_06"
+      ],
+      "sort": 20
+    },
+    {
+      "code": "tpl_swallow_function",
+      "name": "吞咽功能障碍训练·常规",
+      "scope": "dept",
+      "main_item_code": "swallow_function",
+      "sub_item_codes": [
+        "swallow_function_01",
+        "swallow_function_02",
+        "swallow_function_03",
+        "swallow_function_04",
+        "swallow_function_05",
+        "swallow_function_06",
+        "swallow_function_07",
+        "swallow_function_08",
+        "swallow_function_09"
+      ],
+      "sort": 30
+    }
+  ]
+}

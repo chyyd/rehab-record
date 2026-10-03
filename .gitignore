@@ -1,0 +1,51 @@
+# ---- 数据与运行时产物（绝不入库）----
+*.db
+*.db-wal
+*.db-shm
+data/
+backend/data/
+logs/
+backups/
+.venv/
+venv/
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+# pytest 在缺少 rootdir 时会生成这种带随机后缀的临时目录
+pytest-cache-files-*/
+# 本机调试用的临时脚本/输出（我常在 backend/data/ 下放，data/ 已忽略，这里兜一层）
+_changelog_backup_*.md
+build/
+dist/
+# ---- Flutter / Dart ----
+app/.dart_tool/
+app/build/
+app/.flutter-plugins
+app/.flutter-plugins-dependencies
+app/pubspec.lock
+
+# ---- Node / 管理后台 ----
+admin/node_modules/
+admin/dist/
+admin/.vite/
+# 本机 npm 缓存落在用户目录时会被沙箱拒绝写入，因此改到工作区内；绝不入库
+.npm-cache/
+
+# ---- 编辑器与系统 ----
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+desktop.ini
+
+# ---- 敏感配置（证书、密钥、真实账号）----
+deploy/nginx/certs/
+*.pem
+*.key
+.env
+.env.*
