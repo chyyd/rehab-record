@@ -229,6 +229,14 @@
     - 弹窗有开启动画，必须等表单控件出现而不是只等 `.ant-modal`；
     - 上一轮跑完后 Cookie 仍在 Edge profile 里，页面会直接是已登录状态 —— 必须先清 Cookie/Storage 才能测登录流程；
     - 断言"登录成功"时不能只看页面上有没有"康复科管理后台"（登录页标题里也有这几个字），要看 URL 已变为 `/` 且登录表单消失。
+- **一键启停脚本 `start.ps1`（仓库根目录）**：命令行里打印管理员账号密码，并自动打开浏览器停在登录页。
+  - **动作**：`start`（默认）/ `stop` / `restart` / `status`；可选 `-NoBrowser`、`-BackendPort`、`-FrontendPort`。
+  - **首次运行全自动**：建库 → 应用迁移 → 导入种子 → 创建管理员 → 安装前端依赖（缺 `node_modules` 时）。
+  - **管理员密码**：随机生成（16 位，字符集剔除了容易看错的 `0/O/1/l/I`），写入 `.dev-admin-password.txt`（已 gitignore）并打印；**之后每次启动复用同一个密码**，不会把上次的作废。可用 `-AdminPassword` 或 `KB_ADMIN_PASSWORD` 覆盖。
+  - **Python 自动探测**：优先 `.python-path` 文件 → `KB_PYTHON` → 常见安装位置 → PATH 上的 `python`/`py`（并实测能否 `import fastapi, uvicorn`）。这样换台机器不必改脚本，也避免重演"用错解释器误判依赖装不上"。
+  - **进程管理**：后端与管理后台各起在**独立窗口**里（好排查）；`stop` 用 `taskkill /T` 结束**整棵进程树** —— 前端是 `cmd → npm → node` 三层，只杀占端口的那个会留下一串包装进程。`start` 检测到残留时会先做同样的完整清理。
+  - **为什么要按"仓库路径 + 服务特征词"匹配进程**：PID 文件在脚本被 Ctrl+C 打断或有人手起服务时就不可靠了，但也不能按进程名乱杀（会误伤别人的 `python`/`node`）。
+  - **验收**：实测 `start → stop → start` 与连续 `start` 多轮，确认端口能干净释放、进程不堆积；并用 headless Edge 走通"打开登录页 → 用脚本生成的密码登录 → 进入总览页"，无异常、无 console 错误。
 
 ### 决策
 - **Q11 定稿**：科室作息为**上午 06:00–11:30、下午 13:00–17:30**；休息按半日；请假到期时点取所属半日区间的结束时刻（上午假 → 11:30，下午假 → 17:30，全天假 → 次日 00:00）。
@@ -266,6 +274,14 @@
   - 前三个是简单改名（`Drawer size` 也接受数字，是 drop-in）。
   - 第四个不能靠改名解决：官方要求用 `App` 组件提供的实例。新增 `components/notify.ts`，在 `App.tsx` 挂载时把 `App.useApp()` 的 `message`/`modal`/`notification` 注册进去，各页面继续用命令式的 `notify.success(...)`，既拿到正确上下文又不必把每个页面改成 hook 取用（涉及 12 个文件、约 60 处调用）。
 - **修复我自己的两处工具脚本错误**：`verify_admin_ui.py` 里用 f-string 内嵌转义引号（Python 3.12 才允许，ruff 按 3.11 语法判为非法）；`test_concurrency.py` 残留一个未使用导入。
+- **修复 `start.ps1` 生成的管理员密码带 BOM，导致登录 403（隐蔽）**：PowerShell 5.1 的 `Set-Content -Encoding utf8` **会写入 UTF-8 BOM**（`EF BB BF`）。该文件随后被 **Python** 读取（`Path.read_text(encoding='utf-8')`），BOM 变成一个真实的字符串首字符 `U+FEFF`，于是密码从 16 位变成 17 位 → 用它登录返回 403。
+  - **为什么极难定位**：PowerShell 侧 `Get-Content` 会**自动剥掉 BOM**，所以"脚本自己读、脚本自己打印"看到的都是正确的 16 位密码，屏幕输出完全正常；只有 Python/浏览器实际拿它去登录时才失败。实测用硬编码正确密码在页面内 `fetch` 是 200、用文件里读出的值就是 403，才把范围锁死到文件编码。
+  - 处置：改用 .NET 的 `UTF8Encoding($false)` 明确不写 BOM（新增 `Save-AdminPassword`），读取侧显式 `TrimStart([char]0xFEFF)` 兼容已存在的带 BOM 文件。
+  - 验证：新密码文件 16 字节、前 3 字节 `77 36 6F`（不再是 `EF BB BF`），Python 读出的长度为 16；浏览器里用该密码登录成功进入总览页。
+- **修复 `start.ps1` 在 CLI 有告警时中断**：`$ErrorActionPreference='Stop'` 下，PowerShell 会把原生命令写到 **stderr 的任何一行**当成终止性错误，而这个 CLI 会把"仍在使用开发用 JWT 默认密钥"这类**告警**写到 stderr —— 命令其实成功了，脚本却中断。已改为统一的 `Invoke-NativeCommand`（stderr 合成普通字符串、命令结束即刻取退出码、由调用方按退出码判断），并把告警以暗黄色展示而不是当失败。
+- **修复 `start.ps1` 残留清理不彻底导致进程堆积**：原先检测到端口被占用时只杀"占端口的那个进程"，但前端是 `cmd → npm → node` 三层，只杀 node 会留下 `cmd`/`npm` 包装进程，反复启动越堆越多。已抽出 `Stop-RecordedProcessTrees`（按 `.run/state.json` 记录的窗口 PID 做 `taskkill /T`）供 `stop` 与 `start` 共用。
+- **修复 `.gitignore` 里三条"内联注释"式无效规则**：写成 `.run/                       # 进程信息与日志` 时，git 会把**整行**当成模式（含 `#` 与空格），等于该规则完全失效 —— `git status` 里 `.run/`、`.dev-admin-password.txt`、`.python-path` 一直显示为未跟踪。已改成注释独占一行。
+- **修复 `start.ps1` 的 PowerShell 5.1 编码问题**：脚本含中文，若保存为**无 BOM 的 UTF-8**，`powershell.exe`（5.1）会按本地代码页解码，中文全成乱码并引发一串语法错误（`Missing ')' in function parameter list` 之类，且报错行号与真实位置无关）。已改为带 UTF-8 BOM 保存。注意 `pwsh` 7 能正确解析无 BOM 的 UTF-8，所以"用 pwsh 测没问题"不能证明脚本在 5.1 下可用。
 - **修复 SQLite 连接跨线程使用导致并发请求 500（严重，只在浏览器里才暴露）**：`sqlite3.connect()` 默认 `check_same_thread=True`，而 FastAPI 会把同步依赖（`get_db`）与路由处理函数**分别丢进 anyio 线程池，二者不保证落在同一个线程**。线程池在并发下轮转，于是"依赖里建的连接、路由里用"经常跨线程，抛 `ProgrammingError: SQLite objects created in a thread can only be used in that same thread` → 接口 500。
   - **为什么之前 532 个测试全绿也没发现**：单请求顺序调用时，依赖与路由往往复用同一个工作线程；`TestClient` 的调用也是同步的。**这个缺陷只在真正并发时才出现**，是浏览器首屏同时发若干个请求把它逼出来的。
   - 处置：`storage.connect()` 显式加 `check_same_thread=False`，并在注释里写清为什么这样做是安全的（连接每请求一个、不共享；不开显式事务；并发保护交给 WAL + `busy_timeout`）。

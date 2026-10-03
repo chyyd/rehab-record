@@ -54,7 +54,28 @@
 
 ## 快速开始
 
-### 后端
+### 最省事：一键脚本（推荐）
+
+```powershell
+.\start.ps1              # 启动后端 + 管理后台，打印管理员账号密码，并自动打开浏览器到登录页
+.\start.ps1 stop         # 停止（含后端与管理后台的整棵进程树）
+.\start.ps1 status       # 查看运行状态与健康检查
+.\start.ps1 restart      # 重启
+.\start.ps1 -NoBrowser   # 只启动，不打开浏览器
+```
+
+首次运行会自动完成：建库 → 应用迁移 → 导入种子 → 创建管理员 → 安装前端依赖。
+**管理员密码是随机生成的**，会打印在窗口里并保存到 `.dev-admin-password.txt`
+（已 gitignore）。之后每次启动都复用同一个密码，不会把上次的作废。
+
+> 若提示"禁止运行脚本"，用其中任一种：
+> `powershell -ExecutionPolicy Bypass -File .\start.ps1`
+> 或 `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`
+
+脚本会自动找 Python（优先 `.python-path` 文件 → `KB_PYTHON` 环境变量 → 常见安装位置）。
+各人 Python 路径不同时，在仓库根目录建一个 `.python-path` 文件写上解释器完整路径即可。
+
+### 手动方式（后端）
 
 ```powershell
 cd backend
@@ -70,7 +91,7 @@ $env:KB_ADMIN_PASSWORD = 'Admin#2026pass'
 & $py -m app.cli periods   # 打印半日制作息与请假到期时点
 
 & $py -m app.main --reload # 启动服务端：http://127.0.0.1:8000/docs
-& $py -m unittest discover -s tests -t . -v      # 532 个测试
+& $py -m unittest discover -s tests -t . -v      # 538 个测试
 & $py scripts\verify_http.py                     # 阶段 0 HTTP 端到端
 & $py scripts\verify_stage1.py                   # 阶段 1 认证与患者
 & $py scripts\verify_stage2.py                   # 阶段 2 排期与请假

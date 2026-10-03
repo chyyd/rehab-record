@@ -36,6 +36,14 @@ admin/.vite/
 # 本机 npm 缓存落在用户目录时会被沙箱拒绝写入，因此改到工作区内；绝不入库
 .npm-cache/
 
+# ---- 本机临时文件 ----
+# 用仓库内的临时文件承载提交信息、脚本输出时，必须**在提交前**就已被忽略，
+# 否则 `git add -A` 会把它们一起带进历史（踩过一次：_cm.txt 被提交）。
+_cm.txt
+_out.txt
+_tmp*.txt
+*.tmp
+
 # ---- 编辑器与系统 ----
 .vscode/
 .idea/
@@ -49,3 +57,10 @@ deploy/nginx/certs/
 *.key
 .env
 .env.*
+
+# ---- start.ps1 的本机运行时产物 ----
+# 注意：gitignore 的注释必须**从行首**用 # 开始；
+# 写成 "pattern  # 注释" 会被当成整行模式（含 # 与空格），等于该模式失效。
+.run/
+.dev-admin-password.txt
+.python-path
