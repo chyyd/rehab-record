@@ -32,6 +32,8 @@ const ACTION_LABEL: Record<string, string> = {
   claim: '认领',
   release: '取消归属',
   assign: '分配',
+  // 已出院患者改回在院/暂停时单独记这个动作，便于追溯谁做过恢复
+  restore: '恢复（出院改回）',
   reset_password: '重置密码',
   change_password: '修改密码',
   revoke_sessions: '踢下线',

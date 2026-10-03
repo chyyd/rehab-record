@@ -300,7 +300,19 @@ function PatientFormModal({
         >
           <Input.TextArea rows={3} />
         </Form.Item>
-        <Form.Item name="status" label="状态" rules={[{ required: true }]}>
+        <Form.Item
+          name="status"
+          label="状态"
+          rules={[{ required: true }]}
+          extra={
+            isEdit && patient?.status === 'discharged' ? (
+              <Typography.Text type="warning">
+                该患者已出院。改回「在院」或「暂停」即为恢复，此操作会以
+                「恢复（出院改回）」单独记入审计日志，请确认确实需要恢复。
+              </Typography.Text>
+            ) : undefined
+          }
+        >
           <Select
             options={[
               { value: 'in_hospital', label: '在院' },

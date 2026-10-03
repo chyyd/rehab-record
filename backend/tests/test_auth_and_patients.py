@@ -435,16 +435,99 @@ class TestPatientWritePermissions(ApiTestCase):
         self.assertEqual(resp.status_code, 200, resp.text)
         self.assertEqual(resp.json()["admin_note"], "注意跌倒")
 
-    def test_discharge_is_irreversible(self) -> None:
-        """Q9：出院不可逆。"""
+    def test_therapist_cannot_restore_discharged_patient(self) -> None:
+        """Q9 的真正含义：**治疗师**不能自行恢复出院的患者，恢复留给管理员。
+
+        这条替代了原先的 `test_discharge_is_irreversible` —— 那条断言的是"管理员也不能改回"，
+        与 `设计.md` 3.1「出院不可逆（**需管理员手动改回**）」和实际需求相矛盾，
+        等于把管理员自己的权限也挡死了（提示"请联系系统管理员"，而调用者就是管理员）。
+        """
         patient_model.create_patient(
-            self.conn, inpatient_no="ZY001", name="患者", status=patient_model.STATUS_DISCHARGED
+            self.conn, inpatient_no="ZY001", name="患者",
+            assigned_therapist_id=int(self.t1["id"]),
+            status=patient_model.STATUS_DISCHARGED,
+        )
+        headers = self.login_headers("T001")
+        resp = self.client.put(
+            "/api/v1/patients/ZY001", json={"status": "in_hospital"}, headers=headers
+        )
+        self.assert_error(resp, 403, "ADMIN_REQUIRED")
+        # 确认状态确实没被改动
+        row = self.conn.execute("SELECT status FROM patient WHERE inpatient_no = 'ZY001'").fetchone()
+        self.assertEqual(row["status"], "discharged")
+
+    def test_admin_can_restore_discharged_patient(self) -> None:
+        """管理员可以把已出院改回在院（Q9：需管理员手动改回）。"""
+        patient_model.create_patient(
+            self.conn, inpatient_no="ZY001", name="患者",
+            status=patient_model.STATUS_DISCHARGED,
         )
         headers = self.login_headers("A001")
-        resp = self.client.put("/api/v1/patients/ZY001", json={"status": "in_hospital"}, headers=headers)
-        self.assert_error(resp, 403, "PATIENT_DISCHARGED_IMMUTABLE")
+        resp = self.client.put(
+            "/api/v1/patients/ZY001", json={"status": "in_hospital"}, headers=headers
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertEqual(resp.json()["status"], "in_hospital")
+        row = self.conn.execute("SELECT status FROM patient WHERE inpatient_no = 'ZY001'").fetchone()
+        self.assertEqual(row["status"], "in_hospital")
+
+    def test_admin_can_restore_to_paused(self) -> None:
+        """恢复的目标状态不限于在院：暂停治疗同样可以（暂停也可逆）。"""
+        patient_model.create_patient(
+            self.conn, inpatient_no="ZY001", name="患者",
+            status=patient_model.STATUS_DISCHARGED,
+        )
+        headers = self.login_headers("A001")
+        resp = self.client.put(
+            "/api/v1/patients/ZY001", json={"status": "paused"}, headers=headers
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertEqual(resp.json()["status"], "paused")
+
+    def test_restore_is_flagged_in_audit_log(self) -> None:
+        """恢复动作要单独记为 `restore`，否则会被淹没在普通 update 里难以追溯。"""
+        patient_model.create_patient(
+            self.conn, inpatient_no="ZY001", name="患者",
+            status=patient_model.STATUS_DISCHARGED,
+        )
+        headers = self.login_headers("A001")
+        self.client.put("/api/v1/patients/ZY001", json={"status": "in_hospital"}, headers=headers)
+
+        row = self.conn.execute(
+            "SELECT action, before_json, after_json FROM audit_log"
+            " WHERE target_type = 'patient' AND target_id = 'ZY001'"
+            " ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        self.assertEqual(row["action"], "restore")
+        self.assertIn("discharged", row["before_json"])
+        self.assertIn("in_hospital", row["after_json"])
+
+    def test_normal_edit_is_not_flagged_as_restore(self) -> None:
+        """只有在院外的状态变化才算 restore；普通改备注仍是 update。"""
+        patient_model.create_patient(self.conn, inpatient_no="ZY001", name="患者")
+        headers = self.login_headers("A001")
+        self.client.put("/api/v1/patients/ZY001", json={"admin_note": "注意跌倒"}, headers=headers)
+        row = self.conn.execute(
+            "SELECT action FROM audit_log WHERE target_type = 'patient' AND target_id = 'ZY001'"
+            " ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        self.assertEqual(row["action"], "update")
+
+    def test_restoring_does_not_change_assignment(self) -> None:
+        """恢复只改状态，不应顺手改动归属（归属有独立的分配/认领接口）。"""
+        patient_model.create_patient(
+            self.conn, inpatient_no="ZY001", name="患者",
+            assigned_therapist_id=int(self.t1["id"]),
+            status=patient_model.STATUS_DISCHARGED,
+        )
+        headers = self.login_headers("A001")
+        resp = self.client.put(
+            "/api/v1/patients/ZY001", json={"status": "in_hospital"}, headers=headers
+        )
+        self.assertEqual(resp.json()["assigned_therapist_id"], int(self.t1["id"]))
 
     def test_cannot_create_already_discharged_patient(self) -> None:
+        """不允许凭空建一个"已出院"的患者（与"能否改回"是两件事）。"""
         headers = self.login_headers("A001")
         resp = self.client.post(
             "/api/v1/patients",

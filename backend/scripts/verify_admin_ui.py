@@ -24,6 +24,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 import urllib.error
@@ -38,7 +39,36 @@ from _cdp import Cdp, CdpError, new_target  # noqa: E402
 ADMIN_URL = "http://localhost:5173"
 API_URL = "http://127.0.0.1:8000"
 CDP_PORT = 9222
-ADMIN_PW = "Admin#2026pass"
+ADMIN_EMPLOYEE_NO = "A001"
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _resolve_admin_password() -> str:
+    """管理员密码的来源，按优先级：
+
+    1. 环境变量 `KB_ADMIN_PASSWORD`（CI 里显式指定）；
+    2. 仓库根目录的 `.dev-admin-password.txt` —— **`start.ps1` 首次运行会随机生成**它。
+
+    为什么要这样找：早先这里硬编码 `Admin#2026pass`，等 `start.ps1` 改成随机密码后
+    脚本一跑就崩（`TypeError: 'NoneType' object is not subscriptable`，因为登录失败后
+    拿不到 token）。密码是"每台机器一个"的运行时状态，不该写死在验收脚本里。
+    """
+    env_pw = os.environ.get("KB_ADMIN_PASSWORD")
+    if env_pw:
+        return env_pw
+    pwd_file = _REPO_ROOT / ".dev-admin-password.txt"
+    if pwd_file.exists():
+        # 显式去掉 U+FEFF：历史上这个文件被写出过 UTF-8 BOM，
+        # 那会变成一个真实的字符串首字符，让密码"多一位"而登录 403。
+        return pwd_file.read_text(encoding="utf-8").strip().lstrip("\ufeff")
+    raise SystemExit(
+        "找不到管理员密码：请先运行仓库根目录的 .\\start.ps1（它会生成 "
+        ".dev-admin-password.txt），或设置环境变量 KB_ADMIN_PASSWORD。"
+    )
+
+
+ADMIN_PW = _resolve_admin_password()
 THERAPIST_PW = "Ther#2026pass"
 
 failures: list[str] = []
@@ -108,7 +138,10 @@ def main() -> int:
 
     # -- 造点数据，保证各页不是空的 --------------------------------------- #
     _, admin = api("/api/v1/auth/login", "POST",
-                   {"employee_no": "A001", "password": ADMIN_PW})
+                   {"employee_no": ADMIN_EMPLOYEE_NO, "password": ADMIN_PW})
+    if not admin or "access_token" not in admin:
+        print("  管理员登录失败：请确认已运行 .\\start.ps1 生成密码，或设置 KB_ADMIN_PASSWORD。")
+        return 2
     token = admin["access_token"]
     for no, name in (("UITEST1", "界面测试患者甲"), ("UITEST2", "界面测试患者乙")):
         api("/api/v1/patients", "POST",
@@ -352,6 +385,129 @@ def main() -> int:
                 """
             )
             time.sleep(0.8)
+
+        # 7c) 出院恢复：管理员应能把"已出院"改回"在院"（Q9）
+        #
+        # 这是一条**业务不变式**，必须常驻验收：曾经 PUT /patients/{no} 里有一条
+        # "已出院不能再改状态"的判断，把管理员自己的权限也挡了，形成死锁
+        # （提示"请联系系统管理员"，而调用者就是管理员）。
+        # 单测盯得住接口，但盯不住"表单里的下拉能否真的改回去" —— 这里两种情况都覆盖。
+        restore_no = f"RM{int(time.time()) % 100000:05d}"
+        create_status, _ = api(
+            "/api/v1/patients",
+            method="POST",
+            body={"inpatient_no": restore_no, "name": "出院恢复验收患者"},
+            token=token,
+        )
+        check("准备恢复用例：创建患者", create_status == 201, f"HTTP {create_status}")
+        discharge_status, _ = api(
+            f"/api/v1/patients/{restore_no}",
+            method="PUT",
+            body={"status": "discharged"},
+            token=token,
+        )
+        check("准备恢复用例：置为已出院", discharge_status == 200, f"HTTP {discharge_status}")
+
+        # 刷新列表让新患者出现
+        browser.eval(
+            """
+            (() => {
+              const btn = [...document.querySelectorAll('button')].find(b => b.textContent.includes('刷新'));
+              if (btn) btn.click();
+              return true;
+            })()
+            """
+        )
+        time.sleep(2.0)
+
+        opened_restore = browser.eval(
+            """
+            (() => {
+              const rows = [...document.querySelectorAll('.ant-table-tbody tr.ant-table-row')];
+              const row = rows.find(r => r.textContent.includes('__RESTORE_NO__'));
+              if (!row) return 'NO_ROW';
+              const btn = [...row.querySelectorAll('button')].find(b => b.textContent.includes('编辑'));
+              if (!btn) return 'NO_EDIT';
+              btn.click();
+              return 'ok';
+            })()
+            """.replace("__RESTORE_NO__", restore_no)
+        )
+        check("已出院患者可以打开编辑", opened_restore == "ok", str(opened_restore))
+        time.sleep(2.0)
+
+        restore_modal = browser.eval("(document.querySelector('.ant-modal') || {}).innerText || ''")
+        check("弹窗提示已出院可恢复", "该患者已出院" in restore_modal, restore_modal[:200])
+        check("弹窗说明会单独记入审计", "恢复（出院改回）" in restore_modal, restore_modal[:240])
+
+        # 注意：**antd 6 的 Select 触发器是 `.ant-select-content`**，
+        # v5 的 `.ant-select-selector` 在 6 里已经不存在 —— 沿用它只会拿到 null（实测踩到过）。
+        opened_select = browser.eval(
+            """
+            (() => {
+              const item = [...document.querySelectorAll('.ant-modal .ant-form-item')]
+                .find(x => x.textContent.includes('状态'));
+              if (!item) return 'NO_ITEM';
+              const box = item.querySelector('.ant-select-content') || item.querySelector('.ant-select');
+              if (!box) return 'NO_BOX';
+              box.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+              return 'opened';
+            })()
+            """
+        )
+        check("展开状态下拉", opened_select == "opened", str(opened_select))
+        time.sleep(1.2)
+
+        picked = browser.eval(
+            """
+            (() => {
+              const opts = [...document.querySelectorAll('.ant-select-item-option')];
+              const target = opts.find(o => o.textContent.trim() === '在院');
+              if (!target) return 'NO_OPTION:' + opts.length;
+              target.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+              return 'picked';
+            })()
+            """
+        )
+        check("下拉里可以选回「在院」", picked == "picked", str(picked))
+        time.sleep(0.8)
+
+        saved_restore = browser.eval(
+            """
+            (() => {
+              const modal = document.querySelector('.ant-modal');
+              if (!modal) return 'NO_MODAL';
+              const norm = (s) => (s || '').replace(/\\s+/g, '');
+              const ok = [...modal.querySelectorAll('button')].find(b => norm(b.textContent) === '保存');
+              if (!ok) return 'NO_SAVE';
+              ok.click();
+              return 'saved';
+            })()
+            """
+        )
+        check("保存恢复结果", saved_restore == "saved", str(saved_restore))
+        time.sleep(3.0)
+
+        restore_toast = browser.eval(
+            "[...document.querySelectorAll('.ant-message-notice-content')]"
+            ".map(e => e.textContent).join('|')"
+        )
+        check(
+            "恢复过程没有报「不能改回」",
+            "不能改回" not in restore_toast and "403" not in restore_toast,
+            f"提示={restore_toast}",
+        )
+
+        _, restored = api(f"/api/v1/patients/{restore_no}", token=token)
+        check(
+            "已出院患者确实改回在院",
+            bool(restored) and restored.get("status") == "in_hospital",
+            str(restored and restored.get("status")),
+        )
+
+        _, logs = api("/api/v1/audit-logs?target_type=patient&page=1&page_size=5", token=token)
+        actions = [item["action"] for item in (logs or {}).get("items", [])]
+        check("恢复单独记为 restore 动作", "restore" in actions, str(actions))
 
         # 8) 运行时错误总账
         browser.drain()

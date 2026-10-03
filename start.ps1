@@ -209,13 +209,71 @@ function Invoke-BackendCli {
         -Arguments (@('-m', 'app.cli') + $CliArgs) -WorkingDirectory $BackendDir
 }
 
+<#
+    数据库初始化。
+
+    注意：默认库路径是**仓库根目录**的 `data/kf.db`
+    （`config.py` 里 `REPO_ROOT = parents[3]`，即 `backend/app/core/config.py` 上溯三层）。
+
+    `init`（建库+迁移）与 `seed`（导种子）是**两件事**，必须分开判断：
+    早先这里用"库文件是否存在"来决定要不要导种子，于是**库存在但为空**时会跳过种子
+    —— 表现为字典/选项集/模板/患者反应各页全空，而脚本一声不响（实测踩到过：
+    手动跑过 init、或首次 seed 中途失败，都会留下这种空库）。
+    所以这里**直接查库**判断是否已导过种子，`seed` 本身是幂等的，重复跑没有副作用。
+#>
 function Initialize-Data {
     param([string]$Python)
 
-    $dbPath = Join-Path $DataDir 'kf.db'
-    $firstRun = -not (Test-Path $dbPath)
+    # 用"字典主项目是否有数据"作为"是否导过种子"的判据：
+    # 主项目是字典的根，选项集/模板/患者反应都挂在它下面，它为空说明种子没进去。
+    #
+    # 这里不去猜库文件在哪：默认是**仓库根目录的 `data/kf.db`**
+    # （`config.py` 里 `REPO_ROOT = parents[3]`），但也可能被 `KB_DB_PATH` 覆盖。
+    # 直接问"库里的表"才是唯一可靠的判据。
+    # 注意两个坑（都踩过）：
+    #   1. `@'...'@` 是**字面** here-string，里面的 `%` 不会折叠，所以
+    #      `print("...%%d" %% count)` 生成出来是非法 Python（SyntaxError）；
+    #   2. 用 `-f` 插入路径时，Python 代码里的 `{count}` 会被 PowerShell 当成
+    #      格式化占位符，抛 "Input string was not in a correct format"。
+    # 因此下面用 f-string 写 Python、并靠 `.Replace()` 插入路径，两个坑一起避开。
+    $probe = @'
+import sys
+sys.path.insert(0, r"__BACKEND_DIR__")
+from app.core.config import get_settings
+from app.db import storage
 
-    if ($firstRun) {
+# 输出带前缀的一行：stdout/stderr 是合并收集的，靠"取最后一行"解析容易取到告警而失败。
+try:
+    conn = storage.connect(get_settings(), read_only=True)
+    try:
+        count = int(conn.execute("SELECT COUNT(*) FROM main_item").fetchone()[0])
+    finally:
+        conn.close()
+    print(f"KB_MAIN_ITEM_COUNT={count}")
+except Exception as exc:
+    print(f"KB_PROBE_ERROR={type(exc).__name__}: {exc}")
+'@
+    $probe = $probe.Replace('__BACKEND_DIR__', $BackendDir)
+
+    if (-not (Test-Path $RunDir)) { New-Item -ItemType Directory -Path $RunDir -Force | Out-Null }
+    $probeFile = Join-Path $RunDir '_probe_seed.py'
+    [System.IO.File]::WriteAllText($probeFile, $probe, (New-Object System.Text.UTF8Encoding($false)))
+    $probeResult = Invoke-NativeCommand -FilePath $Python -Arguments @($probeFile) -WorkingDirectory $BackendDir
+    Remove-Item $probeFile -Force -ErrorAction SilentlyContinue
+
+    # 按**前缀**找结果，不依赖行序
+    $mainItemCount = -1
+    foreach ($line in $probeResult.Output) {
+        $text = "$line"
+        if ($text -match 'KB_MAIN_ITEM_COUNT=(\d+)') {
+            $mainItemCount = [int]$Matches[1]
+        } elseif ($text -match 'KB_PROBE_ERROR=(.+)') {
+            Write-Host "        种子探测未成功：$($Matches[1])" -ForegroundColor DarkGray
+        }
+    }
+    $isFirstRun = $mainItemCount -lt 0
+
+    if ($isFirstRun) {
         Write-Step '首次运行：建库并应用迁移…'
     } else {
         Write-Step '检查数据库迁移…'
@@ -226,13 +284,19 @@ function Initialize-Data {
         throw '建库/迁移失败，请查看上方输出'
     }
 
-    if ($firstRun) {
-        Write-Step '导入种子数据（字典 / 反应定义 / 选项集 / 四大高频模板）…'
+    if ($mainItemCount -eq 0) {
+        Write-Step '检测到字典为空：导入种子数据（字典 / 反应定义 / 选项集 / 四大高频模板）…'
         $r = Invoke-BackendCli -Python $Python -CliArgs @('seed')
         if ($r.ExitCode -ne 0) {
             $r.Output | ForEach-Object { Write-Host "        $_" -ForegroundColor DarkGray }
             throw '种子导入失败，请查看上方输出'
         }
+        Write-Ok '种子数据已导入'
+    } elseif ($mainItemCount -gt 0) {
+        Write-Ok "种子数据已存在（字典主项目 $mainItemCount 项），跳过导入"
+    } else {
+        # 探测异常（既不是"空"也不是"有"）：不阻断启动，种子可用 CLI 手动补。
+        Write-Warn '无法确认种子是否已导入；如页面数据为空，请手动执行：python -m app.cli seed'
     }
 }
 
@@ -257,7 +321,39 @@ function Ensure-Admin {
     # 把密码落盘，保证下次启动展示的是同一个密码（否则每次启动旧密码都会失效）。
     # 必须无 BOM —— 见 Save-AdminPassword 的注释（带 BOM 会让 Python 读出的密码多一个字符）。
     Save-AdminPassword -Password $Password
+
+    # 密码可用性的自校验放在**起完服务之后**做（见 Invoke-Start 里的 Test-AdminLogin）：
+    # 本函数在启动后端之前调用，此时接口还不可达，这里验了也只能是"跳过"，
+    # 徒增一次误导性的输出。
     return ($r.Output -join "`n")
+}
+
+<#
+    用指定密码调一次登录接口，确认密码真的可用。
+
+    只在**后端已经起来之后**调用（`Invoke-Start` 里 `Wait-HttpOk` 之后）。
+    若健康检查不通（例如后端刚崩了），返回"跳过"而不是失败 —— 那种情况
+    已经由"后端未就绪"的错误分支覆盖，不该在这里重复报错。
+#>
+function Test-AdminLogin {
+    param([string]$Password)
+
+    try {
+        $null = Invoke-WebRequest -Uri "$BackendUrl/api/v1/health" -UseBasicParsing -TimeoutSec 3
+    } catch {
+        return [pscustomobject]@{ Ok = $true; Status = 'skipped(服务未启动)' }
+    }
+
+    $body = @{ employee_no = $AdminEmployeeNo; password = $Password } | ConvertTo-Json -Compress
+    try {
+        $resp = Invoke-WebRequest -Uri "$BackendUrl/api/v1/auth/login" -Method POST `
+            -UseBasicParsing -ContentType 'application/json' -Body $body -TimeoutSec 10
+        return [pscustomobject]@{ Ok = ($resp.StatusCode -eq 200); Status = $resp.StatusCode }
+    } catch {
+        $code = $null
+        if ($_.Exception.Response) { $code = [int]$_.Exception.Response.StatusCode }
+        return [pscustomobject]@{ Ok = $false; Status = $(if ($code) { $code } else { $_.Exception.Message }) }
+    }
 }
 
 # --------------------------------------------------------------------------- #
@@ -471,6 +567,19 @@ function Invoke-Start {
         return 1
     }
     Write-Ok '后端已就绪'
+
+    # -- 真正的密码自校验（此时服务已在跑，前面那次会因服务未启动而跳过）--
+    # 这一步是"窗口里打印的密码一定能登录"的保证：密码来源有多个
+    # （-AdminPassword / KB_ADMIN_PASSWORD / 密码文件），只要有一处对不上，
+    # 用户就会遇到"照着屏幕输却登不进去"。这里当场验一次并给出修复命令。
+    $loginCheck = Test-AdminLogin -Password $password
+    if ($loginCheck.Ok) {
+        Write-Ok '管理员密码自校验通过'
+    } else {
+        Write-Warn "管理员密码自校验未通过（登录返回 $($loginCheck.Status)）。"
+        Write-Host "        请手动重置一次：" -ForegroundColor Yellow
+        Write-Host "          cd backend; `$env:KB_ADMIN_PASSWORD='$password'; python -m app.cli create-admin $AdminEmployeeNo --name $AdminName" -ForegroundColor Yellow
+    }
 
     # -- 起前端 --
     Write-Step "启动管理后台（端口 $FrontendPort）…"

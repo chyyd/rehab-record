@@ -112,7 +112,9 @@ def create_patient(
                 details={"therapist_id": payload.assigned_therapist_id},
             ) from None
     if payload.status == patient_model.STATUS_DISCHARGED:
-        # 出院不可逆（Q9）：不允许直接建一个"已出院"的患者
+        # 不允许直接建一个"已出院"的患者：那等于凭空造出一条没有在院经历的病历。
+        # 正常的出院动作是"先建在院患者，再改状态为 discharged"。
+        # 这与"出院能否改回"无关 —— 改回由 update_patient 负责（仅管理员可做）。
         raise ForbiddenError("PATIENT_DISCHARGED_IMMUTABLE", "不能新建已出院的患者")
     patient = patient_model.create_patient(
         conn,
@@ -148,19 +150,28 @@ def update_patient(
     admin: AdminUser,
     conn: Annotated[sqlite3.Connection, Depends(get_db)],
 ) -> dict[str, Any]:
+    """修改患者（**仅管理员**，数据级权限靠 `AdminUser` 强制）。
+
+    ## 出院可逆性（Q9）
+
+    `设计.md` 3.1 的原文是「**出院不可逆**（需管理员手动改回），暂停治疗可逆」——
+    也就是说"不可逆"指的是**治疗师不能自行恢复**，恢复动作本身就是留给管理员的。
+    本接口已经是 `AdminUser`，因此这里**不再额外拦截**：
+
+    > 早先这里写了一条"已出院不能再改状态"的判断，结果把管理员自己的权限也挡了，
+    > 提示"如需恢复请联系系统管理员"——而**调用者就是系统管理员**，形成死锁：
+    > 没有任何路径能把患者改回在院。已删除该判断。
+
+    为便于事后追溯，把"已出院 → 其它状态"单独记为 `restore` 动作，
+    这样审计日志里能一眼看出谁做过恢复，而不是淹没在普通的 `update` 里。
+    """
     before = patient_model.get_patient_or_raise(conn, inpatient_no)
 
-    # 出院不可逆（Q9）：已出院的患者不允许再改状态，需管理员显式走"恢复"路径
-    trying_to_undelete = before["status"] == patient_model.STATUS_DISCHARGED and payload.status not in (
-        None,
-        patient_model.STATUS_DISCHARGED,
+    is_restore = (
+        before["status"] == patient_model.STATUS_DISCHARGED
+        and payload.status is not None
+        and payload.status != patient_model.STATUS_DISCHARGED
     )
-    if trying_to_undelete:
-        raise ForbiddenError(
-            "PATIENT_DISCHARGED_IMMUTABLE",
-            "已出院的患者不能改回其他状态，如需恢复请联系系统管理员",
-            details={"inpatient_no": inpatient_no},
-        )
 
     after = patient_model.update_patient(
         conn,
@@ -170,8 +181,8 @@ def update_patient(
         admin_note=payload.admin_note,
         status=payload.status,
     )
-    write_audit(conn, user_id=int(admin["id"]), action="update", target_type="patient",
-                target_id=inpatient_no, before=before, after=after)
+    write_audit(conn, user_id=int(admin["id"]), action="restore" if is_restore else "update",
+                target_type="patient", target_id=inpatient_no, before=before, after=after)
     return after
 
 
