@@ -230,7 +230,8 @@
     - 上一轮跑完后 Cookie 仍在 Edge profile 里，页面会直接是已登录状态 —— 必须先清 Cookie/Storage 才能测登录流程；
     - 断言"登录成功"时不能只看页面上有没有"康复科管理后台"（登录页标题里也有这几个字），要看 URL 已变为 `/` 且登录表单消失。
 - **一键启停脚本 `start.ps1`（仓库根目录）**：命令行里打印管理员账号密码，并自动打开浏览器停在登录页。
-  - **动作**：`start`（默认）/ `stop` / `restart` / `status`；可选 `-NoBrowser`、`-BackendPort`、`-FrontendPort`。
+  - **动作**：`start`（默认）/ `stop` / `restart` / `status` / `clean`；可选 `-NoBrowser`、`-IncludeData`、`-BackendPort`、`-FrontendPort`。
+  - **`clean`（整理目录）**：清掉可再生成的运行时产物 —— `__pycache__`、`.ruff_cache`、`.pytest_cache`、pytest 随机缓存目录、`.run/` 下的状态与日志、浏览器剖析目录、测试临时文件，以及 `backend/data/` 下的**陈旧库副本**（真实库在根 `data/kf.db`）。**默认不动数据库**，要连开发库一起删需显式加 `-IncludeData`（下次启动会自动重建并导种子）。一次实际清理释放了 **406 MB**。
   - **首次运行全自动**：建库 → 应用迁移 → 导入种子 → 创建管理员 → 安装前端依赖（缺 `node_modules` 时）。
   - **管理员密码**：随机生成（16 位，字符集剔除了容易看错的 `0/O/1/l/I`），写入 `.dev-admin-password.txt`（已 gitignore）并打印；**之后每次启动复用同一个密码**，不会把上次的作废。可用 `-AdminPassword` 或 `KB_ADMIN_PASSWORD` 覆盖。
   - **Python 自动探测**：优先 `.python-path` 文件 → `KB_PYTHON` → 常见安装位置 → PATH 上的 `python`/`py`（并实测能否 `import fastapi, uvicorn`）。这样换台机器不必改脚本，也避免重演"用错解释器误判依赖装不上"。
@@ -270,6 +271,7 @@
 
 ### 修复
 
+- **修复 `start.ps1` 的 `clean` 把"删除成功"误报成失败**：清理用的嵌套函数里写了 `$script:removed++`，但 `$script:` 指的是**脚本**作用域、不是该函数的局部变量 `$removed`，于是抛出 `The variable '$script:removed' cannot be retrieved` —— 而这句在 `try` 里，被 `catch` 当成"删除失败"，结果**文件确实删掉了、却报"无法删除"**。已改为"先把待删路径收集成列表，再在同一作用域里就地删除"，并在注释里写明原因。
 - **给 `start.ps1` 增加"管理员密码自校验"**：`create-admin` 会**重置**密码，而密码有三个来源（`-AdminPassword` 参数 / `KB_ADMIN_PASSWORD` 环境变量 / 密码文件），只要有一处对不上，最终表现就是「窗口里明明打印了密码，却登录不进去」——实测就遇到了这个状态（库里 hash 与文件内容不一致，而脚本全程报 `[OK]`，极难自己发现）。
   - 处置：后端就绪后立刻用刚配置的密码打一次登录接口；不通过就明确报出 HTTP 状态，并打印**可直接粘贴的修复命令**（含正确环境变量的 `create-admin`）。
   - 位置很关键：自校验必须在**服务起来之后**做。最初把它放在 `Ensure-Admin` 里（起服务之前），结果接口不可达只能"跳过"，等于没验。

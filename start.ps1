@@ -11,7 +11,11 @@
       5. 自动打开浏览器并停在登录页。
 
 .PARAMETER Action
-    start（默认）/ stop / restart / status
+    start（默认）/ stop / restart / status / clean
+
+.PARAMETER IncludeData
+    仅与 `clean` 配合：连开发数据库 `data\kf.db` 一起删除
+    （下次启动会自动重建并导种子）。默认**保留**数据库。
 
 .PARAMETER NoBrowser
     不自动打开浏览器（服务器上跑或只想看日志时用）。
@@ -34,10 +38,12 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet('start', 'stop', 'restart', 'status')]
+    [ValidateSet('start', 'stop', 'restart', 'status', 'clean')]
     [string]$Action = 'start',
 
     [switch]$NoBrowser,
+    # 仅与 clean 配合：连开发数据库一起删
+    [switch]$IncludeData,
     [int]$BackendPort = 8000,
     [int]$FrontendPort = 5173,
 
@@ -693,12 +699,111 @@ function Invoke-Status {
 }
 
 # --------------------------------------------------------------------------- #
+# clean
+#
+# 清掉运行时产物，把工作区恢复成"可提交"的干净状态。
+# 这些都是可再生成的：缓存、浏览器剖析目录、日志、测试临时库。
+#
+# **默认不动数据库**（`data/kf.db` 里有你录入的数据）。要连库一起删请显式加
+# `-IncludeData` —— 那种情况下下次启动会自动重新建库并导种子。
+# --------------------------------------------------------------------------- #
+function Invoke-Clean {
+    param([switch]$IncludeData)
+
+    Write-Head '康复科治疗过程记录系统 — 清理运行时产物'
+
+    # 先停服务：服务运行时文件被占用，删不掉，而且删掉日志也没意义
+    $null = Invoke-Stop
+
+    $before = 0
+    if (Test-Path $Root) {
+        $before = (Get-ChildItem $Root -Recurse -File -Force -ErrorAction SilentlyContinue |
+                   Measure-Object Length -Sum).Sum
+    }
+
+    $removed = 0
+
+    # 先把所有要删的路径收集成一个列表，再在**同一个作用域**里逐个删除。
+    # 之前用了一个嵌套函数来删、在里面写 `$script:removed++`，结果
+    # `$script:` 指的是**脚本**作用域而不是本函数的局部变量，抛
+    # "The variable '$script:removed' cannot be retrieved"，
+    # 还被 catch 当成"删除失败"，把成功误报成失败（踩过一次）。
+    # 收集成列表再就地删除，就没有跨作用域写变量的问题。
+    $targets = New-Object System.Collections.Generic.List[object]
+
+    # 1) 缓存目录（跑一次测试/构建就会重新生成，删了没风险）
+    Get-ChildItem $Root -Recurse -Directory -Force -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -notmatch '\\(node_modules|\.npm-cache|\.git)\\' } |
+        Where-Object { $_.Name -in @('__pycache__', '.ruff_cache', '.pytest_cache', '.mypy_cache') -or $_.Name -like 'pytest-cache-files-*' } |
+        ForEach-Object { $targets.Add([pscustomobject]@{ Path = $_.FullName; Label = $_.FullName.Replace($Root, '') }) }
+
+    # 2) 浏览器剖析目录（验收脚本跑完留下的，每个数百 MB）
+    foreach ($profile in '.run\edge', '.run\edge2', 'backend\data\_edgeprofile3') {
+        $targets.Add([pscustomobject]@{ Path = (Join-Path $Root $profile); Label = $profile })
+    }
+
+    # 3) 日志与一次性输出（.run 下除了 logs 全清）
+    foreach ($f in Get-ChildItem (Join-Path $Root '.run') -Force -ErrorAction SilentlyContinue) {
+        if ($f.Name -ne 'logs') {
+            $targets.Add([pscustomobject]@{ Path = $f.FullName; Label = ".run\$($f.Name)" })
+        }
+    }
+    foreach ($p in @('.run\logs', 'logs', 'backend\data\_be.log', 'backend\data\_be.err',
+                     'backend\data\_fe.log', 'backend\data\_fe.err')) {
+        $targets.Add([pscustomobject]@{ Path = (Join-Path $Root $p); Label = $p })
+    }
+
+    # 4) 测试临时文件、早期 mkdtemp 留下的空目录，以及 backend/data 下的陈旧库副本
+    #    （真实库在根 data/kf.db）
+    $testDataDir = Join-Path $Root 'backend\data'
+    if (Test-Path $testDataDir) {
+        Get-ChildItem $testDataDir -Force -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.Name -like 'kf-test-*' -or $_.Name -like 'kf-pdf-*' -or
+                $_.Name -like '_*' -or $_.Name -like 'kf.db*'
+            } |
+            ForEach-Object { $targets.Add([pscustomobject]@{ Path = $_.FullName; Label = "backend\data\$($_.Name)" }) }
+    }
+
+    # 5) 可选：连开发数据库一起删（下次启动会重建并导种子）
+    if ($IncludeData) {
+        Write-Warn '-IncludeData 已指定：将删除开发数据库 data\kf.db（下次启动会重建并导种子）'
+        Get-ChildItem (Join-Path $Root 'data') -Force -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -like 'kf.db*' } |
+            ForEach-Object { $targets.Add([pscustomobject]@{ Path = $_.FullName; Label = "data\$($_.Name)" }) }
+    } else {
+        Write-Step '保留开发数据库 data\kf.db（要一起删请加 -IncludeData）'
+    }
+
+    foreach ($t in $targets) {
+        if (-not (Test-Path $t.Path)) { continue }
+        try {
+            Remove-Item $t.Path -Recurse -Force -ErrorAction Stop
+            Write-Step "已删除 $($t.Label)"
+            $removed++
+        } catch {
+            Write-Warn "无法删除 $($t.Label)（可能仍被占用）：$($_.Exception.Message.Split([char]10)[0])"
+        }
+    }
+
+    $after = 0
+    if (Test-Path $Root) {
+        $after = (Get-ChildItem $Root -Recurse -File -Force -ErrorAction SilentlyContinue |
+                  Measure-Object Length -Sum).Sum
+    }
+    $freedMb = [math]::Round(($before - $after) / 1MB, 1)
+    Write-Ok "清理完成：处理 $removed 项，释放 $freedMb MB（当前 $([math]::Round($after / 1MB, 1)) MB）"
+    return 0
+}
+
+# --------------------------------------------------------------------------- #
 # 入口
 # --------------------------------------------------------------------------- #
 try {
     switch ($Action) {
         'stop'    { exit (Invoke-Stop) }
         'status'  { exit (Invoke-Status) }
+        'clean'   { exit (Invoke-Clean -IncludeData:$IncludeData) }
         'restart' {
             $null = Invoke-Stop
             Start-Sleep -Seconds 2

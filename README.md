@@ -61,6 +61,8 @@
 .\start.ps1 stop         # 停止（含后端与管理后台的整棵进程树）
 .\start.ps1 status       # 查看运行状态与健康检查
 .\start.ps1 restart      # 重启
+.\start.ps1 clean        # 清理运行时产物（缓存/日志/测试临时文件/浏览器剖析目录）
+.\start.ps1 clean -IncludeData   # 连开发数据库一起删（下次启动会重建并导种子）
 .\start.ps1 -NoBrowser   # 只启动，不打开浏览器
 ```
 
@@ -68,12 +70,44 @@
 **管理员密码是随机生成的**，会打印在窗口里并保存到 `.dev-admin-password.txt`
 （已 gitignore）。之后每次启动都复用同一个密码，不会把上次的作废。
 
+启动后脚本会**自校验**一次（用刚配置的密码真的调一次登录接口）——避免出现
+"窗口里打印了密码却登不进去"这种最难自己想明白的情况。
+
 > 若提示"禁止运行脚本"，用其中任一种：
 > `powershell -ExecutionPolicy Bypass -File .\start.ps1`
 > 或 `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`
 
 脚本会自动找 Python（优先 `.python-path` 文件 → `KB_PYTHON` 环境变量 → 常见安装位置）。
 各人 Python 路径不同时，在仓库根目录建一个 `.python-path` 文件写上解释器完整路径即可。
+
+### 目录结构
+
+```
+├── backend/                 后端（FastAPI + SQLite）
+│   ├── app/                 按 api → services → models/core 分层
+│   │   ├── api/v1/          路由
+│   │   ├── services/        业务逻辑（不依赖 FastAPI）
+│   │   ├── models/          数据访问
+│   │   ├── schemas/         请求/响应模型
+│   │   ├── core/            配置、安全、错误、依赖
+│   │   └── db/migrations/   5 个 SQL 迁移（带 checksum 校验）
+│   ├── seed/                种子数据（字典/选项集/反应定义/模板，JSON + 导入器）
+│   ├── scripts/             端到端验收脚本（_ 前缀的是共用工具）
+│   ├── tests/               单元与集成测试
+│   └── data/                测试临时文件目录（用时自动建，内容自动清）
+├── admin/                   管理后台前端（React + Vite + Ant Design）
+│   └── src/                 api / auth / components / layouts / pages
+├── docs/setup.md            环境与依赖说明（用哪个 Python、沙箱坑等）
+├── data/kf.db               开发数据库（gitignore；真实数据在这里）
+├── start.ps1                一键启停/清理脚本
+├── 设计.md                   业务与系统设计（含全部决策 Q1–Q11）
+├── 开发计划.md               阶段与任务清单
+├── CHANGELOG.md             全部改动记录
+└── README.md
+```
+
+运行时产物（`.run/`、`admin/node_modules/`、`admin/dist/`、`data/`、`.npm-cache/`、
+`__pycache__` 等）全部已 gitignore；需要腾空间时跑 `.\start.ps1 clean`。
 
 ### 手动方式（后端）
 
@@ -91,7 +125,7 @@ $env:KB_ADMIN_PASSWORD = 'Admin#2026pass'
 & $py -m app.cli periods   # 打印半日制作息与请假到期时点
 
 & $py -m app.main --reload # 启动服务端：http://127.0.0.1:8000/docs
-& $py -m unittest discover -s tests -t . -v      # 538 个测试
+& $py -m unittest discover -s tests -t . -v      # 543 个测试
 & $py scripts\verify_http.py                     # 阶段 0 HTTP 端到端
 & $py scripts\verify_stage1.py                   # 阶段 1 认证与患者
 & $py scripts\verify_stage2.py                   # 阶段 2 排期与请假
