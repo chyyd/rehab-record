@@ -2,7 +2,11 @@
 *.db
 *.db-wal
 *.db-shm
-data/
+# ★ 必须锚定根目录写成 `/data/`。
+#   写成 `data/`（无前导斜杠）会匹配**任意层级**名为 data 的目录，
+#   于是 `app/lib/data/**`（Flutter 的数据层，**必须入库**）会被静默忽略 ——
+#   实测踩到过：整个数据层没进仓库，而 git status 里看不出任何异常。
+/data/
 backend/data/
 logs/
 backups/
