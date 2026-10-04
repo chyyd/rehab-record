@@ -269,15 +269,30 @@ def main() -> int:
         check("每日汇总 PDF 含两个日期", "2027-07-01" in text3 and "2027-07-03" in text3, text3[:160])
 
         # 5) 打印的权限边界
-        code, err = request("/api/v1/print/patient/S5B", token=h1)
-        check("不能打印他人患者 → 403", code == 403 and err["code"] == "PATIENT_NOT_VISIBLE", str(err)[:120])
-        code, err = request("/api/v1/summary/patient/S5B", token=h1)
-        check("不能汇总他人患者 → 403", code == 403, str(code))
+        # 5) 白板下的打印边界：同事负责的在院患者也可打印/汇总
+        code, data_b = request("/api/v1/print/patient/S5B", token=h1)
+        check("白板：可打印同事负责患者的汇总 PDF",
+              code == 200 and data_b[:4] == b"%PDF", str(code))
+        code, sum_b = request("/api/v1/summary/patient/S5B", token=h1)
+        check("白板：可汇总同事负责患者", code == 200, str(code))
 
         code, data4 = request("/api/v1/print/summary/date" + q(date="2027-07-01"), token=h1)
         text4 = pdf_text(data4)
-        check("治疗师的日期汇总不含他人患者", "阶段五患者甲" in text4 and "阶段五患者乙" not in text4,
+        check("日期汇总覆盖全科在院患者", "阶段五患者甲" in text4 and "阶段五患者乙" in text4,
               text4[:200])
+
+        # 5b) 已出院患者默认不在白板范围内 —— 这才是权限边界
+        #     用公开接口改状态（本脚本不持有数据库连接；ha 是管理员令牌）
+        code, _ = request("/api/v1/patients/S5B", "PUT", {"status": "discharged"}, token=ha)
+        check("准备权限边界用例：置为已出院", code == 200, str(code))
+        code, err = request("/api/v1/print/patient/S5B", token=h1)
+        check("已出院患者不可打印 → 403",
+              code == 403 and err["code"] == "PATIENT_NOT_VISIBLE", str(err)[:120])
+        code, err = request("/api/v1/summary/patient/S5B", token=h1)
+        check("已出院患者不可汇总 → 403", code == 403, str(code))
+        # 复原，避免影响后续断言（管理员可把已出院改回在院）
+        code, _ = request("/api/v1/patients/S5B", "PUT", {"status": "in_hospital"}, token=ha)
+        check("恢复为在院", code == 200, str(code))
 
         # 6) 模板
         code, tpl = request(

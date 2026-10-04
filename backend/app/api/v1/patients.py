@@ -1,13 +1,18 @@
 """患者与归属接口（阶段 1 / `开发计划.md` 4.2、D10、M09、M12、M18）。
 
-**数据级权限的唯一执行点。** 关键规则：
+**数据级权限的唯一执行点在 `services/visibility.py`**（本文件不再自己实现一份）。
 
-- 治疗师可读：归属自己 ∪ 临时认领自己 ∪ 未分配 ∪ 与我有关的临时指派。
-- 治疗师可写归属：只能认领"未分配"、放弃"自己的"、临时认领"临时释放中"的患者。
-- 只有管理员能写 `admin_note`（注意事项）与患者状态。
+2026-10-03 起改为**全科白板**：
 
-特别注意：**可见归属（`visible_therapist_id`）才是权限判据，不是原归属**。
-单日假期间原归属者反而不能给自己的患者排期——这正是临时释放的意义。
+- 治疗师可读：科室当前**在院 / 暂停**的全部患者（不再按归属隔离）；
+  已出院默认不可见（管理员可用 `scope=all` 查看全表）。
+- 治疗师可写：只能**认领未分配**、**放弃自己的**、**临时认领临时释放中的**患者。
+  **患者主数据（诊断、注意事项、出院/恢复）仍只有管理员能改**（写入仍走 `AdminUser`）。
+- 归属（`assigned_therapist_id`）语义由"可见性闸门"降级为**优先级与文书署名**。
+
+注意：`visible_therapist_id`（可见归属）仍是**归属语义**的判据
+（"当前谁主要负责"），但**不再是可见性闸门**——单日假临时释放期间它仍会变 NULL，
+用于表达"当前无人主要负责"。
 """
 
 from __future__ import annotations
@@ -24,6 +29,7 @@ from app.core.errors import ForbiddenError, NotFoundError
 from app.core.security_deps import AdminUser, CurrentUser, is_admin
 from app.models import patient as patient_model
 from app.models import user as user_model
+from app.models.patient import ACTIVE_STATUSES
 from app.models.base import DomainError, Forbidden
 from app.schemas.patient import (
     SCOPE_DESCRIPTION,
@@ -40,17 +46,15 @@ router = ApiRouter(prefix="/patients", tags=["患者"])
 
 
 def _can_view(user: dict[str, Any], patient: dict[str, Any]) -> bool:
-    """治疗师能否看到该患者（管理员不受限）。"""
+    """治疗师能否看到该患者（管理员不受限）。
+
+    2026-10-03 起统一走 `services/visibility.py` —— 此前本文件自己实现了一份
+    可见性判断，与 `visibility.py` 重复；两份条件一旦漂移就会产生越权。
+    现在**权限判断只在 visibility 模块实现**（模块文档明确要求）。
+    """
     if is_admin(user):
         return True
-    uid = int(user["id"])
-    visible = patient["visible_therapist_id"]
-    if visible is None or int(visible) == uid:
-        return True
-    # 与我有关的临时指派（我请假释放出去的，或我临时认领的）也可见
-    if patient.get("temp_assignment_id") is not None:
-        return uid in {patient.get("temp_therapist_id"), patient.get("temp_original_therapist_id")}
-    return False
+    return str(patient["status"]) in ACTIVE_STATUSES
 
 
 def _require_view(user: dict[str, Any], patient: dict[str, Any]) -> None:
@@ -60,8 +64,13 @@ def _require_view(user: dict[str, Any], patient: dict[str, Any]) -> None:
 
 
 def _resolve_scope(user: dict[str, Any], scope: str | None) -> str:
-    """普通用户不许用 ``all``。"""
-    requested = scope or ("all" if is_admin(user) else "visible")
+    """决定患者列表的数据范围。
+
+    2026-10-03 起治疗师默认 ``dept``（科室白板：在院 + 暂停），不再是按归属隔离的
+    ``visible``；管理员默认 ``all``（全表，含已出院）。
+    ``all`` 仍**仅管理员**可用（``SCOPE_FORBIDDEN``）。
+    """
+    requested = scope or ("all" if is_admin(user) else "dept")
     if requested == "all" and not is_admin(user):
         raise ForbiddenError("SCOPE_FORBIDDEN", "只有管理员可以查看全部患者", details={"scope": "all"})
     return requested

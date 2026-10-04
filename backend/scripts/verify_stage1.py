@@ -166,17 +166,21 @@ def main() -> int:
         )
         check("管理员建未分配患者", code == 201)
 
-        # 6) 治疗师只能看到自己的 + 未分配的
+        # 6) 全科白板：治疗师默认看到科室在院/暂停的全部患者
         code, listed = request("/api/v1/patients", token=t1_tok)
         numbers = {i["inpatient_no"] for i in listed["items"]}
         check("治疗师看到自己的与未分配的", code == 200 and {"E2E001", "E2E003"} <= numbers, str(numbers))
-        check("治疗师看不到别人的患者", "E2E002" not in numbers, str(numbers))
+        check("全科白板：也能看到同事负责的患者", "E2E002" in numbers, str(numbers))
+        check("默认范围是 dept（科室白板）", listed.get("scope") == "dept", str(listed.get("scope")))
 
-        # 7) 详情与越权
+        # 7) 详情：白板下同事的患者也可读；`mine` 筛选仍只看自己的
         code, _ = request("/api/v1/patients/E2E001", token=t1_tok)
         check("可读自己的患者详情", code == 200)
-        code, err = request("/api/v1/patients/E2E002", token=t1_tok)
-        check("越权读详情返回 403", code == 403 and err["code"] == "PATIENT_NOT_VISIBLE")
+        code, theirs = request("/api/v1/patients/E2E002", token=t1_tok)
+        check("白板：可读同事负责患者的详情", code == 200 and theirs["inpatient_no"] == "E2E002", str(code))
+        code, mine = request("/api/v1/patients?scope=mine", token=t1_tok)
+        mine_numbers = {i["inpatient_no"] for i in mine["items"]}
+        check("scope=mine 仍只返回自己的患者", "E2E002" not in mine_numbers, str(mine_numbers))
 
         # 8) 治疗师不能用 scope=all
         code, err = request("/api/v1/patients?scope=all", token=t1_tok)

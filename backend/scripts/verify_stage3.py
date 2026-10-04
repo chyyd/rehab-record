@@ -273,17 +273,24 @@ def main() -> int:
         code, err = request(f"/api/v1/records/{draft['id']}", "PUT", {"note": "偷改"}, h1)
         check("锁定后治疗师不能改", code == 403 and err["code"] == "RECORD_LOCKED", str(err)[:140])
 
-        code, err = request("/api/v1/records" + q(patient_no="S3B"), token=h1)
-        check("治疗师看不到他人患者记录",
-              code == 200 and err["total"] == 0, str(err.get("total")))
+        code, listed_b = request("/api/v1/records" + q(patient_no="S3B"), token=h1)
+        check("白板：可按同事负责的患者筛选记录（不再 403）",
+              code == 200, str(listed_b)[:140])
 
-        code, err = request(
+        code, written = request(
             "/api/v1/records", "POST",
             {"patient_no": "S3B", "record_date": "2027-03-01",
              "items": [{"main_item_id": motor_main, "sub_item_id": motor_sub, "params": {}}]},
             h1,
         )
-        check("不能给不可见患者写记录", code == 403 and err["code"] == "PATIENT_NOT_VISIBLE", str(err)[:140])
+        # 2026-10-03 全科白板：给同事负责的患者写记录是允许的，但记录人必须是自己
+        check("白板：可给同事负责患者写记录且记录人是自己",
+              code == 201 and written.get("therapist_id") == ids["T001"], str(written)[:160])
+
+        # 写完后再查一次：该患者的记录现在能读到（此前为空只是因为还没记录）
+        code, listed_b2 = request("/api/v1/records" + q(patient_no="S3B"), token=h1)
+        check("白板：能读到同事患者刚写入的记录",
+              code == 200 and listed_b2["total"] >= 1, str(listed_b2.get("total")))
 
         # 11) 时间轴
         code, tl = request("/api/v1/timeline", token=h1)

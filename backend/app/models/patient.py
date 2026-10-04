@@ -29,8 +29,18 @@ STATUS_DISCHARGED = "discharged"
 STATUS_PAUSED = "paused"
 PATIENT_STATUSES = (STATUS_IN_HOSPITAL, STATUS_DISCHARGED, STATUS_PAUSED)
 
-# 可用的数据范围（Q3 / D10）
-Scope = Literal["mine", "unassigned", "temp", "all", "visible"]
+# "白板"上默认可见的状态（2026-10-03 全科白板决策）：
+# 在院与暂停都属于"当前在科室里的患者"；已出院默认隐藏，需要时用 status 筛选显式查。
+ACTIVE_STATUSES = (STATUS_IN_HOSPITAL, STATUS_PAUSED)
+
+# 可用的数据范围（D10）。
+#
+# 2026-10-03 起新增 `dept`（科室级白板）：治疗师默认范围，含义是"科室当前在院/暂停的患者"，
+# 不再按归属隔离。原有取值保留：
+#   - `mine`/`unassigned`/`temp` 仍用于**筛选**（我的患者、未分配、临时相关）；
+#   - `visible` 保留为 `dept` 的同义兼容值（旧客户端仍能用）；
+#   - `all` 仍是**管理员专属**的全表范围（含已出院）。
+Scope = Literal["mine", "unassigned", "temp", "all", "visible", "dept"]
 
 SELECT_COLUMN_NAMES = (
     "inpatient_no",
@@ -96,13 +106,16 @@ LEFT JOIN picked_temp pt ON pt.patient_no = p.inpatient_no
 def visibility_from(scope: Scope, user_id: int) -> tuple[str, list[Any]]:
     """返回 ``(SQL 片段, 参数)``，供拼接到 ``FROM v_patient_visibility v`` 之后。
 
-    各范围语义（与 `开发计划.md` 4.2 的 `?scope=` 一致）：
+    各范围语义：
 
-    - ``mine``       可见归属是我（含临时认领我的患者）
-    - ``unassigned`` 无人负责（原归属为空，或正处于临时释放中且未被认领）
-    - ``temp``       与我有关的临时指派（我请假的或我临时认领的）
-    - ``visible``    治疗师可看到的全部 = mine ∪ unassigned ∪ temp
-    - ``all``        不加限制（**仅管理员**，路由层负责拦截）
+    - ``dept``      **科室级白板（治疗师默认，2026-10-03 起）**：科室当前在院/暂停的患者，
+                    不按归属隔离。一个上午里 PT/OT/言语/吞咽可能各给同一患者做一次，
+                    所以"别人的患者"必须可见且可排期。
+    - ``visible``   ``dept`` 的同义兼容值（旧客户端仍在用）。
+    - ``mine``      可见归属是我（含临时认领我的患者）—— 仍可作为**筛选**使用。
+    - ``unassigned`` 无人负责（原归属为空，或正处于临时释放中且未被认领）。
+    - ``temp``      与我有关的临时指派（我请假的或我临时认领的）。
+    - ``all``       不加限制（**仅管理员**，路由层负责拦截；含已出院）。
     """
     if scope == "mine":
         return "WHERE v.visible_therapist_id = ?", [user_id]
@@ -116,13 +129,11 @@ def visibility_from(scope: Scope, user_id: int) -> tuple[str, list[Any]]:
         )
     if scope == "all":
         return "", []
-    if scope == "visible":
-        return (
-            "WHERE v.visible_therapist_id = ? OR v.visible_therapist_id IS NULL"
-            " OR (v.temp_assignment_id IS NOT NULL"
-            "     AND (v.temp_therapist_id = ? OR v.temp_original_therapist_id = ?))",
-            [user_id, user_id, user_id],
-        )
+    if scope in ("dept", "visible"):
+        # 注意用 `p.status` 而不是 `v.status`：视图 v_patient_visibility 没有输出 status 列，
+        # 而 list_patients 的 joins 里本来就 JOIN 了 patient p。
+        placeholders = ", ".join("?" for _ in ACTIVE_STATUSES)
+        return f"WHERE p.status IN ({placeholders})", list(ACTIVE_STATUSES)
     raise Conflict(f"未知的数据范围：{scope}", details={"scope": scope})
 
 

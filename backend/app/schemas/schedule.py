@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.appointment import ALL_STATUSES
@@ -64,16 +66,36 @@ class ConflictOut(BaseModel):
     therapist_id: int | None = None
 
 
+class SlotAppointmentOut(BaseModel):
+    """半日格子里的一台排期（2026-10-03 起一个格子可以有多台）。"""
+
+    model_config = ConfigDict(extra="ignore")
+
+    id: int | None = None
+    patient_no: str | None = None
+    patient_name: str | None = None
+    therapist_id: int | None = None
+    therapist_name: str | None = None
+    status: str | None = None
+
+
 class AvailabilitySlotOut(BaseModel):
+    """半日格子的可排性与已有内容。
+
+    半日格子**不再互斥**：``available`` 只受休息块与生效请假影响；
+    ``appointments`` 是该格子里已有的排期（可能多台），仅供参考、不参与可排性判定。
+    """
+
     model_config = ConfigDict(extra="ignore")
 
     date: str
     period: str
     available: bool
     reasons: list[str]
-    patient_no: str | None = None
-    patient_name: str | None = None
-    status: str | None = None
+    appointments: list[SlotAppointmentOut] = Field(default_factory=list)
+    appointment_count: int = 0
+    patients: list[dict[str, Any]] = Field(default_factory=list)
+    patient_appointments: list[SlotAppointmentOut] = Field(default_factory=list)
 
 
 class CopyScheduleRequest(BaseModel):

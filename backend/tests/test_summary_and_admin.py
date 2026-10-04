@@ -223,14 +223,28 @@ class TestDateSummary(SummaryTestCase):
         self.assertIn("无不适", digest)
         self.assertIn("疼痛 3分", digest)
 
-    def test_summary_hides_other_therapists_patients(self) -> None:
+    def test_summary_covers_whole_department(self) -> None:
+        """白板：按日期汇总对全科在院患者可见（不再按归属过滤）。"""
         self.write_record(day="2027-03-01", headers=self.h1)
         self.write_record(patient_no="ZY002", day="2027-03-01", headers=self.h2)
         body = self.client.get(
             "/api/v1/summary/date", params={"date": "2027-03-01"}, headers=self.h1
         ).json()
         patients = {row["patient_no"] for group in body["groups"] for row in group["rows"]}
-        self.assertEqual(patients, {"ZY001"}, "汇总不能成为越权入口")
+        self.assertEqual(patients, {"ZY001", "ZY002"})
+
+    def test_summary_excludes_discharged_patients(self) -> None:
+        """白板范围只含在院/暂停：已出院患者不进当日汇总（管理员不受限）。"""
+        from app.models import patient as patient_model
+
+        self.write_record(day="2027-03-01", headers=self.h1)
+        self.write_record(patient_no="ZY002", day="2027-03-01", headers=self.h2)
+        patient_model.update_patient(self.conn, "ZY002", status=patient_model.STATUS_DISCHARGED)
+        body = self.client.get(
+            "/api/v1/summary/date", params={"date": "2027-03-01"}, headers=self.h1
+        ).json()
+        patients = {row["patient_no"] for group in body["groups"] for row in group["rows"]}
+        self.assertEqual(patients, {"ZY001"})
 
     def test_admin_sees_all(self) -> None:
         self.write_record(day="2027-03-01", headers=self.h1)
@@ -279,9 +293,22 @@ class TestPatientDailySummary(SummaryTestCase):
         self.assertEqual(body["patient"]["diagnosis"], "脑卒中恢复期")
         self.assertEqual(body["patient"]["admin_note"], "左侧偏瘫，注意防跌倒")
 
-    def test_cannot_summarize_invisible_patient(self) -> None:
+    def test_can_summarize_colleague_patient(self) -> None:
+        """白板：在院患者对全科可见，因此也能看他的每日汇总。"""
+        self.write_record(patient_no="ZY002", day="2027-03-01", headers=self.h2)
+        resp = self.client.get("/api/v1/summary/patient/ZY002", headers=self.h1)
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertEqual(resp.json()["patient"]["inpatient_no"], "ZY002")
+
+    def test_cannot_summarize_discharged_patient(self) -> None:
+        """已出院默认不在白板上 —— 这时才返回 403（管理员仍可看）。"""
+        from app.models import patient as patient_model
+
+        patient_model.update_patient(self.conn, "ZY002", status=patient_model.STATUS_DISCHARGED)
         resp = self.client.get("/api/v1/summary/patient/ZY002", headers=self.h1)
         self.assert_error(resp, 403, "PATIENT_NOT_VISIBLE")
+        admin_resp = self.client.get("/api/v1/summary/patient/ZY002", headers=self.ha)
+        self.assertEqual(admin_resp.status_code, 200, admin_resp.text)
 
     def test_unknown_patient_is_404(self) -> None:
         resp = self.client.get("/api/v1/summary/patient/NOPE", headers=self.ha)
@@ -421,15 +448,8 @@ class TestPrintEndpoints(SummaryTestCase):
         self.assertEqual(resp.status_code, 200, resp.text[:200])
         self.assertIn("每日汇总", pdf_text(resp.content))
 
-    def test_print_respects_visibility(self) -> None:
-        resp = self.client.get("/api/v1/print/patient/ZY002", headers=self.h1)
-        self.assert_error(resp, 403, "PATIENT_NOT_VISIBLE")
-
-    def test_print_requires_auth(self) -> None:
-        resp = self.client.get("/api/v1/print/patient/ZY001")
-        self.assert_error(resp, 401, "AUTH_REQUIRED")
-
-    def test_print_date_hides_other_therapists_patients(self) -> None:
+    def test_print_covers_department_patients(self) -> None:
+        """白板：可按日期打印全科范围内的记录。"""
         self.write_record(day="2027-03-01", headers=self.h1)
         self.write_record(patient_no="ZY002", day="2027-03-01", headers=self.h2)
         resp = self.client.get(
@@ -437,7 +457,34 @@ class TestPrintEndpoints(SummaryTestCase):
         )
         text = pdf_text(resp.content)
         self.assertIn("患者甲", text)
-        self.assertNotIn("患者乙", text, "打印不能成为越权入口")
+        self.assertIn("患者乙", text)
+
+    def test_print_respects_discharged_visibility(self) -> None:
+        """已出院默认不可见 —— 这时打印单患者汇总返回 403。"""
+        from app.models import patient as patient_model
+
+        patient_model.update_patient(self.conn, "ZY002", status=patient_model.STATUS_DISCHARGED)
+        resp = self.client.get("/api/v1/print/patient/ZY002", headers=self.h1)
+        self.assert_error(resp, 403, "PATIENT_NOT_VISIBLE")
+
+    def test_print_requires_auth(self) -> None:
+        resp = self.client.get("/api/v1/print/patient/ZY001")
+        self.assert_error(resp, 401, "AUTH_REQUIRED")
+
+    def test_print_date_excludes_discharged_patients(self) -> None:
+        """已出院患者不进按日期打印（与白板范围一致）；管理员不受限。"""
+        from app.models import patient as patient_model
+
+        self.write_record(day="2027-03-01", headers=self.h1)
+        self.write_record(patient_no="ZY002", day="2027-03-01", headers=self.h2)
+        patient_model.update_patient(self.conn, "ZY002", status=patient_model.STATUS_DISCHARGED)
+        text = pdf_text(
+            self.client.get(
+                "/api/v1/print/summary/date", params={"date": "2027-03-01"}, headers=self.h1
+            ).content
+        )
+        self.assertIn("患者甲", text)
+        self.assertNotIn("患者乙", text)
 
 
 class TestTemplates(SummaryTestCase):

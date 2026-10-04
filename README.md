@@ -13,6 +13,7 @@
 | [开发计划.md](开发计划.md) | 可执行规格：设计评估与问题清单、数据模型修订、接口清单、五阶段计划与验收标准、风险、已确认结论 | 全员 |
 | [CHANGELOG.md](CHANGELOG.md) | 全部变更记录。**每次改动都必须在这里留一条** | 全员 |
 | [docs/setup.md](docs/setup.md) | 环境搭建与运行、依赖安装、已知环境问题 | 开发 |
+| [docs/sync-protocol.md](docs/sync-protocol.md) | **离线同步协议**（游标/幂等/冲突分层、客户端本地库设计）。App 开工前必读 | 移动端 |
 
 > 文档冲突时的优先级：**迁移文件 / `worktime.py`（代码） > `开发计划.md` > `设计.md`（业务意图）**。
 > 发现不一致要立刻回头修文档，不允许长期并存。
@@ -43,7 +44,7 @@
 | 文档 | `设计.md` 修订至 V1.2/V1.3（半日制排期、无审批流请假、Q11 作息、PDF 方案修订） | **已完成**（跨文档校验 156 项 0 失败） |
 | 种子数据 | 字典 4/29/89 + 患者反应 27 条 + 全局选项集 47 套/208 项 + 模板 4 套，全部幂等导入 | **已完成** |
 | 中文 PDF | **reportlab + 内置 CID 字体 `STSong-Light`**，三套模板经 pypdf 反向文本校验 | **已完成**（D03 修订，Q10 版式） |
-| 测试 | **543 个测试全部通过、0 skip**；端到端 183 项 + **浏览器 UI 验收 66 项** | **已完成** |
+| 测试 | **554 个测试全部通过、0 skip**；端到端 190 项 + **浏览器 UI 验收 66 项** | **已完成** |
 | 接口 | **87 个**（认证、用户、患者、排期、休息、请假、字典读写、选项集、记录、同步、汇总、打印、模板、审计、后台） | **已完成** |
 | 管理后台 Web | **React 19 + Vite 8 + Ant Design 6 + TS**，13 个模块全部实现，构建通过（`admin/`） | **已完成**（T5.4 前端） |
 | 安卓 App | Flutter 骨架、排期页、记录页、同步引擎（T1.6/T2.7/T2.8/T3.8/T4.4/T4.5） | 未开始 |
@@ -125,7 +126,7 @@ $env:KB_ADMIN_PASSWORD = 'Admin#2026pass'
 & $py -m app.cli periods   # 打印半日制作息与请假到期时点
 
 & $py -m app.main --reload # 启动服务端：http://127.0.0.1:8000/docs
-& $py -m unittest discover -s tests -t . -v      # 543 个测试
+& $py -m unittest discover -s tests -t . -v      # 554 个测试
 & $py scripts\verify_http.py                     # 阶段 0 HTTP 端到端
 & $py scripts\verify_stage1.py                   # 阶段 1 认证与患者
 & $py scripts\verify_stage2.py                   # 阶段 2 排期与请假
@@ -135,7 +136,7 @@ $env:KB_ADMIN_PASSWORD = 'Admin#2026pass'
 & $py scripts\check_docs_consistency.py          # 跨文档一致性（156 项）
 ```
 
-> **验收脚本可在同一个库上重复运行**（共 183 项检查）。清理统一走
+> **验收脚本可在同一个库上重复运行**（共 190 项检查）。清理统一走
 > `scripts/_e2e.py` 的 `purge_*`，按外键顺序删除，不要在脚本里手写 `DELETE` ——
 > 早先就是因为在一次性干净库上验收，掩盖了"重跑必失败"的外键顺序问题。
 
@@ -170,13 +171,13 @@ Playwright）。这一步不是可选项 —— 类型检查与构建**测不出
 
 ```
 ├─ 设计.md / 开发计划.md / CHANGELOG.md / README.md
-├─ docs/          setup.md（环境）、后续补 api.md / data-model.md / sync-protocol.md
+├─ docs/          setup.md（环境）、sync-protocol.md（**离线同步协议**）、后续补 api.md / data-model.md
 ├─ backend/
 │  ├─ app/        core（配置/作息/健康）· db（存储/迁移）· cli.py · main.py
-│  │  └─ db/migrations/   001–005（表结构、触发器、可见归属视图、同步、模板 code）
+│  │  └─ db/migrations/   001–006（表结构、触发器、可见归属视图、同步、模板 code、放开半日互斥）
 │  ├─ seed/       四份种子（字典 4/29/89、反应 27、选项集 47/208、模板 4/29；幂等 upsert）
 │  ├─ scripts/    6 个验收脚本（http + 阶段 1–5）· check_docs_consistency.py · verify_admin_ui.py（CDP）
-│  └─ tests/      543 个测试（标准库 unittest）
+│  └─ tests/      554 个测试（标准库 unittest）
 ├─ app/           Flutter 客户端（待建）
 ├─ admin/         管理后台 React 19 + Vite 8 + Ant Design 6（13 个模块已实现）
 └─ deploy/        Docker Compose + Nginx（待建）

@@ -1,10 +1,18 @@
-"""S1 排期不变量与约束。
+"""排期约束（2026-10-03 起改为"半日格子不互斥"）。
 
-不变量（《开发计划.md》M07）：
-  1. 治疗师半日 = 一台
-  2. 患者半日 = 一名治疗师（Q2：明确不允许同时段多人排期）
-  3. cancelled / rescheduled 不占格子
-另外验证 rest_block 的 scope 自洽性。
+变更依据：科室确认真实工作流 —— **一个上午里不同治疗师可能给同一患者做多次治疗，
+一次最多 1 小时**；本系统只做记录、不做时间合规判定。故迁移 `006_open_scheduling.sql`
+删除了 `ux_appt_therapist_slot` 与 `ux_appt_patient_slot` 两条唯一索引，**放弃 Q2、
+放开 S1**。
+
+当前仍然成立的库层约束：
+  1. `date` 必须是合法日期、`period` 只能是 am/pm（CHECK 约束）；
+  2. 同一休息块（治疗师 × 星期/日期 × 半日）唯一；
+  3. `client_uuid` 幂等键唯一。
+
+**不再成立**（原两条不变量）：
+  - ~~治疗师半日 = 一台~~
+  - ~~患者半日 = 一名治疗师~~
 """
 
 from __future__ import annotations
@@ -24,38 +32,45 @@ class TestAppointmentInvariants(DbTestCase):
         self.p1 = self.add_patient("ZY001", "王五")
         self.p2 = self.add_patient("ZY002", "赵六")
 
-    def test_therapist_half_day_is_single_slot(self) -> None:
-        """同一治疗师同一天同一半日不能排第二台。"""
+    def test_same_therapist_same_half_day_allows_multiple(self) -> None:
+        """一个治疗师同一半日可以有多台（原先只允许一台）。"""
         self.add_appointment(self.p1, self.t1, "2026-10-05", "am")
-        with self.assertRaises(sqlite3.IntegrityError):
-            self.add_appointment(self.p2, self.t1, "2026-10-05", "am")
+        self.add_appointment(self.p2, self.t1, "2026-10-05", "am")
+        total = self.conn.execute("SELECT COUNT(*) FROM appointment").fetchone()[0]
+        self.assertEqual(total, 2)
 
     def test_same_therapist_other_period_is_allowed(self) -> None:
-        """上午与下午是两个独立格子，可以各排一台。"""
+        """上午与下午是两个独立格子。"""
         self.add_appointment(self.p1, self.t1, "2026-10-05", "am")
         self.add_appointment(self.p2, self.t1, "2026-10-05", "pm")
         total = self.conn.execute("SELECT COUNT(*) FROM appointment").fetchone()[0]
         self.assertEqual(total, 2)
 
-    def test_patient_half_day_is_single_therapist(self) -> None:
-        """Q2：同一患者同一半日不能被两个治疗师同时排期。"""
+    def test_same_patient_same_half_day_allows_multiple_therapists(self) -> None:
+        """Q2 已放弃：同一患者同一半日可以被多个治疗师各排一台。
+
+        这是科室真实工作流（PT / OT / 言语 / 吞咽 在同一个上午各做一次）。
+        """
         self.add_appointment(self.p1, self.t1, "2026-10-05", "am")
-        with self.assertRaises(sqlite3.IntegrityError):
-            self.add_appointment(self.p1, self.t2, "2026-10-05", "am")
+        self.add_appointment(self.p1, self.t2, "2026-10-05", "am")
+        rows = self.conn.execute(
+            "SELECT COUNT(*) FROM appointment WHERE patient_no = ?", (self.p1,)
+        ).fetchone()[0]
+        self.assertEqual(rows, 2)
 
     def test_same_patient_different_periods_allowed(self) -> None:
         self.add_appointment(self.p1, self.t1, "2026-10-05", "am")
         self.add_appointment(self.p1, self.t2, "2026-10-05", "pm")
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM appointment").fetchone()[0], 2)
 
-    def test_cancelled_frees_the_slot(self) -> None:
-        """取消后格子必须能被重新占用，否则排期页会出现"卡死"的格子。"""
+    def test_cancelled_still_deletable_and_rebookable(self) -> None:
+        """取消后仍可再排（格子本来就不互斥，这里守住状态流转）。"""
         first = self.add_appointment(self.p1, self.t1, "2026-10-05", "am")
         self.conn.execute("UPDATE appointment SET status = 'cancelled' WHERE id = ?", (first,))
         self.add_appointment(self.p2, self.t1, "2026-10-05", "am")
         self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM appointment").fetchone()[0], 2)
 
-    def test_rescheduled_frees_the_slot(self) -> None:
+    def test_rescheduled_status_accepted(self) -> None:
         first = self.add_appointment(self.p1, self.t1, "2026-10-05", "am")
         self.conn.execute("UPDATE appointment SET status = 'rescheduled' WHERE id = ?", (first,))
         self.add_appointment(self.p2, self.t1, "2026-10-05", "am")
@@ -66,8 +81,22 @@ class TestAppointmentInvariants(DbTestCase):
             with self.assertRaises(sqlite3.IntegrityError):
                 self.add_appointment(self.p1, self.t1, "2026-10-06", bad)
 
+    def test_client_uuid_is_unique(self) -> None:
+        """幂等键仍受唯一索引保护（`ux_appt_client_uuid`）。"""
+        self.conn.execute(
+            "INSERT INTO appointment (patient_no, therapist_id, date, period, client_uuid)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (self.p1, self.t1, "2026-10-05", "am", "11111111-1111-4111-8111-111111111111"),
+        )
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.conn.execute(
+                "INSERT INTO appointment (patient_no, therapist_id, date, period, client_uuid)"
+                " VALUES (?, ?, ?, ?, ?)",
+                (self.p2, self.t2, "2026-10-06", "pm", "11111111-1111-4111-8111-111111111111"),
+            )
+
     def test_optional_planned_time_is_stored(self) -> None:
-        """start_time/end_time 是可选"计划时间"，仅作同级排序，不参与唯一约束。"""
+        """start_time/end_time 是可选的展示字段，**不参与任何约束**（本系统不做时间合规）。"""
         self.conn.execute(
             "INSERT INTO appointment (patient_no, therapist_id, date, period, start_time, end_time, slot_label)"
             " VALUES (?, ?, ?, ?, ?, ?, ?)",

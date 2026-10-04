@@ -49,7 +49,11 @@ class ScheduleTestCase(ApiTestCase):
 
 
 class TestSchedulingInvariants(ScheduleTestCase):
-    """半日制的两条不变量（S1 / Q2）。"""
+    """半日格子不再互斥（2026-10-03 起）。
+
+    原两条不变量（治疗师半日 = 一台 / 患者半日 = 一名治疗师）已随
+    `006_open_scheduling.sql` 删除。现存的硬冲突只有**休息块**与**生效请假**。
+    """
 
     def test_create_appointment_and_list(self) -> None:
         resp = self.client.post(
@@ -69,17 +73,20 @@ class TestSchedulingInvariants(ScheduleTestCase):
         ).json()
         self.assertEqual(len(listed), 1)
 
-    def test_therapist_half_day_is_single_slot(self) -> None:
+    def test_therapist_can_have_multiple_in_same_half_day(self) -> None:
+        """一个治疗师同一半日可以有多台（原 `ux_appt_therapist_slot` 已删除）。"""
         first = self.client.post(
             "/api/v1/schedule", json={"patient_no": "ZY001", "date": D1, "period": "am"}, headers=self.h1
         )
-        self.assertEqual(first.status_code, 201)
+        self.assertEqual(first.status_code, 201, first.text)
         second = self.client.post(
             "/api/v1/schedule", json={"patient_no": "ZY003", "date": D1, "period": "am"}, headers=self.h1
         )
-        self.assert_error(second, 409, "CONFLICT")
-        rules = [c["rule"] for c in second.json()["details"]["conflicts"]]
-        self.assertIn("therapist_slot_taken", rules)
+        self.assertEqual(second.status_code, 201, second.text)
+        listed = self.client.get(
+            "/api/v1/schedule", params={"from": D1, "to": D1}, headers=self.h1
+        ).json()
+        self.assertEqual(len(listed), 2)
 
     def test_same_therapist_other_period_is_allowed(self) -> None:
         """上午与下午是两个独立格子。"""
@@ -89,16 +96,30 @@ class TestSchedulingInvariants(ScheduleTestCase):
         )
         self.assertEqual(resp.status_code, 201, resp.text)
 
-    def test_patient_half_day_is_single_therapist(self) -> None:
-        """Q2：同一患者同一半日不能被两名治疗师排期。"""
+    def test_patient_can_be_scheduled_by_two_therapists_same_half_day(self) -> None:
+        """Q2 已放弃：同一患者同一半日可以被两名治疗师各排一台。
+
+        科室真实工作流：一个上午里 PT / OT / 言语 / 吞咽 可能各给同一患者做一次。
+        """
         self.client.post("/api/v1/schedule", json={"patient_no": "ZY003", "date": D1, "period": "am"}, headers=self.h1)
-        # 乙患者未分配，李四也可以排；但同一半日第二个治疗师应被拒
         resp = self.client.post(
             "/api/v1/schedule", json={"patient_no": "ZY003", "date": D1, "period": "am"}, headers=self.h2
         )
-        self.assert_error(resp, 409, "CONFLICT")
-        rules = [c["rule"] for c in resp.json()["details"]["conflicts"]]
-        self.assertIn("patient_slot_taken", rules)
+        self.assertEqual(resp.status_code, 201, resp.text)
+        # 两位治疗师的特写：排期查询默认返回全科，所以两人看到的都是这 2 台
+        for headers in (self.h1, self.h2):
+            listed = self.client.get(
+                "/api/v1/schedule", params={"from": D1, "to": D1}, headers=headers
+            ).json()
+            self.assertEqual(len(listed), 2)
+            self.assertEqual({a["patient_no"] for a in listed}, {"ZY003"})
+        # 按治疗师过滤后各自只有自己那一台
+        mine1 = self.client.get(
+            "/api/v1/schedule",
+            params={"from": D1, "to": D1, "therapist_id": int(self.t1["id"])},
+            headers=self.h1,
+        ).json()
+        self.assertEqual([a["therapist_id"] for a in mine1], [int(self.t1["id"])])
 
     def test_cancelled_appointment_frees_the_slot(self) -> None:
         created = self.client.post(
@@ -156,12 +177,17 @@ class TestSchedulingInvariants(ScheduleTestCase):
         )
         self.assert_error(resp, 422, "INVALID")
 
-    def test_therapist_cannot_schedule_others_patient(self) -> None:
-        """Q3：只能给自己可见范围内的患者排期。"""
+    def test_therapist_can_schedule_department_patient(self) -> None:
+        """全科白板：治疗师可以给任何患者排期（原 Q3 的 PATIENT_NOT_SCHEDULABLE 已放开）。
+
+        ZY002 归属李四，张三也能给他排 —— 一个上午里不同治疗师各做一次是正常业务。
+        """
         resp = self.client.post(
             "/api/v1/schedule", json={"patient_no": "ZY002", "date": D1, "period": "am"}, headers=self.h1
         )
-        self.assert_error(resp, 403, "PATIENT_NOT_SCHEDULABLE")
+        self.assertEqual(resp.status_code, 201, resp.text)
+        self.assertEqual(resp.json()["patient_no"], "ZY002")
+        self.assertEqual(resp.json()["therapist_id"], int(self.t1["id"]))
 
     def test_therapist_cannot_schedule_for_another_therapist(self) -> None:
         resp = self.client.post(
@@ -200,7 +226,8 @@ class TestSchedulingInvariants(ScheduleTestCase):
 
 
 class TestAvailability(ScheduleTestCase):
-    def test_availability_marks_taken_and_open(self) -> None:
+    def test_slot_stays_available_but_reports_existing_appointments(self) -> None:
+        """半日格子不再互斥：排了台之后格子仍然可排，但会回传已有排期供展示。"""
         self.client.post("/api/v1/schedule", json={"patient_no": "ZY001", "date": D1, "period": "am"}, headers=self.h1)
         slots = self.client.get(
             "/api/v1/schedule/availability", params={"from": D1, "to": D1, "therapist_id": int(self.t1["id"])},
@@ -209,14 +236,16 @@ class TestAvailability(ScheduleTestCase):
         self.assertEqual(len(slots), 2, "一天两个半日")
         am = next(s for s in slots if s["period"] == "am")
         pm = next(s for s in slots if s["period"] == "pm")
-        self.assertFalse(am["available"])
-        self.assertIn("therapist_slot_taken", am["reasons"])
-        self.assertEqual(am["patient_name"], "患者甲")
+        self.assertTrue(am["available"], "已有排期不再让格子变灰")
+        self.assertEqual(am["reasons"], [])
+        self.assertEqual(am["appointment_count"], 1)
+        self.assertEqual(am["appointments"][0]["patient_name"], "患者甲")
+        self.assertEqual(am["patients"][0]["patient_no"], "ZY001")
         self.assertTrue(pm["available"])
-        self.assertEqual(pm["reasons"], [])
+        self.assertEqual(pm["appointment_count"], 0)
 
-    def test_availability_reflects_patient_conflict(self) -> None:
-        """传入 patient_no 后，同一患者在其他治疗师那里的占用也要算进来。"""
+    def test_patient_appointments_reported_without_blocking(self) -> None:
+        """传 patient_no 时回传该患者在这些半日的排期（谁在做），但不影响可排性。"""
         self.client.post("/api/v1/schedule", json={"patient_no": "ZY003", "date": D1, "period": "am"}, headers=self.h1)
         slots = self.client.get(
             "/api/v1/schedule/availability",
@@ -224,8 +253,11 @@ class TestAvailability(ScheduleTestCase):
             headers=self.h2,
         ).json()
         am = next(s for s in slots if s["period"] == "am")
-        self.assertFalse(am["available"])
-        self.assertIn("patient_slot_taken", am["reasons"])
+        # 李四的格子里本来没有这台，所以仍可排；但能看到该患者已被张三排了
+        self.assertTrue(am["available"])
+        self.assertEqual(am["appointment_count"], 0)
+        self.assertEqual(len(am["patient_appointments"]), 1)
+        self.assertEqual(am["patient_appointments"][0]["patient_no"], "ZY003")
 
     def test_availability_reflects_rest_block(self) -> None:
         rest_block_model.create_rest_block(
@@ -686,15 +718,15 @@ class TestCopySchedule(ScheduleTestCase):
         self.assertEqual(body["source_date"], source.isoformat())
         self.assertEqual(body["target_date"], target.isoformat())
 
-    def test_copy_skips_conflicting_slots(self) -> None:
-        """冲突格子跳过并回报，不整体失败。"""
+    def test_copy_into_occupied_slot_still_created(self) -> None:
+        """半日格子不再互斥：目标日已有排期时，复制**照样成功**（原先会被跳过）。"""
         target = date(2027, 3, 2)
         source = target - timedelta(days=1)
         appointment_model.create_appointment(
             self.conn, patient_no="ZY001", therapist_id=int(self.t1["id"]),
             day=source.isoformat(), period="am",
         )
-        # 目标日同一半日先占掉
+        # 目标日同一半日先有一台 —— 现在不再是冲突
         appointment_model.create_appointment(
             self.conn, patient_no="ZY003", therapist_id=int(self.t1["id"]),
             day=target.isoformat(), period="am",
@@ -705,6 +737,31 @@ class TestCopySchedule(ScheduleTestCase):
             headers=self.h1,
         )
         body = resp.json()
+        self.assertEqual(len(body["created"]), 1)
+        self.assertEqual(len(body["skipped"]), 0)
+        # 目标日该半日现在有两台
+        same_slot = self.client.get(
+            "/api/v1/schedule", params={"from": target.isoformat(), "to": target.isoformat()}, headers=self.h1
+        ).json()
+        self.assertEqual(len([a for a in same_slot if a["period"] == "am"]), 2)
+
+    def test_copy_skips_slot_blocked_by_rest(self) -> None:
+        """仍然会跳过的唯一情形：该治疗师目标半日是休息块。"""
+        target = date(2027, 3, 16)
+        source = target - timedelta(days=1)
+        appointment_model.create_appointment(
+            self.conn, patient_no="ZY001", therapist_id=int(self.t1["id"]),
+            day=source.isoformat(), period="am",
+        )
+        rest_block_model.create_rest_block(
+            self.conn, therapist_id=int(self.t1["id"]), scope="date",
+            specific_date=target.isoformat(), period="am",
+        )
+        body = self.client.post(
+            "/api/v1/schedule/copy",
+            json={"mode": "yesterday", "target_date": target.isoformat()},
+            headers=self.h1,
+        ).json()
         self.assertEqual(len(body["created"]), 0)
         self.assertEqual(len(body["skipped"]), 1)
         self.assertEqual(body["skipped"][0]["reason"], "CONFLICT")
@@ -747,13 +804,27 @@ class TestAppointmentModelGuards(ScheduleTestCase):
                 self.conn, patient_no="NOPE", therapist_id=int(self.t1["id"]), day=D1, period="am"
             )
 
-    def test_conflict_raised_when_slot_taken(self) -> None:
+    def test_multiple_appointments_in_same_slot_allowed(self) -> None:
+        """半日格子不互斥：同一治疗师同一半日可以创建多台（原 `ux_appt_therapist_slot` 已删）。"""
         appointment_model.create_appointment(
             self.conn, patient_no="ZY001", therapist_id=int(self.t1["id"]), day=D1, period="am"
         )
+        appointment_model.create_appointment(
+            self.conn, patient_no="ZY003", therapist_id=int(self.t1["id"]), day=D1, period="am"
+        )
+        total = self.conn.execute(
+            "SELECT COUNT(*) FROM appointment WHERE date = ? AND period = 'am'", (D1,)
+        ).fetchone()[0]
+        self.assertEqual(total, 2)
+
+    def test_conflict_raised_on_rest_block(self) -> None:
+        """仍然会拦下的硬冲突：该治疗师该半日为休息块。"""
+        rest_block_model.create_rest_block(
+            self.conn, therapist_id=int(self.t1["id"]), scope="date", specific_date=D1, period="am"
+        )
         with self.assertRaises(Conflict):
             appointment_model.create_appointment(
-                self.conn, patient_no="ZY003", therapist_id=int(self.t1["id"]), day=D1, period="am"
+                self.conn, patient_no="ZY001", therapist_id=int(self.t1["id"]), day=D1, period="am"
             )
 
     def test_leave_validation_covers_types_and_spans(self) -> None:

@@ -648,30 +648,52 @@ class TestPatientResponses(SeededApiTestCase):
 
 
 class TestRecordPermissions(SeededApiTestCase):
-    def _create_for_patient(self, patient_no: str, headers: dict):
+    """全科白板下的记录权限（2026-10-03 起）。
+
+    患者对全科在院/暂停可见后，**记录也随患者可见**：治疗师可以读、可以改他人患者的记录。
+    仍然保留的三条边界：
+      1. 只能**以自己名义**写记录（``RECORD_OTHER_THERAPIST``）；
+      2. 已锁定（``locked``）的记录治疗师不能改（``RECORD_LOCKED``）；
+      3. 只能删除**自己的草稿**（他人草稿不可删）。
+    """
+
+    def _create_for_patient(self, patient_no: str, headers: dict, *, status: str = "draft"):
         return self.client.post(
             "/api/v1/records",
             json={
-                "patient_no": patient_no, "record_date": "2027-03-01",
+                "patient_no": patient_no, "record_date": "2027-03-01", "status": status,
                 "items": [{"main_item_id": self.main_item_id("motor_function"),
                            "sub_item_id": self.sub_item_id("motor_function_01"), "params": {"side": "左"}}],
             },
             headers=headers,
         )
 
-    def test_cannot_write_record_for_invisible_patient(self) -> None:
+    def test_can_write_record_for_colleague_patient(self) -> None:
+        """白板：可以给"别人负责的患者"写记录（一个上午多人各做一次是常态）。"""
         resp = self._create_for_patient("ZY002", self.h1)
-        self.assert_error(resp, 403, "PATIENT_NOT_VISIBLE")
+        self.assertEqual(resp.status_code, 201, resp.text)
+        self.assertEqual(resp.json()["patient_no"], "ZY002")
+        self.assertEqual(resp.json()["therapist_id"], int(self.t1["id"]), "记录人必须是自己")
 
-    def test_cannot_read_others_record(self) -> None:
+    def test_can_read_colleague_patient_record(self) -> None:
         record = self._create_for_patient("ZY002", self.h2).json()
         resp = self.client.get(f"/api/v1/records/{record['id']}", headers=self.h1)
-        self.assert_error(resp, 403, "RECORD_NOT_VISIBLE")
+        self.assertEqual(resp.status_code, 200, resp.text)
 
-    def test_cannot_modify_others_record(self) -> None:
+    def test_can_modify_colleague_patient_draft(self) -> None:
+        """草稿可被他人在同一患者上修改（记录归属仍是原作者，改动留痕）。"""
         record = self._create_for_patient("ZY002", self.h2).json()
+        resp = self.client.put(f"/api/v1/records/{record['id']}", json={"note": "代记"}, headers=self.h1)
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertEqual(resp.json()["note"], "代记")
+
+    def test_cannot_modify_locked_record(self) -> None:
+        """锁定后治疗师（哪怕患者可见）也不能改 —— 这是留痕与文书完整性的边界。"""
+        record = self._create_for_patient("ZY002", self.h2, status="submitted").json()
+        lock = self.client.post(f"/api/v1/records/{record['id']}/lock", headers=self.ha)
+        self.assertEqual(lock.status_code, 200, lock.text)
         resp = self.client.put(f"/api/v1/records/{record['id']}", json={"note": "改"}, headers=self.h1)
-        self.assert_error(resp, 403, "RECORD_NOT_VISIBLE")
+        self.assert_error(resp, 403, "RECORD_LOCKED")
 
     def test_admin_can_read_any_record(self) -> None:
         record = self._create_for_patient("ZY002", self.h2).json()
@@ -679,6 +701,7 @@ class TestRecordPermissions(SeededApiTestCase):
         self.assertEqual(resp.status_code, 200, resp.text)
 
     def test_therapist_cannot_write_for_another_therapist(self) -> None:
+        """只能以自己名义写记录（这条限制保留）。"""
         resp = self.client.post(
             "/api/v1/records",
             json={"patient_no": "ZY001", "record_date": "2027-03-01", "therapist_id": int(self.t2["id"])},
@@ -686,17 +709,35 @@ class TestRecordPermissions(SeededApiTestCase):
         )
         self.assert_error(resp, 403, "RECORD_OTHER_THERAPIST")
 
-    def test_record_list_only_shows_visible_patients(self) -> None:
+    def test_record_list_shows_department_records(self) -> None:
+        """白板：记录列表默认（scope=visible）显示全科范围内的记录。"""
         self._create_for_patient("ZY001", self.h1)
         self._create_for_patient("ZY002", self.h2)
-        mine = self.client.get("/api/v1/records", headers=self.h1).json()
-        numbers = {i["patient_no"] for i in mine["items"]}
-        self.assertEqual(numbers, {"ZY001"}, "不应看到其他治疗师患者的记录")
+        listed = self.client.get("/api/v1/records", headers=self.h1).json()
+        numbers = {i["patient_no"] for i in listed["items"]}
+        self.assertEqual(numbers, {"ZY001", "ZY002"})
 
     def test_scope_mine_only_own_records(self) -> None:
         self._create_for_patient("ZY001", self.h1)
         mine = self.client.get("/api/v1/records", params={"scope": "mine"}, headers=self.h2).json()
         self.assertEqual(mine["total"], 0)
+        mine1 = self.client.get("/api/v1/records", params={"scope": "mine"}, headers=self.h1).json()
+        self.assertEqual(mine1["total"], 1)
+
+    def test_discharged_patient_records_hidden(self) -> None:
+        """已出院患者默认不在白板上，其记录也不可见（管理员仍可见）。"""
+        from app.models import patient as patient_model
+
+        self._create_for_patient("ZY002", self.h2)
+        patient_model.update_patient(
+            self.conn, "ZY002", status=patient_model.STATUS_DISCHARGED
+        )
+        listed = self.client.get("/api/v1/records", headers=self.h1).json()
+        self.assertEqual(listed["total"], 0)
+        admin_listed = self.client.get(
+            "/api/v1/records", params={"scope": "visible"}, headers=self.ha
+        ).json()
+        self.assertEqual(admin_listed["total"], 1, "管理员不受在院状态限制")
 
     def test_invalid_scope_rejected(self) -> None:
         resp = self.client.get("/api/v1/records", params={"scope": "whatever"}, headers=self.h1)
@@ -792,8 +833,15 @@ class TestTimeline(SeededApiTestCase):
         self.assertEqual(len(body["items"]), 1)
         self.assertEqual(body["items"][0]["record_date"], "2027-03-03")
 
-    def test_timeline_hides_other_therapists_patients(self) -> None:
+    def test_timeline_visible_to_whole_department(self) -> None:
+        """白板：时间轴默认显示全科范围内患者的记录，同事也能看到这两条。"""
         body = self.client.get("/api/v1/timeline", headers=self.h2).json()
+        self.assertEqual(len(body["items"]), 2)
+        self.assertEqual({i["patient_no"] for i in body["items"]}, {"ZY001"})
+
+    def test_timeline_scope_mine_excludes_colleague_records(self) -> None:
+        """`scope=mine` 仍只看自己的记录（用于"我的记录"页签）。"""
+        body = self.client.get("/api/v1/timeline", params={"scope": "mine"}, headers=self.h2).json()
         self.assertEqual(body["items"], [])
 
     def test_timeline_invalid_scope(self) -> None:

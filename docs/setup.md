@@ -1,6 +1,6 @@
 # 环境搭建与运行（setup）
 
-**当前状态**：阶段 0–5 后端已交付并全部验证（**543 个测试通过、0 skip**；端到端 183 项、
+**当前状态**：阶段 0–5 后端已交付并全部验证（**554 个测试通过、0 skip**；端到端 190 项、
 跨文档一致性 156 项、浏览器 UI 验收 66 项）。
 
 ---
@@ -61,13 +61,13 @@ $py = "C:\Users\youda\AppData\Local\Programs\Python\Python313\python.exe"
 
 ```powershell
 cd backend
-& $py -m unittest discover -s tests -t . -v      # 543 个测试
+& $py -m unittest discover -s tests -t . -v      # 554 个测试
 & $py scripts\verify_http.py                     # 阶段 0 HTTP 端到端（14 项）
-& $py scripts\verify_stage1.py                   # 阶段 1 认证与患者（23 项）
+& $py scripts\verify_stage1.py                   # 阶段 1 认证与患者（25 项）
 & $py scripts\verify_stage2.py                   # 阶段 2 排期与请假（29 项）
-& $py scripts\verify_stage3.py                   # 阶段 3 字典与治疗记录（34 项）
+& $py scripts\verify_stage3.py                   # 阶段 3 字典与治疗记录（35 项）
 & $py scripts\verify_stage4.py                   # 阶段 4 离线与同步（29 项）
-& $py scripts\verify_stage5.py                   # 阶段 5 汇总打印、后台与模板种子（54 项）
+& $py scripts\verify_stage5.py                   # 阶段 5 汇总打印、后台与模板种子（58 项）
 & $py scripts\check_docs_consistency.py          # 跨文档一致性（156 项）
 ```
 

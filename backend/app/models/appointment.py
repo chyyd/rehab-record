@@ -1,17 +1,27 @@
-"""排期数据访问与**三类冲突检测**（阶段 2 / `设计.md` 3.4、`开发计划.md` M07、S1）。
+"""排期数据访问与**两类冲突检测**（阶段 2 / `设计.md` 3.4、`开发计划.md` M07）。
 
 排期单位是 **`(日期, 上午|下午)`**，不是具体时间点（Q1）。
 
-三条冲突规则（M07）：
+## 2026-10-03 起的冲突模型（重大变更，见 `CHANGELOG.md`）
 
-| 序号 | 规则 | 由谁保证 |
+科室确认真实工作流：**一个上午里不同治疗师可能给同一患者做多次治疗，一次最多 1 小时**；
+且本系统**只做记录**（今天做了哪些治疗、每次治疗干了什么），**不做时间合规判定**
+（时间合规由另一个患者签字系统负责）。
+
+因此「半日格子互斥」不再是正确的模型：迁移 `006_open_scheduling.sql` 删除了
+`ux_appt_therapist_slot` 与 `ux_appt_patient_slot` 两条唯一索引。
+
+现在只剩两条硬冲突，且都在本模块判定（休息与请假是配置，不适合用唯一索引表达）：
+
+| 序号 | 规则 | 说明 |
 |---|---|---|
-| 1 | 治疗师半日 = 一台 | 库层唯一索引 `ux_appt_therapist_slot` + 本模块预检 |
-| 2 | 患者半日 = 一名治疗师 | 库层唯一索引 `ux_appt_patient_slot` + 本模块预检（Q2：**不允许**同时段多人） |
-| 3 | 休息 / 已生效请假占用 | 本模块（`rest_block` 与 `leave_record` 是配置，不适合用唯一索引表达） |
+| 1 | **休息块命中** | 该治疗师该半日为休息时段（`rest_block`） |
+| 2 | **该治疗师该半日处于生效请假** | `leave_record` 且 `status='active'` |
 
-**为什么要预检**：唯一索引只能给出"约束冲突"这种模糊错误，
-而治疗师端需要知道"到底和谁撞了"，才能提示到具体那一台。索引是最后防线，预检负责给出可读信息。
+一个半日格子**可以容纳多台排期**（不同治疗师、甚至同一治疗师的多台）。
+`availability()` 不再返回"不可排"，但仍会回传该格子已有的排期清单与人数，供客户端展示。
+
+> 保留但**不参与任何约束**：`start_time` / `end_time`。本系统不采集也不校验具体时间。
 """
 
 from __future__ import annotations
@@ -201,58 +211,24 @@ def _rest_hit(conn: sqlite3.Connection, therapist_id: int, day: str, period: str
 def detect_conflicts(
     conn: sqlite3.Connection,
     *,
-    patient_no: str,
     therapist_id: int,
     day: str,
     period: str,
-    exclude_appointment_id: int | None = None,
 ) -> list[dict[str, Any]]:
-    """返回该半日格子的全部冲突（空列表表示可排）。
+    """返回该半日的冲突（空列表表示可排）。
 
-    规则 1/2 用查询预检（可给出"和谁撞了"），库层唯一索引仍是最后防线。
+    2026-10-03 起只剩两类：**休息块** 与 **该治疗师处于生效请假**。
+    "治疗师半日已占用""患者半日已被他人排期"两条规则随 Q2/S1 一并取消
+    —— 半日格子不再互斥，一个患者一个上午被多个治疗师各排一台是正常业务。
+    见模块文档与迁移 `006_open_scheduling.sql`。
     """
     period = normalize_period(period)
     if period not in ("am", "pm"):
         raise Invalid("排期的半日只能是 am / pm（全天是请假专用）", details={"period": period})
 
     conflicts: list[dict[str, Any]] = []
-    exclude = "" if exclude_appointment_id is None else " AND id <> ?"
-    base_params: tuple[Any, ...] = () if exclude_appointment_id is None else (exclude_appointment_id,)
-    status_placeholders = ", ".join("?" for _ in INACTIVE_STATUSES)
 
-    # 规则 1：治疗师半日已被占
-    row = conn.execute(
-        f"SELECT id, patient_no FROM appointment WHERE therapist_id = ? AND date = ? AND period = ?"
-        f" AND status NOT IN ({status_placeholders}){exclude}",
-        (therapist_id, day, period, *INACTIVE_STATUSES, *base_params),
-    ).fetchone()
-    if row is not None:
-        conflicts.append(
-            {
-                "rule": "therapist_slot_taken",
-                "message": f"该治疗师 {day} {'上午' if period == 'am' else '下午'} 已有一台排期",
-                "appointment_id": row["id"],
-                "patient_no": row["patient_no"],
-            }
-        )
-
-    # 规则 2：患者半日已被其他治疗师占用（Q2：不允许同一患者同时段多人）
-    row = conn.execute(
-        f"SELECT id, therapist_id FROM appointment WHERE patient_no = ? AND date = ? AND period = ?"
-        f" AND status NOT IN ({status_placeholders}){exclude}",
-        (patient_no, day, period, *INACTIVE_STATUSES, *base_params),
-    ).fetchone()
-    if row is not None:
-        conflicts.append(
-            {
-                "rule": "patient_slot_taken",
-                "message": f"该患者 {day} {'上午' if period == 'am' else '下午'} 已由其他治疗师排期",
-                "appointment_id": row["id"],
-                "therapist_id": row["therapist_id"],
-            }
-        )
-
-    # 规则 3：休息 / 已生效请假
+    # 规则 1：休息块
     if _rest_hit(conn, therapist_id, day, period):
         conflicts.append(
             {
@@ -260,6 +236,8 @@ def detect_conflicts(
                 "message": f"该治疗师 {day} {'上午' if period == 'am' else '下午'} 为休息时段",
             }
         )
+
+    # 规则 2：生效请假
     if _therapist_leave_hit(conn, therapist_id, day, period):
         conflicts.append(
             {
@@ -278,20 +256,40 @@ def availability(
     date_to: str,
     patient_no: str | None = None,
 ) -> list[dict[str, Any]]:
-    """逐半日给出"能不能排 / 为什么不能"，供排期页直接把格子置灰。
+    """逐半日给出"这个格子能不能排 / 为什么不能 / 里面已经有什么"。
 
-    返回每项：``{date, period, available, reasons: [...]}``
+    2026-10-03 起半日格子**不再互斥**：
+    - ``available`` 只受 **休息块** 与 **该治疗师生效请假** 影响；
+    - 已经排在格子里的治疗（含该治疗师多台、以及其它治疗师给同一患者排的）会出现在
+      ``appointments`` / ``appointment_count`` / ``patients`` 里，**但不会让格子变灰**；
+    - 传 ``patient_no`` 时额外回传 ``patient_appointments``（该患者在这些半日的排期），
+      供客户端展示"这个患者本半日还有谁在做"，同样不参与可排性判定。
+
+    返回每项：``{date, period, available, reasons, appointments,
+    appointment_count, patients, patient_appointments}``。
     """
     if date_from > date_to:
         raise Invalid("起始日期不能晚于结束日期", details={"date_from": date_from, "date_to": date_to})
 
-    occupied = occupied_slots(conn, date_from=date_from, date_to=date_to, therapist_id=therapist_id)
-    occupied_by_slot = {(r["date"], r["period"]): r for r in occupied}
-    patient_occupied: dict[tuple[str, str], dict[str, Any]] = {}
+    # 该治疗师在这些半日的全部排期（含多台）
+    mine = occupied_slots(conn, date_from=date_from, date_to=date_to, therapist_id=therapist_id)
+    mine_by_slot: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for r in mine:
+        mine_by_slot.setdefault((r["date"], r["period"]), []).append(r)
+
+    # 指定患者在这些半日的全部排期（可能由多个治疗师排）
+    patient_by_slot: dict[tuple[str, str], list[dict[str, Any]]] = {}
     if patient_no:
-        for r in occupied_slots(conn, date_from=date_from, date_to=date_to):
-            if r["patient_no"] == patient_no:
-                patient_occupied[(r["date"], r["period"])] = r
+        patient_rows = conn.execute(
+            "SELECT a.id, a.therapist_id, a.patient_no, a.date, a.period, a.status,"
+            "       u.name AS therapist_name"
+            " FROM appointment a LEFT JOIN user u ON u.id = a.therapist_id"
+            " WHERE a.patient_no = ? AND a.date >= ? AND a.date <= ?"
+            f"   AND a.status NOT IN ({', '.join('?' for _ in INACTIVE_STATUSES)})",
+            (patient_no, date_from, date_to, *INACTIVE_STATUSES),
+        ).fetchall()
+        for r in patient_rows:
+            patient_by_slot.setdefault((r["date"], r["period"]), []).append(dict(r))
 
     rests = rest_blocks_for(conn, therapist_id, date_from=date_from, date_to=date_to)
     leaves = leaves_for(conn, therapist_id, date_from=date_from, date_to=date_to)
@@ -323,25 +321,25 @@ def availability(
     for day in _date_range(date_from, date_to):
         for period in ("am", "pm"):
             reasons: list[str] = []
-            taken = occupied_by_slot.get((day, period))
-            if taken is not None:
-                reasons.append("therapist_slot_taken")
-            pat = patient_occupied.get((day, period))
-            if pat is not None:
-                reasons.append("patient_slot_taken")
             if rest_hit(day, period):
                 reasons.append("rest_block")
             if leave_hit(day, period):
                 reasons.append("on_leave")
+
+            slot_appointments = mine_by_slot.get((day, period), [])
             out.append(
                 {
                     "date": day,
                     "period": period,
                     "available": not reasons,
                     "reasons": reasons,
-                    "patient_no": taken["patient_no"] if taken else None,
-                    "patient_name": taken["patient_name"] if taken else None,
-                    "status": taken["status"] if taken else None,
+                    "appointments": slot_appointments,
+                    "appointment_count": len(slot_appointments),
+                    "patients": [
+                        {"patient_no": a["patient_no"], "patient_name": a["patient_name"]}
+                        for a in slot_appointments
+                    ],
+                    "patient_appointments": patient_by_slot.get((day, period), []),
                 }
             )
     return out
@@ -387,7 +385,7 @@ def create_appointment(
         raise NotFound("患者不存在", details={"inpatient_no": patient_no})
 
     conflicts = detect_conflicts(
-        conn, patient_no=patient_no, therapist_id=therapist_id, day=day, period=period
+        conn, therapist_id=therapist_id, day=day, period=period
     )
     if conflicts:
         # 409：可预期的业务冲突，而不是参数错误
@@ -401,8 +399,9 @@ def create_appointment(
             (patient_no, therapist_id, day, period, start_time, end_time, slot_label, status, note),
         )
     except sqlite3.IntegrityError as exc:
-        # 预检通过但索引拒绝：并发写入或预检遗漏，仍然要给出可读信息
-        raise Conflict("该半日已被占用（并发冲突）", details={"reason": str(exc)}) from exc
+        # 半日格子已不再互斥，唯一的库层约束是 client_uuid 幂等键；
+        # 走到这里说明同步推送的幂等键冲突或其它完整性错误，据实回报。
+        raise Conflict("排期写入冲突", details={"reason": str(exc)}) from exc
     return get_appointment_or_raise(conn, int(cur.lastrowid))
 
 
@@ -435,15 +434,13 @@ def update_appointment(
         end_time if end_time is not None else current["end_time"],
     )
 
-    # 只有仍然占用格子时才需要查冲突；改成 cancelled/rescheduled 就是让出格子
+    # 只有仍然占用格子时才需要查冲突；改成 cancelled/rescheduled 即视为不再占用
     if target_status not in INACTIVE_STATUSES:
         conflicts = detect_conflicts(
             conn,
-            patient_no=target_patient,
             therapist_id=target_therapist,
             day=target_day,
             period=target_period,
-            exclude_appointment_id=appointment_id,
         )
         if conflicts:
             raise Conflict("该半日无法排期", details={"conflicts": conflicts})
@@ -459,12 +456,12 @@ def update_appointment(
     try:
         conn.execute(f"UPDATE appointment SET {', '.join(sets)} WHERE id = ?", (*params, appointment_id))
     except sqlite3.IntegrityError as exc:
-        raise Conflict("该半日已被占用（并发冲突）", details={"reason": str(exc)}) from exc
+        raise Conflict("排期写入冲突", details={"reason": str(exc)}) from exc
     return get_appointment_or_raise(conn, appointment_id)
 
 
 def cancel_appointment(conn: sqlite3.Connection, appointment_id: int) -> dict[str, Any]:
-    """取消排期 = 软删除，让出半日格子。"""
+    """取消排期 = 软删除（状态改为 cancelled，不再计入占用与汇总）。"""
     return update_appointment(conn, appointment_id, status="cancelled")
 
 

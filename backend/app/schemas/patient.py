@@ -7,8 +7,9 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.models.patient import PATIENT_STATUSES
 
 SCOPE_DESCRIPTION = (
-    "mine（可见归属是我）/ unassigned（无人负责）/ "
-    "temp（与我有关的临时指派）/ visible（可见全部）/ all（仅管理员）"
+    "dept（科室白板：在院+暂停，治疗师默认）/ mine（可见归属是我）/ "
+    "unassigned（无人负责）/ temp（与我有关的临时指派）/ "
+    "visible（dept 的同义兼容值）/ all（全表含已出院，仅管理员）"
 )
 
 

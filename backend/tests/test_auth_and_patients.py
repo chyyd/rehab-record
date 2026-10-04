@@ -318,7 +318,12 @@ class TestUserManagement(ApiTestCase):
 
 
 class TestPatientVisibility(ApiTestCase):
-    """D10：数据级权限。治疗师可见 = 归属自己 ∪ 临时认领自己 ∪ 未分配 ∪ 与我有关的临时指派。"""
+    """D10：数据级权限。
+
+    **2026-10-03 起改为全科白板**：治疗师默认（`scope=dept`）能看见科室当前**在院/暂停**
+    的全部患者，不再按归属隔离；`mine` / `unassigned` / `temp` 保留为**筛选**语义；
+    `all`（含已出院）仍**仅管理员**。
+    """
 
     def setUp(self) -> None:
         super().setUp()
@@ -334,14 +339,44 @@ class TestPatientVisibility(ApiTestCase):
         )
         self.free = patient_model.create_patient(self.conn, inpatient_no="ZY003", name="未分配患者")
 
-    def test_therapist_sees_only_allowed_patients(self) -> None:
+    def test_therapist_sees_whole_department(self) -> None:
+        """白板：别人的患者在院也可见（这是本次业务变更的核心）。"""
         headers = self.login_headers("T001")
         resp = self.client.get("/api/v1/patients", headers=headers)
         self.assertEqual(resp.status_code, 200, resp.text)
-        numbers = {item["inpatient_no"] for item in resp.json()["items"]}
-        self.assertEqual(numbers, {"ZY001", "ZY003"}, "不应看到别人的患者")
+        body = resp.json()
+        numbers = {item["inpatient_no"] for item in body["items"]}
+        self.assertEqual(numbers, {"ZY001", "ZY002", "ZY003"})
+        self.assertEqual(body["scope"], "dept", "治疗师默认范围应为科室白板")
+
+    def test_discharged_hidden_by_default(self) -> None:
+        """已出院默认不在白板上（它不属于"当前在科室的患者"）。"""
+        patient_model.update_patient(
+            self.conn, "ZY002", status=patient_model.STATUS_DISCHARGED
+        )
+        headers = self.login_headers("T001")
+        numbers = {
+            i["inpatient_no"]
+            for i in self.client.get("/api/v1/patients", headers=headers).json()["items"]
+        }
+        self.assertEqual(numbers, {"ZY001", "ZY003"}, "已出院患者应从白板消失")
+        # 管理员仍可用 scope=all 看到全表
+        admin_numbers = {
+            i["inpatient_no"]
+            for i in self.client.get(
+                "/api/v1/patients", params={"scope": "all"}, headers=self.login_headers("A001")
+            ).json()["items"]
+        }
+        self.assertEqual(admin_numbers, {"ZY001", "ZY002", "ZY003"})
+
+    def test_dept_scope_explicit(self) -> None:
+        headers = self.login_headers("T001")
+        resp = self.client.get("/api/v1/patients", params={"scope": "dept"}, headers=headers)
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertEqual(resp.json()["total"], 3)
 
     def test_scope_mine_and_unassigned(self) -> None:
+        """`mine` / `unassigned` 仍是有效筛选（用于"我的患者"页签）。"""
         headers = self.login_headers("T001")
         mine = self.client.get("/api/v1/patients", params={"scope": "mine"}, headers=headers).json()
         self.assertEqual({i["inpatient_no"] for i in mine["items"]}, {"ZY001"})
@@ -349,6 +384,7 @@ class TestPatientVisibility(ApiTestCase):
         self.assertEqual({i["inpatient_no"] for i in free["items"]}, {"ZY003"})
 
     def test_therapist_cannot_use_scope_all(self) -> None:
+        """`all`（全表含已出院）仍仅管理员——这条约定不变。"""
         headers = self.login_headers("T001")
         resp = self.client.get("/api/v1/patients", params={"scope": "all"}, headers=headers)
         self.assert_error(resp, 403, "SCOPE_FORBIDDEN")
@@ -359,14 +395,18 @@ class TestPatientVisibility(ApiTestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(resp.json()["total"], 3)
 
-    def test_therapist_cannot_read_others_patient_detail(self) -> None:
+    def test_therapist_can_read_others_patient_detail(self) -> None:
+        """白板：别人的患者在院时，详情可读。"""
         headers = self.login_headers("T001")
         resp = self.client.get("/api/v1/patients/ZY002", headers=headers)
-        self.assert_error(resp, 403, "PATIENT_NOT_VISIBLE")
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertEqual(resp.json()["inpatient_no"], "ZY002")
 
-    def test_therapist_cannot_see_others_assignment_history(self) -> None:
+    def test_therapist_can_see_others_assignment_history(self) -> None:
+        """白板：归属历史也可读（协作时需要知道"当前谁主要负责"）。"""
         headers = self.login_headers("T001")
-        self.assert_error(self.client.get("/api/v1/patients/ZY002/assignments", headers=headers), 403)
+        resp = self.client.get("/api/v1/patients/ZY002/assignments", headers=headers)
+        self.assertEqual(resp.status_code, 200, resp.text)
 
     def test_unknown_patient_is_404_for_admin(self) -> None:
         headers = self.login_headers("A001")

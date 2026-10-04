@@ -150,30 +150,27 @@ def main() -> int:
         check("排期返回患者/治疗师姓名", appt["patient_name"] == "阶段二患者甲" and appt["therapist_name"] == "张三",
               str(appt)[:140])
 
-        # 3) 规则 1：治疗师半日唯一
-        code, err = request("/api/v1/schedule", "POST",
-                            {"patient_no": "S2B", "date": D_MON, "period": "am"}, h1)
-        check("治疗师半日已占用 → 409",
-              code == 409 and any(c["rule"] == "therapist_slot_taken" for c in err["details"]["conflicts"]),
-              str(err)[:160])
+        # 3) 半日格子不再互斥：同一治疗师同一半日可以有多台
+        code, again = request("/api/v1/schedule", "POST",
+                              {"patient_no": "S2B", "date": D_MON, "period": "am"}, h1)
+        check("同治疗师同半日可排第二台（Q2/S1 已放开）", code == 201, str(again)[:160])
 
-        # 4) 规则 2：患者半日唯一（换治疗师）
-        code, err = request("/api/v1/schedule", "POST",
-                            {"patient_no": "S2B", "date": D_MON, "period": "pm"}, h1)
-        check("同治疗师另一半天可排", code == 201, str(err)[:140])
-        code, err = request("/api/v1/schedule", "POST",
-                            {"patient_no": "S2B", "date": D_MON, "period": "pm"}, h2)
-        check("患者半日已占用 → 409",
-              code == 409 and any(c["rule"] == "patient_slot_taken" for c in err["details"]["conflicts"]),
-              str(err)[:160])
+        # 4) 同一患者同一半日可以被另一名治疗师再排一台
+        code, other = request("/api/v1/schedule", "POST",
+                              {"patient_no": "S2B", "date": D_MON, "period": "am"}, h2)
+        check("同一患者同半日可被另一治疗师排期",
+              code == 201 and other.get("therapist_id") == ids["T002"], str(other)[:160])
 
-        # 5) 可排性
+        # 5) 可排性：格子仍然可排，但回传已有排期供展示
         avail_path = "/api/v1/schedule/availability" + q(
             **{"from": D_MON, "to": D_MON, "therapist_id": ids["T001"]}
         )
         code, slots = request(avail_path, token=h1)
         check("可排性查询返回 2 个半日", code == 200 and len(slots) == 2, str(slots)[:140])
-        check("上午不可排且给出原因", slots[0]["available"] is False and "therapist_slot_taken" in slots[0]["reasons"])
+        am_slot = slots[0]
+        check("已有排期不再让格子变灰", am_slot["available"] is True and am_slot["reasons"] == [],
+              str(am_slot)[:160])
+        check("可排性回传格子内已有排期", am_slot["appointment_count"] == 2, str(am_slot)[:200])
 
         # 6) 休息块
         code, block = request("/api/v1/rest-blocks", "POST",

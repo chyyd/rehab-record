@@ -54,18 +54,21 @@ router = ApiRouter(tags=["排期"])
 def _require_schedulable(
     conn: sqlite3.Connection, user: dict[str, Any], patient_no: str, therapist_id: int
 ) -> None:
-    """Q3：治疗师只能排"可见归属是自己 / 未分配"的患者，且只能排给自己。"""
+    """排期权限（2026-10-03 起为"全科白板"）。
+
+    - **限制 1（保留）**：治疗师只能给自己排期（``SCHEDULE_OTHER_THERAPIST``）。
+    - **限制 2（已放开）**：原先要求患者必须是"我的 / 未分配 / 临时认领"
+      （``PATIENT_NOT_SCHEDULABLE``）。全科白板下治疗师需要能给任何在院/暂停患者排期
+      —— 一个上午里 PT / OT / 言语 / 吞咽 可能各给同一患者排一台，
+      且归属人通常只有一个，若不放开会直接挡住正常业务。
+
+    > ``patient_model.can_schedule()`` 仍然保留：它表达的是**归属语义**
+    > （可见归属解析），单测直接覆盖它；但**不再作为排期的前置拒绝条件**。
+    """
     if is_admin(user):
         return
-    uid = int(user["id"])
-    if therapist_id != uid:
+    if therapist_id != int(user["id"]):
         raise ForbiddenError("SCHEDULE_OTHER_THERAPIST", "只能给自己排期")
-    if not patient_model.can_schedule(conn, patient_no, uid):
-        raise ForbiddenError(
-            "PATIENT_NOT_SCHEDULABLE",
-            "只能给「我的 / 未分配 / 临时认领」患者排期",
-            details={"patient_no": patient_no},
-        )
 
 
 def _require_can_view_schedule(user: dict[str, Any], therapist_id: int) -> None:
@@ -139,8 +142,15 @@ def schedule_availability(
     date_from: str = Query(..., alias="from"),
     date_to: str = Query(..., alias="to"),
     therapist_id: int | None = None,
-    patient_no: str | None = Query(None, description="传入后会同时检查该患者在这些半日是否已被占用"),
+    patient_no: str | None = Query(
+        None, description="传入后额外回传该患者在这些半日的排期（谁在做），不参与可排性判定"
+    ),
 ) -> list[dict[str, Any]]:
+    """逐半日返回可排性与已有排期。
+
+    2026-10-03 起半日格子**不再互斥**：``available`` 只受休息块与生效请假影响；
+    格子里的已有排期通过 ``appointments`` / ``appointment_count`` 回传，供客户端展示。
+    """
     target = therapist_id or int(user["id"])
     return appointment_model.availability(
         conn, therapist_id=target, date_from=date_from, date_to=date_to, patient_no=patient_no
