@@ -20,6 +20,43 @@
 
 ### 新增
 
+- **安卓 App：工程骨架 + 数据层 + 同步引擎（`开发计划.md` T1.6 骨架部分、协议 §7）**。
+  `app/` 不再只有 `flutter create` 的默认示例。**27 个 Flutter 测试通过**、
+  `flutter analyze` 无问题、`flutter build apk --debug` 成功产出 176 MB APK。
+  - **环境前提**：`flutter create` 后必须改两处，否则构建必然失败（都已写进 `app/README.md`）：
+    ① `gradle-wrapper.properties` 的 `distributionUrl` 换成国内镜像
+    （默认指向 `services.gradle.org`，wrapper 按 URL 哈希建目录，导致已有缓存永远命中不到）；
+    ② 构建期需要一个能出去的 **HTTP 代理** —— `sqlite3` 通过 native assets 从
+    **GitHub Releases** 下载 `libsqlite3.*.android.so`，国内不可达时会报
+    `Target build_hooks failed: Building native assets failed`（代码没问题也失败）。
+    新增 `app/tool/build_env.ps1` 集中处理镜像 + SDK/JDK + 代理自动探测。
+  - **依赖**：drift 2.35.1（本地库，Drift 而非 sqflite）、flutter_riverpod **3.4.3**、
+    dio 5.11.1、flutter_secure_storage **11.2.0**、table_calendar 3.3.0、
+    sqlite3_flutter_libs 0.5.42。（riverpod 与 secure_storage 按用户决定直接上大版本；
+    secure_storage 11 移除了 `AndroidOptions.encryptedSharedPreferences`，默认即 Keystore 管理。）
+  - **数据层**（`app/lib/data/`）：Drift 7 张表 —— `patient`/`appointment`/`treatment_record`
+    镜像表 + `record_items`（两层快照）+ `change_queue`（`client_uuid` 主键 = 幂等键）
+    + `sync_state`（只存 `last_cursor`）+ `ref_cache`（字典/选项集/模板整包 JSON，只读）。
+  - **网络**（`app/lib/data/remote/api_client.dart`）：三件事统一在一处 ——
+    自签 CA 注入 Dart 层 `SecurityContext`（**不得关闭证书校验**，D4/D6）；
+    401 静默刷新并重放原请求，**并发 401 共用一个刷新动作**（refresh 是轮换的，
+    重复刷新会互相作废）；统一翻译成 `AppError`，网络不可用用独立 code
+    `NETWORK_ERROR` 以便走离线模式。
+  - **同步引擎**（`app/lib/sync/sync_engine.dart`）：推送 ≤200/批且逐条处理
+    `applied`/`skipped`/`conflicts` 三个数组（一条冲突不阻断整批）；
+    增量拉取**不带** `entities`、首次全量带 `entities` 且终点取 `latest_cursor`；
+    变更按**完整快照**做幂等 upsert。
+  - **患者不走同步接口**（协议 §1）：`PatientRepository.refreshFromServer()` 用
+    `GET /patients` 分页刷新；本次未返回的本地患者**软隐藏而不删除**，
+    否则出院后本地历史记录会失去患者信息。
+  - **测试**：替换 `flutter create` 的默认 counter 测试（它测的东西已不存在）。
+    新增自定义 `HttpClientAdapter` 脚本化响应，**不需要真实网络**（本机 github 不通）。
+    覆盖的协议关键约定：新建入队 `base_revision` 必须为 null（带上会被判成冲突、
+    幂等失效）、同一 `client_uuid` 覆盖不新增、并发 401 只刷新一次、
+    payload 是完整快照 → 重复应用不产生重复行、记录更新时明细整体替换。
+  - 影响面：新增 `app/lib/{core,data,sync}`、`app/test`、`app/tool`；`app/pubspec.yaml`；
+    `app/README.md` 重写。**UI 尚未实现**（登录页、患者列表、排期/记录页），
+    也未做真实网络联调。
 - **阶段 1：认证、用户与患者（`开发计划.md` 阶段 1）**。22 个接口，**205 个测试全部通过**（144 → 205），另有 23 项真实 uvicorn 端到端验证。
   - **密码哈希 `app/core/security.py`**：**优先 argon2**（环境已装 `argon2-cffi`），**无则回落标准库 `hashlib.scrypt`**；两种格式带前缀区分，换库或调参不会让旧密码失效；`needs_rehash()` 支持登录时顺手升级参数。空哈希、损坏哈希、非法 scrypt 参数一律校验失败——**空哈希绝不能变成"万能密码"**。
   - **JWT**：access 30 天 + refresh 90 天（D01）。令牌带 `typ` 字段，**校验时必须检查类型**，否则 refresh token 能当 access token 用（常见漏洞，已写测试钉死）。refresh token 只存 **sha256 哈希**入库，并采用**轮换**：刷新即作废旧令牌，重放会失败。
@@ -307,6 +344,16 @@
 
 ### 修复
 
+- **修复 `.gitignore` 会静默吞掉 `app/lib/data/**`**（新建 Flutter 数据层时发现）：
+  根 `.gitignore` 里写的是 `data/`（**无前导斜杠**），该模式会匹配**任意层级**名为
+  `data` 的目录 —— 于是 Flutter 的 `app/lib/data/**`（整个数据层，**必须入库**）
+  被静默忽略，而 `git status` 完全看不出异常：文件在那儿、编译也正常，
+  只是永远不进仓库。
+  - 处置：改为锚定根目录的 `/data/`（`backend/data/` 本就已单独列出），
+    并加注释说明为什么不能省掉前导斜杠 —— 这是个很容易被"顺手简化"回去的坑。
+  - 行为不变：`data/kf.db` 与 `backend/data/` 仍被正确忽略。
+  - 为什么没早发现：`lib/data/` 是本次新建才第一次出现，此前仓库里没有名为
+    `data` 的源码目录，所以这个模式一直"看起来是对的"。
 - **修复 `start.ps1` 的 `clean` 把"删除成功"误报成失败**：清理用的嵌套函数里写了 `$script:removed++`，但 `$script:` 指的是**脚本**作用域、不是该函数的局部变量 `$removed`，于是抛出 `The variable '$script:removed' cannot be retrieved` —— 而这句在 `try` 里，被 `catch` 当成"删除失败"，结果**文件确实删掉了、却报"无法删除"**。已改为"先把待删路径收集成列表，再在同一作用域里就地删除"，并在注释里写明原因。
 - **给 `start.ps1` 增加"管理员密码自校验"**：`create-admin` 会**重置**密码，而密码有三个来源（`-AdminPassword` 参数 / `KB_ADMIN_PASSWORD` 环境变量 / 密码文件），只要有一处对不上，最终表现就是「窗口里明明打印了密码，却登录不进去」——实测就遇到了这个状态（库里 hash 与文件内容不一致，而脚本全程报 `[OK]`，极难自己发现）。
   - 处置：后端就绪后立刻用刚配置的密码打一次登录接口；不通过就明确报出 HTTP 状态，并打印**可直接粘贴的修复命令**（含正确环境变量的 `create-admin`）。
