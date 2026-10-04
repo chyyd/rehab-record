@@ -175,7 +175,7 @@ def get_patient_or_raise(conn: sqlite3.Connection, inpatient_no: str) -> dict[st
 def list_patients(
     conn: sqlite3.Connection,
     *,
-    scope: Scope = "visible",
+    scope: Scope = "dept",
     user_id: int | None = None,
     status: str | None = None,
     keyword: str | None = None,
@@ -183,6 +183,9 @@ def list_patients(
     offset: int = 0,
 ) -> tuple[list[dict[str, Any]], int]:
     """按数据范围列出患者。
+
+    默认 `dept`（科室白板：在院 + 暂停），与 `api/v1/patients.py::_resolve_scope`
+    里治疗师的默认值保持一致 —— 两处默认值不同会让"直接调模型层"的代码拿到与接口不同的范围。
 
     ``scope='all'`` 需要调用方（路由层）先确认是管理员——本函数不做权限判断。
     """
