@@ -124,7 +124,11 @@ void main() {
           'body': {'mental': '良好', 'therapy_items': ['偏瘫肢体综合训练']},
           'rendered_text': '康复治疗记录（PT运动）\n\n主观资料：精神状态：良好',
           'status': 'draft',
-          'revision': 1,
+          // ★ 这里**故意不放** `revision` —— 服务端 `record_change` 存的是
+          // **客户端原始推送 payload**，里面根本没有这个键。
+          // 原来那份 fixture 塞了 `revision: 1`，于是掩盖了
+          // "pull 落库回来后 revision 恒为 0" 这个真 bug（2026-10-06 真机抓到：
+          // 本地 1734 rev=0，服务端同一个 id 是 rev=1）。
         },
       });
 
@@ -136,7 +140,11 @@ void main() {
       expect(row.seqNo, 4);
       expect(row.bodyJson, contains('偏瘫肢体综合训练'));
       expect(row.renderedText, contains('主观资料'));
-      expect(row.revision, 1);
+      expect(
+        row.revision,
+        1,
+        reason: 'revision 要取 change_log 顶层（权威）；payload 里没有它',
+      );
     });
 
     test('★ 离线推送路径的 payload（没有 id / therapist_id / rendered_text）不崩', () async {

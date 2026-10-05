@@ -1,8 +1,11 @@
+import 'dart:convert';
+
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:rehab_app/core/config.dart';
+import 'package:rehab_app/core/date_utils.dart';
 import 'package:rehab_app/core/providers.dart';
 import 'package:rehab_app/data/local/app_database.dart';
 import 'package:rehab_app/data/local/token_store.dart';
@@ -149,6 +152,7 @@ void main() {
     WidgetTester tester,
     ProviderContainer container, {
     required Future<void> Function(WidgetTester tester) interact,
+    String? openDate,
   }) async {
     Object? popped;
     bool poppedCalled = false;
@@ -163,11 +167,11 @@ void main() {
                 onPressed: () async {
                   popped = await Navigator.of(context).push<String>(
                     MaterialPageRoute<String>(
-                      builder: (_) => const RecordPage(
+                      builder: (_) => RecordPage(
                         args: RecordEditorArgs(
                           patientNo: 'ZY001',
                           discipline: 'PT',
-                          recordDate: '2026-10-06',
+                          recordDate: openDate,
                         ),
                       ),
                     ),
@@ -239,6 +243,49 @@ void main() {
     expect(popped, isNull, reason: '存草稿把页面弹走会打断治疗师');
     // 页面还在（还能看到表单标题）。
     expect(find.text('康复治疗记录（PT运动）'), findsOneWidget);
+  });
+
+  testWidgets('★ 日期没被选过时提交：发出去的是**今天**，不是打开表单那天', (tester) async {
+    // 用户 2026-10-06：「新建吞咽治疗记录……时间还是 10-5，
+    // 似乎带入参数的时候，把日期也带入了，应该自动改成今日的日期」。
+    //
+    // `args.recordDate` 是**打开表单那一刻**算的，提交时一直沿用它 ——
+    // 于是"23:50 打开、00:10 提交"就把记录记到昨天。这里把打开时的日期
+    // 故意设成一个**过去的日期**，断言真正发出去的 payload 是今天。
+    final env = buildEnv({
+      '/api/v1/records/form': (200, formJson()),
+      '/api/v1/sync/push': (200, pushOk()),
+    });
+    addTearDown(env.container.dispose);
+
+    await pushAndInteract(
+      tester,
+      env.container,
+      // 打开表单时"以为今天是 2020-01-01"。
+      openDate: '2020-01-01',
+      interact: (tester) async {
+        await tester.tap(find.text('提交'));
+        await tester.pump();
+      },
+    );
+
+    final pushed = env.adapter.seen
+        .where((r) => r.path.contains('/sync/push'))
+        .toList();
+    expect(pushed, isNotEmpty, reason: '提交后应该有一次推送');
+    // Dio 还没把 body 编码成字节时 `data` 可能是**字符串**（也见过直接给 Map 的
+    // 情况），两种都要能读 —— 这里只关心 payload 里的日期。
+    final raw = pushed.last.data;
+    final body = raw is String
+        ? jsonDecode(raw) as Map<String, dynamic>
+        : raw as Map<String, dynamic>;
+    final change = (body['changes'] as List).first as Map<String, dynamic>;
+    final sent = (change['payload'] as Map<String, dynamic>)['record_date'];
+    expect(
+      sent,
+      formatDate(DateTime.now()),
+      reason: '没选过日期时必须用提交那一刻的当天，而不是打开表单时的日期',
+    );
   });
 
   testWidgets('推送冲突时不返回：先让人看到有问题', (tester) async {

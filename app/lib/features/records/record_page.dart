@@ -31,16 +31,42 @@ class RecordPage extends ConsumerStatefulWidget {
   ConsumerState<RecordPage> createState() => _RecordPageState();
 }
 
-class _RecordPageState extends ConsumerState<RecordPage> {
+class _RecordPageState extends ConsumerState<RecordPage> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    // 回到前台时要检查"日期是不是跨天了"（见 didChangeAppLifecycleState）。
+    WidgetsBinding.instance.addObserver(this);
     // build 期间不能改 provider 状态，放到首帧后。
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         ref.read(recordEditorProvider.notifier).start(widget.args);
       }
     });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  /// 从后台切回来时，若**日期是系统给的默认值**而这一天已经过去，就刷新成今天。
+  ///
+  /// 用户 2026-10-06 报的问题里有一层是这个：表单上的日期是**打开那一刻**算的，
+  /// 跨零点（或趟着放了一晚再回来填）就一直显示昨天。
+  /// `save()` 里也有一道同样的兜底，两处都要有 ——
+  /// 只修提交值的话，治疗师**在界面上看到的仍然是错的日期**，那更吓人。
+  ///
+  /// 只在他没明确选过日期时改动（`datePicked`），补记某一天的选择必须尊重。
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    final controller = ref.read(recordEditorProvider.notifier);
+    final current = ref.read(recordEditorProvider);
+    if (current.datePicked || current.recordDate.isEmpty) return;
+    final today = formatDate(DateTime.now());
+    if (current.recordDate != today) controller.setDateToToday();
   }
 
   @override
@@ -317,12 +343,18 @@ class _HeaderCard extends StatelessWidget {
   }
 
   Future<void> _pickDate(BuildContext context) async {
-    final current = parseDate(state.recordDate) ?? DateTime.now();
+    final today = DateTime.now();
+    final current = parseDate(state.recordDate) ?? today;
+    // 范围要**锚到今天**，不能锚到记录日期：
+    //  - `lastDate: DateTime(current.year + 1)` 这种写法在 `current` 落在
+    //    年初/年末时会偏移，更糟的是**今晚零点后就选不到"明天"**；
+    //  - `firstDate` 同理，锚在 `current` 上会让"改回今天"都出界。
+    // 上限给到明年、下限给到两年前，足够覆盖"补记"与"往前翻"。
     final picked = await showDatePicker(
       context: context,
       initialDate: current,
-      firstDate: DateTime(current.year - 2),
-      lastDate: DateTime(current.year + 1),
+      firstDate: DateTime(today.year - 2),
+      lastDate: DateTime(today.year + 1, 12, 31),
     );
     if (picked != null) controller.setDate(picked);
   }

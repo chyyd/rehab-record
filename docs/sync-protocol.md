@@ -375,7 +375,7 @@ treatment_record(id PK, patient_no, therapist_id, record_date, discipline, kind,
                  client_uuid, sync_status)
                  -- ✅ 2026-10-05：**已落地**（Drift schemaVersion 4 → 5：重建
                  --   `treatment_records`、删掉 `record_items` 表），payload 换成 `body`；
-                 --   **129 个本地测试全部通过**。
+                 --   **130 个本地测试全部通过**。
                  -- ★ 与本地表有**三处刻意的差异**，不是笔误：
                  --   · 本地**没有** `span_seq` —— 它只服务服务端的评估文书挂靠，
                  --     客户端从 `/records/form` 拿 `pending_document` 就够，无需本地判断；
@@ -403,7 +403,7 @@ sync_state(key PK, value)     -- last_cursor / last_patient_sync_at / last_full_
    （删除整张表 + 删除 `treatment_records.appointment_id` 列）；2026-10-05 再升到 **4**
    （删除 `patients.visibility_state` 列 —— 临时指派删除后该列已退化）。
    **本轮（SOAP 改造）已升到 5**：`treatment_records` 换成上面的新列、
-   删掉 `record_items` 表 —— 这一步**已落地**（**129 个本地测试全部通过**）。
+   删掉 `record_items` 表 —— 这一步**已落地**（**130 个本地测试全部通过**）。
 6. `scope=temp` **已删除**（2026-10-05）：服务端患者列表的 `Scope` 只剩
    `mine` / `unassigned` / `all` / `visible` / `dept`，记录与时间轴只剩 `mine` / `visible`；
    App 的时间轴枚举也只有 `visible` / `mine` 两个。
@@ -529,5 +529,5 @@ access token 只放内存。自签 CA 用 Dart 层 `SecurityContext` 注入，**
 | 3 | `docs/api.md` / `docs/data-model.md` | 仍未创建；接口契约可直接用 `/openapi.json` 导出 |
 | 4 | 冲突解决 UI 形态 | **已落地**（App 冲突列表 +「保留我的 / 采用服务端」两向裁决，见 `CHANGELOG.md`）；文案与交互仍以现场反馈为准 |
 | 5 | 患者离线认领 | 当前推送 `patient` 会 422；床旁现场认领是否要离线支持待定 |
-| 6 | **安卓端（`app/`）已适配 SOAP 契约 —— 已完成** | 本地 Drift 表升到 **schemaVersion 5**（`treatment_records` 换成 §7.2 的新列、`record_items` 表**删掉**）、同步 payload 换成 `body`、记录页改为一屏 chip；**129 个本地测试全部通过**（`flutter analyze` 无问题、`flutter build apk --debug` 成功） |
+| 6 | **安卓端（`app/`）已适配 SOAP 契约 —— 已完成** | 本地 Drift 表升到 **schemaVersion 5**（`treatment_records` 换成 §7.2 的新列、`record_items` 表**删掉**）、同步 payload 换成 `body`、记录页改为一屏 chip；**130 个本地测试全部通过**（`flutter analyze` 无问题、`flutter build apk --debug` 成功） |
 | 7 | `conflict_policy` 里的 `"dictionary"` 残留键 | 见 §10 的 2026-10-05（第三步）说明；需改 `app/schemas/sync.py` |

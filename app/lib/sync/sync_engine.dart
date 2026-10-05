@@ -557,6 +557,9 @@ class SyncEngine {
     final op = change['op'] as String? ?? 'update';
     final entityId = change['entity_id']?.toString();
     final payload = change['payload'];
+    // change_log 条目的顶层 revision —— 这是**权威**的版本号。
+    // payload 里那份是客户端推送时的原始数据，没有 revision（见下面 `_upsertRecord` 的说明）。
+    final version = (change['revision'] as num?)?.toInt();
     if (entity == null || entityId == null) return;
 
     switch (entity) {
@@ -569,6 +572,19 @@ class SyncEngine {
           await _upsertRecord(
             int.parse(entityId),
             Map<String, dynamic>.from(payload),
+            // ★ 2026-10-06：revision 必须取 **change_log 条目的顶层**，
+            // 不能指望 payload 里有它。
+            //
+            // 服务端 `record_change` 把**客户端原样 payload** 存进 change_log，
+            // 而客户端的推送 payload（`patient_no` / `record_date` / `body`…）
+            // **没有 revision 字段**。原来只读 `json['revision']`，
+            // 于是 pull 落库的每一行 revision 都是 0 —— 真机上抓到过：
+            // 本地 1734 rev=0 而服务端是 rev=1。
+            //
+            // 后果不是"显示不对"这么轻：本地那份基线从此不可信，
+            // 下次改这条记录就会带 `base_revision=0` 上去，服务端必然判冲突
+            //（"一保存就冲突"的另一半原因）。
+            revision: version,
           );
         }
       case 'patient':
@@ -590,7 +606,15 @@ class SyncEngine {
   }
 
   /// 落一条记录（SOAP 模型：没有"明细"了，内容就是一列 `body_json`）。
-  Future<void> _upsertRecord(int id, Map<String, dynamic> json) async {
+  ///
+  /// [revision] 来自 **change_log 条目的顶层**（权威版本号）。
+  /// 不能退回读 `json['revision']`：那里面根本没有这个键（服务端存的是
+  /// 客户端的原始推送 payload），读出来永远是 0，本地基线就废了。
+  Future<void> _upsertRecord(
+    int id,
+    Map<String, dynamic> json, {
+    int? revision,
+  }) async {
     final existing = await (_db.select(_db.treatmentRecords)
           ..where((t) => t.id.equals(id)))
         .getSingleOrNull();
@@ -624,7 +648,9 @@ class SyncEngine {
             note: Value((json['note'] as String?) ?? existing?.note),
             status: Value((json['status'] as String?) ?? 'draft'),
             editCount: Value((json['edit_count'] as num?)?.toInt() ?? 0),
-            revision: Value((json['revision'] as num?)?.toInt() ?? 0),
+            // 优先用 change_log 的顶层 revision；payload 里那份只是兜底
+            //（某些实体可能把 revision 放进 payload，治疗记录不会）。
+            revision: Value(revision ?? (json['revision'] as num?)?.toInt() ?? 0),
             clientUuid: Value(
               (json['client_uuid'] as String?) ?? existing?.clientUuid,
             ),

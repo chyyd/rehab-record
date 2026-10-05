@@ -211,6 +211,12 @@ def main() -> int:
              "从而在这批数据里看到一份**复评** —— 复评门槛是「满 20 次后的下一次」）",
     )
     ap.add_argument("--wipe", action="store_true", help="先清掉这些患者的记录")
+    ap.add_argument(
+        "--open-today", action="store_true",
+        help="今天只生成 1 条/大类，**留一条当日额度给人手动测试**。"
+             "默认 2 条/大类会把「同一天同一大类至多 2 条」占满，"
+             "于是今天记任何一条都会被服务端拒（现场看起来像又冲突了）。",
+    )
     ap.add_argument("--seed", type=int, default=20261005)
     args = ap.parse_args()
 
@@ -318,7 +324,14 @@ def main() -> int:
                             )
                             made += 1
 
-                    for k in range(2):                      # 每类每天 2 条
+                    # 每类每天 2 条；今天可选**只给 1 条**，把当日额度留一条给人手动测试。
+                    #
+                    # 为什么需要这个开关：用户要的是"每天 2~4 条"，而"同一天同一大类
+                    # 至多 2 条"意味着 2 条/大类正好占满。于是他在**今天**记任何一条
+                    # 都会被服务端拒（409 同日超限），现场看起来像"又冲突了"，
+                    # 白白浪费一次排查。留一条额度，测的才是"新建能不能成功"。
+                    per_day = 1 if (args.open_today and day == str(today)) else 2
+                    for k in range(per_day):
                         try:
                             treatment_model.create_record(
                                 conn, patient_no=pno, therapist_id=tid,

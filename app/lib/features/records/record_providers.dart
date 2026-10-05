@@ -61,6 +61,7 @@ class RecordEditorState {
     this.dirty = false,
     this.discharged = false,
     this.savedSubmitted = false,
+    this.datePicked = false,
   });
 
   /// 当前编辑目标（`null` = 还没打开过）。
@@ -109,6 +110,13 @@ class RecordEditorState {
   /// 这时候把页面弹走会打断治疗师。
   final bool savedSubmitted;
 
+  /// 治疗师是否**明确选过**日期（用日期选择器）。
+  ///
+  /// 用来区分"系统给的当天默认值"与"我要补记某一天"：
+  /// 没选过时，提交那一刻会重新取当天（见 `save`），避免跨零点把记录记到昨天。
+  /// 选过就完全尊重治疗师的选择 —— 补记昨天的治疗是真实需求。
+  final bool datePicked;
+
   RecordEditorState copyWith({
     RecordEditorArgs? args,
     String? patientNo,
@@ -128,6 +136,7 @@ class RecordEditorState {
     bool? dirty,
     bool? discharged,
     bool? savedSubmitted,
+    bool? datePicked,
   }) {
     return RecordEditorState(
       args: args ?? this.args,
@@ -151,6 +160,7 @@ class RecordEditorState {
       dirty: dirty ?? this.dirty,
       discharged: discharged ?? this.discharged,
       savedSubmitted: savedSubmitted ?? this.savedSubmitted,
+      datePicked: datePicked ?? this.datePicked,
     );
   }
 }
@@ -343,8 +353,20 @@ class RecordEditorController extends Notifier<RecordEditorState> {
   bool isRecent(SoapField field, String option) =>
       (state.recent[field.key] ?? const <String>[]).contains(option);
 
-  void setDate(DateTime d) =>
-      state = state.copyWith(recordDate: formatDate(d), dirty: true);
+  /// 治疗师用日期选择器明确选了一天 → 记下来，提交时不再被"重新取当天"覆盖。
+  void setDate(DateTime d) => state = state.copyWith(
+        recordDate: formatDate(d),
+        dirty: true,
+        datePicked: true,
+      );
+
+  /// 把日期刷成今天，**但不标记 `dirty`**（跨零点自动纠正，不是治疗师的改动）。
+  ///
+  /// 为什么不能走 `setDate`：那会把 `dirty` 置真，于是退出时会弹
+  /// 「这次改动还没保存，返回会丢掉」—— 而他其实什么都没改，只是页面开了一夜。
+  /// 也**不置 `datePicked`**：这不是他的选择，后续跨零点还应继续自动纠正。
+  void setDateToToday() =>
+      state = state.copyWith(recordDate: formatDate(DateTime.now()));
 
   void clearMessage() => state = state.copyWith(message: null, error: null);
 
@@ -423,12 +445,28 @@ class RecordEditorController extends Notifier<RecordEditorState> {
     state = state.copyWith(saving: true, error: null, message: null);
     final body = buildBody(form);
 
+    // ★ 用户 2026-10-06 实测：「新建吞咽治疗记录……时间还是 10-5」。
+    //
+    // 根因之一是模拟器时区不对（GMT vs 用户所在 UTC+8），已在环境侧修正。
+    // 但这里还有一个**真缺陷**：`state.recordDate` 是**打开表单那一刻**算的
+    // （`args.recordDate ?? formatDate(DateTime.now())`），提交时一直沿用它。
+    // 于是"23:50 打开表单、00:10 提交"会把记录记到**昨天** —— 跨零点就错一天，
+    // 而且错得很隐蔽（时间只差 20 分钟，看起来完全正常）。
+    //
+    // 改法：**日期没被明确改过**时，提交这一刻重新取当天。
+    //  · 保留"用户显式选过的日期"——补记昨天/前天的治疗是真实需求；
+    //  · 已有记录（`existingLocalId != null`）不动：那是**这条记录原本的日期**，
+    //    改它会把它挪到另一天，等于改了历史。
+    final recordDate = (state.datePicked || state.existingLocalId != null)
+        ? state.recordDate
+        : formatDate(DateTime.now());
+
     try {
       final saved = await services.records.save(
         existingId: state.existingLocalId,
         patientNo: state.patientNo,
         therapistId: user.id,
-        recordDate: state.recordDate,
+        recordDate: recordDate,
         discipline: form.discipline,
         kind: form.kind,
         body: body,
