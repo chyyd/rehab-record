@@ -1,0 +1,33 @@
+# 统一行尾，避免"改几十行、diff 却上千行"的噪声。
+#
+# 背景（2026-10-04 实测踩到）：
+#   `core.autocrlf=true` 让**磁盘上**是 CRLF、**仓库 blob 里**是 LF。
+#   于是同一个文件用不同工具编辑会得到不同的磁盘行尾：
+#     - 编辑器/DSH 的 write 工具 → LF
+#     - PowerShell `Set-Content`   → 视情况
+#   结果是「只改了 39 行内容，diff 却显示 739 增 / 700 删」（整份行尾翻转）。
+#   历史本身没被污染（git 都规范化为 LF），但 diff 完全没法读。
+#
+# 处置：显式声明文本文件在仓库与工作区都用 LF。
+#   `* text=auto eol=lf` 会让 git 在检出时不把 LF 换成 CRLF，
+#   从此任何工具写入的 LF 都与仓库一致，不再产生行尾 churn。
+#
+# 注意：批处理必须保持 CRLF，否则 Windows 下 `cmd.exe` 可能执行异常。
+* text=auto eol=lf
+
+*.ps1   text eol=lf
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+
+# 二进制：不要尝试做行尾转换
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.jar   binary
+*.so    binary
+*.apk   binary
+*.db    binary
+*.sqlite binary
+*.zip   binary
