@@ -441,7 +441,7 @@
 
     | 项 | 变更前 | 变更后 | 说明 |
     |---|---|---|---|
-    | 后端测试 | 554 | **469**（实测 `unittest discover`，0 skip） | 排期/请假/冲突测试整体删除，并入新的 `tests/test_temporary_and_record_rules.py` |
+    | 后端测试 | 554 | **470**（实测 `unittest discover`，0 skip） | 排期/请假/冲突测试整体删除，并入新的 `tests/test_temporary_and_record_rules.py` |
     | 端到端验收项数 | 190 | **182** | `verify_stage2.py` 由"排期与请假（29 项）"**重写**为"患者列表排序（22 项）"；`verify_stage4.py` 去掉 1 条排期幂等断言（29 → 28） |
     | 浏览器 UI 验收 | 66 | **60** | 逐页导航的 11 个页面减到 9 个，每页 3 条断言 |
     | 开发阶段 | 阶段 2（排期、休息与请假，第 3–4 周）已交付 | **阶段 2 作废** | `开发计划.md` 中 T2.1–T2.7 逐条标注取消原因，仅 T2.8（内置自签 CA）保留；阶段 2 的 6 条 DoD 全部失效 |
@@ -457,6 +457,17 @@
   - **留下的现状缺口（未擅自补）**：请假删除后，`temporary_assignment` **没有任何登记入口**
     （旧实现里由"单日请假"自动产生），接口层也不再暴露 `/patients/{no}/temp-release`、`/temp-claim`
     （这两个接口从未实现过）；`v_patient_visibility` 与读时兜底照旧工作。需要临时接管时目前只能由管理员直接维护数据。
+- **【代码现状】2026-10-05：`core/clock.py::period_expiry()` 目前没有生产调用方（功能缺口，保留该函数）**
+  - **事实**：它把"临时指派到期时点"按 Q11 作息转成**库格式**（UTC + 毫秒 + `Z`）时间戳，
+    底层是 `worktime.period_end_datetime()`（返回本地 naive `datetime`；`cli.py periods` 直接用它打印）。
+    全仓只有两个测试文件在调 `period_expiry` 构造"已到期"的临时指派，**生产代码一处也没有**。
+  - **为什么没有调用方就是缺口**：临时指派的 `expires_at` 本该由它生成，但**目前没有任何 API 能创建临时指派**
+    （见上一条的"留下的现状缺口"）。也就是说"A 请假/离岗 → 患者临时释放 → 到期自动恢复"这条路
+    在数据模型（`v_patient_visibility` 读时兜底 + `cli.py close-expired`）上完好，**只差一个录入入口**。
+  - **处置：保留函数、只改注释说明现状**（不删函数、不改签名、不另写一层包装）。理由：它不是一个可以被
+    `period_end_datetime()` 完全替代的重复实现 —— 后者只给本地 naive `datetime`，写库需要的
+    UTC 毫秒 `Z` 归一化只在 `period_expiry` 里。一旦补上创建接口就要用它，删掉等于给将来埋一个坑。
+  - **影响面**：仅注释（`app/core/clock.py`），无行为变更、无迁移、无接口变更。
 - **【业务规则变更】2026-10-03：改为"全科白板"，放弃 Q2、放开 S1（治疗师半日可排多台）**
   - **科室原话（决定的依据）**：
     1. "一个上午里不同治疗师可能会给同一个患者做多次相同或不同名目的治疗，一次治疗最多 1 小时"；
@@ -719,9 +730,66 @@
 - 无。
 
 ### 移除
-- 无。
+- **死代码清理：删除 `patient_model.covers_patient()`，并同步清掉陈旧注释（2026-10-05）**
+  - **删了什么**：`covers_patient()`（原名 `can_schedule`）—— 它做"该治疗师当前是否有权开展/记录
+    这个患者"的单体判定，**唯一的生产调用方是已删除的 `api/v1/schedule.py`**，排期下线后全仓只剩
+    测试在调，属死代码。`__all__` 里的条目一并去掉。
+  - **语义没丢**：归属解析仍只由 `v_patient_visibility` 视图 + `patient.py::visibility_from()` 的
+    scope 条件表达。原用例改成**可观察行为断言**（`tests/test_auth_and_patients.py`）：
+    用 `GET /api/v1/patients?scope=mine|unassigned` 钉死"临时释放期间原归属者的 `mine` 不含它、
+    认领者的 `mine` 含它、释放中任何人都在 `unassigned` 里"，不再直接调模型函数。
+  - **一致性脚本同步**：`check_docs_consistency.py` 的"已由 `can_schedule` 改名为 `covers_patient`"
+    换成"`covers_patient` / `can_schedule` 均已删除，归属只见于可见性视图与 scope 条件"；项数仍是 **216 项**。
+  - **`clock.period_expiry()` 保留、只改注释**：它至今没有生产调用方（原因见上方决策条目），
+    底层实现 `worktime.period_end_datetime()` 只给本地 naive `datetime`，写库要的 UTC 毫秒 `Z` 归一化
+    仍只在它里面，故不删。
+  - **陈旧注释清理（只改注释/docstring，无行为变更）**：`core/worktime.py`（模块头、
+    `APPOINTMENT_PERIODS` / `LEAVE_PERIODS`、`period_end_datetime`、`day_period_bounds`）、
+    `core/clock.py`、`core/health.py`、`api/router.py`、`api/v1/{sync,patients,records}.py`、
+    `models/patient.py`、`models/treatment.py`、`services/{summary,sync,visibility}.py`，
+    以及 `tests/{test_worktime,test_health,test_temporary_and_record_rules}.py` 与 `scripts/_e2e.py`
+    的同类 docstring —— 把"排期 / 休息块 / 请假"表述改成与现状一致。
+    **已应用的迁移文件（001/002/003/004/006/007/008）一律未动**（那是历史留痕，改了会让
+    `test_migrations.py::test_modified_applied_migration_is_rejected` 直接失败）。
+  - **`services/sync.py::resolve_conflict` 的 `is_retry` 分支**：`PUSHABLE_ENTITIES` 全部落在
+    `CLIENT_WINS_ENTITIES` 里，所以它**当前不可达**；本次**保留**并加注释说明（删它要动被测试直接调用的
+    函数签名，而"重试幂等"是协议承诺，二期开放别的实体推送后立刻可达）。
+  - **影响面**：无行为变更、无数据迁移、无接口变更。实测 `unittest discover` → **470 passed / 0 skip**；
+    `check_docs_consistency.py` → **216 项 0 失败**（该数字为脚本自报总项数，后随文档修正条目 +1）。
 
 ### 文档
+- **修掉文档里 3 处把已删函数 `covers_patient()` 当现行函数的表述，并给一致性脚本补上"禁现"断言（2026-10-05）**
+  —— 上一轮删除死代码 `patient_model.covers_patient()`（原名 `can_schedule`）时只清了代码与注释，
+  文档没跟着改，于是 `README.md` / `设计.md` / `开发计划.md` 三处仍把**已不存在的函数**当成
+  "归属解析唯一真源"与验收对象来讲，读者照着文档去找会直接找不到。本次按"文档与代码一致"补齐：
+
+  | 位置 | 旧表述 | 新表述 |
+  |---|---|---|
+  | `README.md` 常用约定 | 唯一真源 = `v_patient_visibility` 视图 + `patient_model.covers_patient()` | 视图 + `app/models/patient.py::visibility_from()` 的 scope 条件（`mine` / `unassigned` / `temp`） |
+  | `设计.md` 3.5.1 | "归属判定函数是 `patient_model.covers_patient()`" | "归属判定**没有单体函数**：可见归属由 `v_patient_visibility` 算出，调用方通过 `scope=mine` / `scope=unassigned` 观察" |
+  | `开发计划.md` T1.5 验收项 | 验收对象含 `covers_patient()` | 换成 **scope 筛选的可观察行为**：T001 的 `scope=mine` 在临时释放期间不含该患者、`scope=unassigned` 含它 |
+
+  - **新增断言（一致性检查 215 → 216 项）**：`设计.md` / `README.md` / `开发计划.md` 里
+    **不得出现 `covers_patient`**。取的是**最严口径** —— 连"已删除"的留痕也不写这个名字
+    （留痕改述为"曾有的归属判定单体函数（原名 `can_schedule`）"，函数名本身不再出现），
+    这样"文档里提一个已经不存在的函数"从此无法再溜过一致性检查。
+    **为什么原来那条抓不住**：它只看含"原名/改名/曾/下线/删除"标记的行，而本次三处恰好是
+    **不带任何这类标记**的"现行函数"写法，正好落在它的射程之外。
+  - **测试计数修正（469 → 470）**：`README.md`（进度表、"跑测试"一节、仓库结构）与 `CHANGELOG.md`
+    里排期下线的"代价"表按实测改为 **470**。数字来源：`pytest` → **470 passed**；
+    `python -m unittest discover -s tests -p "test_*.py" -t .` → **470 passed, 0 skipped**（两条命令口径一致）。
+  - **其余计数逐个复核，均与实测一致**：端到端 **182** 项（`count_verify_checks.py` → 14/25/22/35/28/58）；
+    路由 **70 个操作 / 52 个路径**（直接数 `api_router.routes`）；浏览器 UI 验收 **60** 项；
+    种子：字典 4/29/89、患者反应 27、全局选项集 **47 套 / 208 项**（= `option_seed.json` 里
+    47 个 `is_primary` 套 / 208 项；另 17 套非主变体按库结构跳过）、模板 4 套 / 29 条明细；迁移 001–008 共 8 个。
+  - **本文件内旧的 `215` / `469` 一并改为 `216` / `470`**：这两个数都是"脚本/测试的当前实测值"，
+    同一份文件里并存两个值，正是 2026-10-03 那条条目记录过的教训
+    （"同一批数字在多处并存且互相矛盾，读者无法判断该信哪个"）。
+    各阶段完成时的**增量快照**（205/271/341/377/453/481/532/538、78 个接口等）按本文件既定约定**保持原样**。
+  - 影响面：**仅文档与一致性脚本**。无代码、无模型、无接口、无迁移改动，无行为变更。
+    涉及 `设计.md` 的是 **3.5.1 的表述修正**（把"归属判定函数"改述为"没有单体函数"），
+    **不改变任何业务语义，故 `设计.md` 版本号保持 V1.2 不变**。
+
 - **排期下线后的文档与一致性脚本同步（2026-10-05）** —— 排期功能删掉后，
   `scripts/check_docs_consistency.py` 里有 20 多处**硬编码的旧事实**（表清单、视图名、半日不变量、
   `PUSHABLE_ENTITIES`、"3.4.4 半日格子视图"等）必然失效。本次不是把断言删空，
@@ -742,18 +810,19 @@
   - **`count_verify_checks.py`（新增脚本）**：用 AST 数每个验收脚本"运行时会执行的 `check()` 次数"
     （字面量循环会展开）。它算出的 14 / 25 / 22 / 35 / 28 / 58 与文档逐个对齐，
     所以文档里的项数从此可复核、不再靠人工数。
-  - 脚本规模：一致性检查由 156 项扩到 **215 项**（新增患者列表排序语义、接口数对账、
-    已删/新增文件存在性、安卓端 schemaVersion 与页签、管理后台模块清单等断言）。
-  - 文档改动：`README.md`（进度表、接口 87→70、测试 554→469、端到端 190→182、浏览器 66→60、
+  - 脚本规模：一致性检查由 156 项扩到 **216 项**（新增患者列表排序语义、接口数对账、
+    已删/新增文件存在性、安卓端 schemaVersion 与页签、管理后台模块清单等断言；其中 1 条是
+    后续"文档修正"条目补入的 `covers_patient` 禁现断言）。
+  - 文档改动：`README.md`（进度表、接口 87→70、测试 554→470、端到端 190→182、浏览器 66→60、
     迁移 001–008、仓库结构）、`docs/setup.md`（状态行 + 逐脚本项数 + 可选依赖用途）、
     `开发计划.md`（V0.5/V0.6 修订记录、阶段 2 作废、S1/M07/M08 作废、M09/M15 重写、R2/R6/R7/R8/R9 与 Q 表改写）、
     `设计.md`（删排期/休息/请假章节，新增 3.4.2 排序语义与 3.5 归属解析）、
     `docs/sync-protocol.md`（去掉 appointment 通道）、`app/README.md`（页签 3 个、PDF 三种去向、
     Drift schemaVersion 3）、**`admin/README.md`（删掉「全局排期」「请假管理」两个模块，10 个页面与路由表对齐）**。
-  - 数字来源（实测，不是估算）：`unittest discover` → **469 passed / 0 skip**；
+  - 数字来源（实测，不是估算）：`unittest discover` → **470 passed / 0 skip**；
     `count_verify_checks.py` → 14/25/22/35/28/58（合计 **182**）；
     路由注册 → **70 个操作 / 52 个路径**；`verify_admin_ui.py` 由 66 项减 **6** 项（删掉 2 个页面 × 3 条断言）= **60 项**；
-    `check_docs_consistency.py` 自报 **215 项 0 失败**（其中一项就是拿 README 里的这个数字与自身比对，写错会直接失败）。
+    `check_docs_consistency.py` 自报 **216 项 0 失败**（其中一项就是拿 README 里的这个数字与自身比对，写错会直接失败）。
   - 影响面：**仅文档与校验脚本**。无代码、无模型、无接口、无迁移改动。
 
 - **修正文档中已漂移的测试与验收数量口径（2026-10-03）** —— 在新克隆的干净工作区按 `README.md` / `docs/setup.md` 完整重跑一遍后，发现同一批数字在多处并存且互相矛盾，读者无法判断该信哪个。

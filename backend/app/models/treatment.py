@@ -332,8 +332,7 @@ def update_record(
 
     if sets:
         # 推进 revision：离线客户端靠它判断手上的副本是否过期。
-        # 不推进的话，客户端永远以为自己的版本是最新的（阶段 4 实测缺陷，
-        # 与排期的 update_appointment 保持一致）。
+        # 不推进的话，客户端永远以为自己的版本是最新的（阶段 4 实测缺陷）。
         sets.append("revision = revision + 1")
         conn.execute(
             f"UPDATE treatment_record SET {', '.join(sets)} WHERE id = ?", (*params, record_id)

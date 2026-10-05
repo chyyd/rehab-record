@@ -19,9 +19,12 @@
 
 > 注意区分两个层次：
 > - `can_view_patient()` / `visible_patient_numbers()`：**能不能看到**（本模块，已放开为科室级）
-> - `patient_model.covers_patient()`：**归属语义**（可见归属解析）——
->   单日临时指派期间，原归属者不能动、临时认领者可以动
->   （原名 `can_schedule`，排期下线后改名，见该函数文档）
+> - `v_patient_visibility` 视图（`app/models/patient.py` 的 `VISIBILITY_VIEW_SQL`）：
+>   **可见归属解析**（"当前谁主要负责"，读时兜底检查临时指派是否仍有效）。
+>   临时释放期间 `visible_therapist_id` 变 NULL、被临时认领后变成认领者；
+>   归属语义单靠视图表达，调用方通过患者列表的 `scope=mine` / `scope=unassigned`
+>   等筛选观察它。（曾有的单体判定函数 `covers_patient`，原名 `can_schedule`，
+>   随排期功能下线失去唯一调用方，已按死代码删除。）
 """
 
 from __future__ import annotations

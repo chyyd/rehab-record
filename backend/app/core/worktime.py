@@ -1,11 +1,16 @@
 """半日制作息的时间语义（《开发计划.md》S1 + Q11）。
 
-**这是排期、休息、请假三者共用的唯一时间真源。** 任何模块都不允许自己写
+**这是全系统"半日"边界的唯一时间真源。** 任何模块都不允许自己写
 "上午到 11:30"这类字面量，必须调用本模块。
 
+> 2026-10-05 排期、休息块、请假整体下线后，这里服务的对象只剩两类：
+> 治疗记录的 `session_period`（"这条记录属于哪个半日"）与 `temporary_assignment`
+> 的到期时点（`expires_at`）。"上午 11:30 结束"本身没有变，也不再用于任何排班判定。
+
 约定：
-- ``period`` 只有两个取值：``"am"``（上午）、``"pm"``（下午）。
-- ``"full"`` 只用于请假（全天假），不是排期单位。
+- ``period`` 取值：``"am"``（上午）、``"pm"``（下午）、``"full"``（全天）。
+- ``"full"`` **不是半日单位**（治疗记录的 `session_period` 不接受它），只用于临时指派的
+  "整天"粒度；请假功能下线前它是请假粒度。
 - 所有时间都是"本地墙钟时间"（Asia/Shanghai，依据 D07），不带时区偏移。
 """
 
@@ -21,9 +26,13 @@ PERIOD_AM = "am"
 PERIOD_PM = "pm"
 PERIOD_FULL = "full"
 
+# 真正的"半日"单位（治疗记录的 `session_period`）：上午 / 下午，两格。
+# 常量名来自已下线的排期功能（2026-10-05，`appointment` 表已删除），
+# 保留是为了不破坏既有导入 —— 它现在表达的就是"一天分两个半日"。
 APPOINTMENT_PERIODS: tuple[str, ...] = (PERIOD_AM, PERIOD_PM)
-# `full`（全天）现在是**临时指派**用的粒度（`temporary_assignment.period`）。
-# 名字保留是历史原因：2026-10-05 请假功能下线前它是请假粒度。
+# 允许的 ``period`` 全集：比半日多一个 ``full``（全天）。
+# ``full`` 现在的唯一用处是**临时指派**的粒度（`temporary_assignment.period`）；
+# 名字保留是历史原因：2026-10-05 请假功能下线前它是请假粒度（`leave_record.period`）。
 LEAVE_PERIODS: tuple[str, ...] = (PERIOD_AM, PERIOD_PM, PERIOD_FULL)
 
 PERIOD_LABELS: dict[str, str] = {
@@ -123,11 +132,14 @@ def is_within_period(moment: time, period: str, config: WorkTimeConfig | None = 
 
 
 def period_end_datetime(day: _date, period: str, config: WorkTimeConfig | None = None) -> datetime:
-    """请假到期恢复时点（M09）。
+    """临时指派到期恢复时点（M09），返回**本地** naive ``datetime``。
 
-    - 上午假 → 当日 11:30（Q11）
-    - 下午假 → 当日 17:30（Q11）
-    - 全天假 → **次日 00:00**，即整天都不在，第二天一早恢复
+    - ``am`` → 当日 11:30（Q11）
+    - ``pm`` → 当日 17:30（Q11）
+    - ``full`` → **次日 00:00**，即整天都不在，第二天一早恢复
+
+    要写进库里请用 `core/clock.py::period_expiry()` —— 它会再归一化成 UTC 时间戳；
+    `cli.py periods` 只打印给人看，所以直接调本函数。
     """
     cfg = config or get_settings().worktime
     if period == PERIOD_FULL:
@@ -138,7 +150,11 @@ def period_end_datetime(day: _date, period: str, config: WorkTimeConfig | None =
 
 
 def day_period_bounds(config: WorkTimeConfig | None = None) -> dict[str, dict[str, str]]:
-    """给前端排期页用的半日边界描述（避免前端硬编码时间）。"""
+    """半日边界描述，供调用方（`/api/v1/health` 的 `periods`、`cli.py periods`）使用。
+
+    这样调用方不必自己硬编码"上午 06:00–11:30"。**前端排期页已随排期下线删除**，
+    现在主要是健康检查的自描述与运维查看。
+    """
     cfg = config or get_settings().worktime
     return {
         PERIOD_AM: {"label": PERIOD_LABELS[PERIOD_AM], "start": cfg.morning_start, "end": cfg.morning_end},

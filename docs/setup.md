@@ -1,6 +1,6 @@
 # 环境搭建与运行（setup）
 
-**当前状态**：阶段 0–5 后端、管理后台与安卓 App 均已交付并验证（**469 个测试通过、0 skip**；
+**当前状态**：阶段 0–5 后端、管理后台与安卓 App 均已交付并验证（**470 个测试通过、0 skip**；
 端到端 182 项、跨文档一致性由 `check_docs_consistency.py` 自报、浏览器 UI 验收 60 项）。
 **排期、休息块、请假三项功能已于 2026-10-05 整体下线**（科室确认排班不是本系统的职责），
 `appointment`/`rest_block`/`leave_record` 三张表已由迁移 008 删除。
@@ -63,7 +63,7 @@ $py = "C:\Users\youda\AppData\Local\Programs\Python\Python313\python.exe"
 
 ```powershell
 cd backend
-& $py -m unittest discover -s tests -t . -v      # 469 个测试
+& $py -m unittest discover -s tests -t . -v      # 470 个测试
 & $py scripts\verify_http.py                     # 阶段 0 HTTP 端到端（14 项）
 & $py scripts\verify_stage1.py                   # 阶段 1 认证与患者（25 项）
 & $py scripts\verify_stage2.py                   # 患者列表排序：我最近一次已提交治疗（22 项）

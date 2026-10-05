@@ -32,8 +32,8 @@
   语义统一由 `backend/app/core/worktime.py` 提供，**任何模块不得自己写时间字面量**。
 - **患者列表排序**：归属分组优先（我的 → 未分配 → 其他），组内按**我最近一次已提交治疗**的日期**降序**；
   只算 `submitted`（草稿与已锁定不算），从没治过的排最后（`v_patient_last_treated`）。
-- **归属解析**：唯一真源是 `v_patient_visibility` 视图 + `patient_model.covers_patient()`（原名 `can_schedule`）；
-  `temporary_assignment` 保留（它是归属数据，与请假无关）。
+- **归属解析**：唯一真源是 `v_patient_visibility` 视图 + `app/models/patient.py::visibility_from()` 的
+  scope 条件（`mine` / `unassigned` / `temp`）；`temporary_assignment` 保留（它是归属数据，与请假无关）。
 - **枚举**在库层用 `CHECK` 约束兜底，业务层仍需校验（双重保护）。
 - **JSON 字段**用 `json_valid()` 兜底，防止写入非 JSON 导致读取期才爆炸。
 
@@ -48,10 +48,10 @@
 | 阶段 4 | **离线幂等推送（client_uuid）、游标增量拉取、冲突分层（草稿客户端优先）** | **已完成** |
 | 阶段 5 | **三套中文 PDF 汇总打印、记录模板、审计日志查询、后台选项集维护** | **已完成** |
 | 模板种子 | **四大高频模板**（运动/生活/言语/吞咽，4 套科室模板 / 29 条明细，参数取自字典默认值） | **已完成**（D04 / T3.2 闭环） |
-| 文档 | `设计.md` 修订至 V1.2/V1.3（Q11 作息、PDF 方案修订；排期/请假章节已删除，新增患者列表排序语义） | **已完成**（跨文档校验 215 项 0 失败） |
+| 文档 | `设计.md` 修订至 V1.2/V1.3（Q11 作息、PDF 方案修订；排期/请假章节已删除，新增患者列表排序语义） | **已完成**（跨文档校验 216 项 0 失败） |
 | 种子数据 | 字典 4/29/89 + 患者反应 27 条 + 全局选项集 47 套/208 项 + 模板 4 套，全部幂等导入 | **已完成** |
 | 中文 PDF | **reportlab + 内置 CID 字体 `STSong-Light`**，三套模板经 pypdf 反向文本校验 | **已完成**（D03 修订，Q10 版式） |
-| 测试 | **469 个测试全部通过、0 skip**；端到端 182 项 + **浏览器 UI 验收 60 项** | **已完成** |
+| 测试 | **470 个测试全部通过、0 skip**；端到端 182 项 + **浏览器 UI 验收 60 项** | **已完成** |
 | 接口 | **70 个接口**（52 个路径：认证、用户、患者、字典读写、选项集、记录、同步、汇总、打印、模板、审计、后台） | **已完成**（排期/休息/请假 17 个操作已删除） |
 | 管理后台 Web | **React 19 + Vite 8 + Ant Design 6 + TS**，10 个页面全部实现，构建通过（`admin/`） | **已完成**（T5.4 前端；排期页与请假页已删除） |
 | 安卓 App | Flutter：**3 个页签**（患者 / 时间轴 / 我的）、记录页、汇总与 PDF 打印（三种去向）、同步与冲突处理（`app/`） | **已完成** |
@@ -133,7 +133,7 @@ $env:KB_ADMIN_PASSWORD = 'Admin#2026pass'
 & $py -m app.cli periods   # 打印半日制作息与请假到期时点
 
 & $py -m app.main --reload # 启动服务端：http://127.0.0.1:8000/docs
-& $py -m unittest discover -s tests -t . -v      # 469 个测试
+& $py -m unittest discover -s tests -t . -v      # 470 个测试
 & $py scripts\verify_http.py                     # 阶段 0 HTTP 端到端
 & $py scripts\verify_stage1.py                   # 阶段 1 认证与患者
 & $py scripts\verify_stage2.py                   # 患者列表排序（原阶段 2 排期已取消）
@@ -187,7 +187,7 @@ Playwright）。这一步不是可选项 —— 类型检查与构建**测不出
 │  │  └─ db/migrations/   001–008（表结构、触发器、可见归属视图、同步、模板 code、放开半日互斥、排序视图、**删除排期**）
 │  ├─ seed/       四份种子（字典 4/29/89、反应 27、选项集 47/208、模板 4/29；幂等 upsert）
 │  ├─ scripts/    6 个验收脚本（http + 阶段 1–5）· count_verify_checks.py · check_docs_consistency.py · verify_admin_ui.py（CDP）
-│  └─ tests/      469 个测试（标准库 unittest）
+│  └─ tests/      470 个测试（标准库 unittest）
 ├─ app/           Flutter 客户端（3 个页签；`app/README.md`）
 ├─ admin/         管理后台 React 19 + Vite 8 + Ant Design 6（10 个页面已实现）
 └─ deploy/        Docker Compose + Nginx（待建）

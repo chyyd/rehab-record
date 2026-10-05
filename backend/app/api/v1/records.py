@@ -366,7 +366,7 @@ def timeline(
     """按日期倒序的记录流。
 
     `scope=temp` 只看"临时治疗"（记录人 ≠ 患者归属人），
-    这是治疗师在单日假期间接管他人患者时需要复查的部分。
+    这是治疗师在临时接管他人患者期间需要复查的部分。
     """
     from app.models import dictionary as dictionary_model
 

@@ -15,9 +15,10 @@
    | 已提交 / 已锁定 | **服务端优先** | 医疗文书以服务端为准，客户端收到冲突后留痕重提 |
    | 字典 / 选项集 / 模板 | **服务端优先** | 只读缓存，客户端不推送 |
 
-一期允许离线写的实体只有**治疗记录**与**排期**两类（`设计.md` 5.4 末尾），
-患者主数据仍以管理员在线维护为主，因此 `patient` 只支持"服务端优先"的服务端变更推送
-（客户端不推患者），拉取侧三类都支持。
+一期允许离线写的实体只有**治疗记录**一类（`设计.md` 5.4 末尾；排期已随排期功能
+整体下线于 2026-10-05 从可推实体中移除），患者主数据仍以管理员在线维护为主，
+因此 `patient` 只支持"服务端优先"的服务端变更推送（客户端不推患者），
+拉取侧两类都支持。
 """
 
 from __future__ import annotations
@@ -191,9 +192,15 @@ def resolve_conflict(
     否则返回 ``{"resolution": "client_wins" | "server_wins", "server_revision", "reason"}``。
 
     ``is_retry=True`` 表示"这条变更之前已经推过"（服务端已存在同 `client_uuid` 的记录）。
-    客户端重推自己创建的变更时通常**不带** `base_revision`；若把它当成
-    "缺少基线版本 → 服务端优先"，弱网下每一次重试都会被判成冲突，
-    幂等性就形同虚设。因此重试场景按客户端优先处理（客户端本就是这条数据的主人）。
+    客户端重推自己创建的变更时通常**不带** `base_revision`；若把它一律当成
+    "缺少基线版本 → 服务端优先"，弱网下每一次重试都会被判成冲突，幂等性就形同虚设。
+    因此重试的语义分两种实体：
+
+    - **客户端优先实体**（当前只有 `treatment_record`）：上面那条分支已经覆盖了重试 ——
+      服务端仍是 `draft` 时客户端优先；已提交/已锁定则服务端优先（文书以服务端为准，
+      重试**不得**静默覆盖，见 `test_retry_after_submit_is_reported_but_never_duplicates`）。
+    - **非客户端优先实体**：见下面那条 `is_retry` 分支，重试同一 `client_uuid` 时按客户端优先。
+      ⚠️ 这条分支**当前不可达**，原因与保留理由见该分支上方注释。
     """
     server_revision = _server_revision(conn, entity, entity_id)
     if server_revision is None:
@@ -218,8 +225,19 @@ def resolve_conflict(
             "reason": "missing_base_revision" if base_revision is None else f"server_status={status}",
         }
 
-    # 非"客户端优先"的实体（如排期）：仅当确实是无法判断的首次冲突才拒绝；
+    # 非"客户端优先"的实体：仅当确实是无法判断的首次冲突才拒绝；
     # 重试同一 client_uuid 时仍按客户端优先，保证幂等。
+    #
+    # ⚠️ 当前**不可达**：`PUSHABLE_ENTITIES = ("treatment_record",)`，而
+    # `treatment_record` 本身就在 `CLIENT_WINS_ENTITIES` 里，上面那条分支必然先返回；
+    # `_push_treatment_record` 虽然传 `is_retry=True`，也同样进不到这里。
+    # 保留而不删除的理由：
+    #   1. 删它就要顺带处理 `is_retry` 形参 —— 那是 `resolve_conflict` 的公开签名，
+    #      测试会直接调用（`test_sync.py::test_resolve_conflict_helper_directly`）；
+    #      为一处不可达分支去动签名，风险大于收益。
+    #   2. "重试必须幂等"是协议承诺（`docs/sync-protocol.md` 与本函数 docstring），
+    #      一旦二期开放 `patient` 等实体的离线推送，这条分支立刻变为可达。
+    #   3. 它没有任何分支副作用，留着不影响现有行为。
     if is_retry and base_revision is None:
         return {
             "resolution": "client_wins",

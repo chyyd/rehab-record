@@ -111,7 +111,7 @@ def purge_templates(conn: sqlite3.Connection, names: Iterable[str] | None = None
 
 
 def purge_users(conn: sqlite3.Connection, employee_nos: Iterable[str]) -> None:
-    """删除用户及其会话/排期等关联行（按外键顺序）。
+    """删除用户及其会话等关联行（按外键顺序）。
 
     验收脚本一般不删用户（改为重置密码），保留此函数供特殊场景使用。
     """

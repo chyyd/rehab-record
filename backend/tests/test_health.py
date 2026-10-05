@@ -37,7 +37,7 @@ class TestHealthWithFreshDatabase(DbTestCase):
         self.assertGreaterEqual(db["table_count"], 18)
 
     def test_health_exposes_q11_worktime(self) -> None:
-        """前端排期页据此渲染半日边界，避免前端硬编码时间。"""
+        """把 Q11 的半日边界暴露出来，调用方（运维 / 客户端）不必自己硬编码时间。"""
         self.migrate()
         payload = collect_health(self.settings)
         self.assertEqual(payload["worktime"]["morning"]["start"], "06:00")

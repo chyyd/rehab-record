@@ -7,9 +7,13 @@
 | 场景 | `assigned_therapist_id` | 可见归属 |
 |---|---|---|
 | 正常 | 张三 | 张三 |
-| 单日假临时释放（未被认领） | 张三 | **NULL**（谁都不负责，别人可临时认领） |
-| 单日假被李四临时认领 | 张三（**不变**） | 李四 |
-| 多日假正式排空 | NULL | NULL |
+| 临时释放（未被认领） | 张三 | **NULL**（谁都不负责，别人可临时认领） |
+| 临时释放被李四临时认领 | 张三（**不变**） | 李四 |
+| 管理员批量排空 | NULL | NULL |
+
+> 这两列场景在 2026-10-05 前分别叫"单日假临时释放"与"多日假正式排空"：请假功能
+> （`leave_record`）已整体下线，临时指派现在只由人工按业务需要建立
+> （见 `app/models/temporary_assignment.py`），但**上面这四条解析语义没有变**。
 
 实现要点：
 1. 用 `v_patient_visibility` 视图统一计算，**不要**在路由或前端各写一遍；
@@ -110,11 +114,11 @@ def visibility_from(scope: Scope, user_id: int) -> tuple[str, list[Any]]:
 
     - ``dept``      **科室级白板（治疗师默认，2026-10-03 起）**：科室当前在院/暂停的患者，
                     不按归属隔离。一个上午里 PT/OT/言语/吞咽可能各给同一患者做一次，
-                    所以"别人的患者"必须可见且可排期。
+                    所以"别人的患者"必须可见。
     - ``visible``   ``dept`` 的同义兼容值（旧客户端仍在用）。
     - ``mine``      可见归属是我（含临时认领我的患者）—— 仍可作为**筛选**使用。
     - ``unassigned`` 无人负责（原归属为空，或正处于临时释放中且未被认领）。
-    - ``temp``      与我有关的临时指派（我请假的或我临时认领的）。
+    - ``temp``      与我有关的临时指派（我作为原归属者被临时释放的，或我临时认领的）。
     - ``all``       不加限制（**仅管理员**，路由层负责拦截；含已出院）。
     """
     if scope == "mine":
@@ -137,22 +141,10 @@ def visibility_from(scope: Scope, user_id: int) -> tuple[str, list[Any]]:
     raise Conflict(f"未知的数据范围：{scope}", details={"scope": scope})
 
 
-def covers_patient(conn: sqlite3.Connection, patient_no: str, therapist_id: int) -> bool:
-    """该治疗师**当前是否有权开展/记录**这个患者的治疗（归属语义）。
-
-    注意用的是**可见归属**：单日假临时释放期间，原归属者反而不能动、临时认领者可以动。
-
-    > 原名 `can_schedule`。2026-10-05 排期功能整体下线后改名 ——
-    > 它从来表达的就不是"能不能排期"，而是"这个患者现在归谁"。
-    > 名字里留着 schedule 会让后来的人以为它跟排期有关而不敢动。
-    """
-    row = conn.execute(
-        "SELECT visible_therapist_id FROM v_patient_visibility WHERE inpatient_no = ?", (patient_no,)
-    ).fetchone()
-    if row is None:
-        raise NotFound("患者不存在", details={"inpatient_no": patient_no})
-    visible = row["visible_therapist_id"]
-    return visible is None or int(visible) == therapist_id
+# 注：这里原有 `covers_patient()`（原名 `can_schedule`）做"该治疗师当前是否有权开展/记录
+# 这个患者"的单体判断；它唯一的生产调用方是已删除的 `api/v1/schedule.py`，故 2026-10-05
+# 按死代码删除。归属语义本身没消失，现在只由 `v_patient_visibility` 视图 +
+# `visibility_from()` 的 scope 条件表达（`mine` ≡ 可见归属是我，`unassigned` ≡ 可见归属为空）。
 
 
 # --------------------------------------------------------------------------- #
@@ -344,7 +336,7 @@ def claim_patient(conn: sqlite3.Connection, inpatient_no: str, therapist_id: int
             details={"visible_therapist_id": patient["visible_therapist_id"]},
         )
     if patient["visibility_state"] == "temp_released":
-        # 处于单日假临时释放中：应走临时认领，而不是改原归属
+        # 处于临时释放中：应走临时认领，而不是改原归属
         raise Conflict(
             "该患者处于单日假临时释放中，请使用临时认领",
             details={"hint": "temp-claim"},
@@ -392,9 +384,12 @@ def assign_patient(
 def release_all_for_therapist(
     conn: sqlite3.Connection, therapist_id: int, operator_user_id: int
 ) -> list[str]:
-    """多日假：把该治疗师名下患者**正式排空**（`设计.md` 3.5.3）。
+    """批量排空：把该治疗师名下患者**正式清空**（`设计.md` 3.5.3）。
 
     返回被排空的住院编号列表。注意**不自动恢复**，撤销需管理员手动调整。
+
+    > 原名来自"多日假"（请假功能已于 2026-10-05 下线），排空本身仍是管理员会用到的
+    > 归属操作，故保留；`change_type` 继续写 `multi_day_release` 以保持历史数据可读。
     """
     rows = conn.execute(
         "SELECT inpatient_no FROM patient WHERE assigned_therapist_id = ?", (therapist_id,)
@@ -435,7 +430,6 @@ __all__ = [
     "VISIBILITY_VIEW_SQL",
     "assign_patient",
     "assignment_history",
-    "covers_patient",
     "claim_patient",
     "create_patient",
     "get_patient",

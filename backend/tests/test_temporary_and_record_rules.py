@@ -52,7 +52,7 @@ class TestTemporaryAssignment(DbTestCase):
         return int(cur.lastrowid)
 
     def test_temp_release_keeps_original_owner(self) -> None:
-        """单日假期间 patient.assigned_therapist_id 必须保持不变。"""
+        """临时指派期间 patient.assigned_therapist_id 必须保持不变。"""
         self._open_temp(None)
         row = self.conn.execute(
             "SELECT assigned_therapist_id FROM patient WHERE inpatient_no = ?", (self.p1,)

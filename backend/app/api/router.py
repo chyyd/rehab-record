@@ -8,7 +8,7 @@
 推断出的是 ``NoneType`` **类本身**，它在布尔判断里是**真**的，于是断言失败。
 （也就是说，即使你的函数什么都不返回，只要注解是 `-> None` 且没显式给 `response_model`，204 就不成立。）
 
-这个坑在本项目踩了四次（logout / password / reset-password / 删休息块），
+这个坑在本项目踩了四次（logout / password / reset-password，以及已下线的"删休息块"接口），
 所以在这里一次性解决：**只要 status_code 是 204，就自动把 `response_model` 设为 None**。
 路由代码从此不必再记得这件事，也不会再因为漏写而在导入期炸掉整个应用。
 """

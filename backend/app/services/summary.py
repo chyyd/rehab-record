@@ -1,7 +1,7 @@
 """汇总统计（阶段 5 / `设计.md` 3.8、3.9）。
 
 汇总只统计**已提交与已锁定**的记录：草稿是治疗师还没写完的东西，
-把它算进"今天治疗了多少人次"会误导排班与统计。
+把它算进"今天治疗了多少人次"会让统计直接失真。
 
 三种口径：
 
@@ -320,7 +320,7 @@ def patient_overview(
     for index, record in enumerate(ordered, start=1):
         record["record_no"] = index
 
-    # 归属：原归属 + 当前可见归属（单日假期间会不同）
+    # 归属：原归属 + 当前可见归属（临时释放期间两者会不同）
     assigned = patient.get("assigned_therapist_id")
     assigned_name = None
     if assigned is not None:

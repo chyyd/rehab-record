@@ -15,6 +15,7 @@
 | 视图 `v_patient_next_appointment` | 视图 `v_patient_last_treated`（只统计 `submitted`） |
 | `treatment_record` 的 `is_temporary` / `appointment_id` 列 | 三列已删；`is_temporary` 改为查询时推导 |
 | "设计.md 两条半日不变量" | 这两条不变量在文档里**不得再作为现行规则**出现 |
+| —— | **新增**：`设计.md` / `README.md` / `开发计划.md` 里**不得出现**已删死代码 `covers_patient`（连"已删除"留痕也不写名字 —— 按"标记行"放行的旧断言抓不住"直接当现行函数写"的漂移） |
 | 接口数 / 待办数字 | 直接数路由注册与验收脚本，与文档里的数字对账 |
 
 `DEPRECATED_TOKENS` 是"已下线功能"的守门人：这些词**只允许**出现在
@@ -195,12 +196,28 @@ check("设计.md 不再把按排期排序的旧视图当现行视图",
       not [line for line in DESIGN.splitlines()
            if "v_patient_next_appointment" in line
            and not any(m in line for m in DEPRECATED_MARKERS)])
-check("归属判定函数已由 can_schedule 改名为 covers_patient",
-      "def covers_patient(" in PATIENT_PY and "def can_schedule(" not in PATIENT_PY)
+check("归属判定死函数 covers_patient / can_schedule 均已删除，归属只见于可见性视图与 scope 条件",
+      "def covers_patient(" not in PATIENT_PY
+      and "def can_schedule(" not in PATIENT_PY
+      and "CREATE VIEW v_patient_visibility" in PATIENT_PY
+      and "def visibility_from(" in PATIENT_PY)
 check("设计.md 不再把 can_schedule 当现行函数名",
       not [line for line in DESIGN.splitlines()
            if "can_schedule" in line
            and not any(m in line for m in ("原名", "改名", "曾", "下线", "删除"))])
+# `covers_patient()` 已按死代码删除，三个主文档里**一律不得出现这个名字** ——
+# 连"已删除"的留痕也不写名字（留痕改述为"曾有的归属判定单体函数（原名 can_schedule）"）。
+# 上面那条按"标记行"放行的断言抓不住"不带任何标记、直接当现行函数写"的漂移，故补一条更硬的。
+_COVERS_PATIENT_FILES = [
+    name
+    for name, text in (("设计.md", DESIGN), ("README.md", README), ("开发计划.md", PLAN))
+    if "covers_patient" in text
+]
+check(
+    "设计.md / README.md / 开发计划.md 不得出现已删除的 covers_patient（含“已删除”留痕）"
+    + (f"：命中 {'、'.join(_COVERS_PATIENT_FILES)}" if _COVERS_PATIENT_FILES else ""),
+    not _COVERS_PATIENT_FILES,
+)
 check("设计.md 不再把两条半日不变量当现行规则",
       not [line for line in DESIGN.splitlines()
            if ("治疗师半日" in line or "患者半日" in line)

@@ -6,7 +6,7 @@
 用例分组：
 1. 登录 / 令牌（含 refresh 轮换、类型混用、停用账号）
 2. 用户管理权限（管理员专属、不许消灭最后一个管理员）
-3. 患者数据级权限（D10：治疗师只能看自己/未分配/临时相关）
+3. 患者数据级权限（D10：全科白板——在院/暂停对所有治疗师可见，已出院仅管理员）
 4. 归属变更（认领 / 放弃 / 管理员指定 / 归属历史）
 5. 归属解析可见归属（临时释放与临时认领）
 6. 患者列表排序（"我最近一次已提交治疗"降序，不再是下一个排期）
@@ -769,7 +769,9 @@ class TestClaimAndAssignment(ApiTestCase):
 class TestVisibleTherapistResolution(ApiTestCase):
     """M09 / 3.5.5：临时释放与临时认领期间的归属解析。
 
-    这是本系统最关键的一条业务规则，用模型层直接验证（不经过 HTTP）。
+    这是本系统最关键的一条业务规则，用**模型层（视图输出）与接口层（scope 筛选）**
+    两条路径验证：视图给出 `visible_therapist_id` / `visibility_state`，
+    接口给出调用方真正观察得到的 `scope=mine` / `scope=unassigned` 结果。
 
     2026-10-05 请假功能下线后，临时指派不再由"单日假"自动产生（详见
     `app/models/temporary_assignment.py`），但它仍是**归属解析**的依据：
@@ -853,29 +855,50 @@ class TestVisibleTherapistResolution(ApiTestCase):
             patient_model.claim_patient(self.conn, self.patient_no, int(self.cover["id"]))
         self.assertEqual(ctx.exception.details.get("hint"), "temp-claim")
 
-    def test_coverage_permission_follows_visible_therapist(self) -> None:
-        """Q3：归属判定（`covers_patient`，原名 `can_schedule`）看**可见归属**，不看原归属。"""
-        # 正常情况：原归属者可以动这个患者
-        self.assertTrue(patient_model.covers_patient(self.conn, self.patient_no, int(self.original["id"])))
+    def _list_scope(self, employee_no: str, scope: str) -> set[str]:
+        """按数据范围查询患者列表（走真实接口），返回住院编号集合。"""
+        body = self.client.get(
+            "/api/v1/patients", params={"scope": scope}, headers=self.login_headers(employee_no)
+        ).json()
+        return {item["inpatient_no"] for item in body["items"]}
 
-        # 临时释放后：可见归属变成 NULL（未分配），因此**任何人都可以**动这个患者——
-        # 这正是临时释放的意义：原归属者不在岗时，患者不能被"锁死"在他名下。
+    def test_visible_resolution_is_observable_in_patient_scopes(self) -> None:
+        """Q3：可见归属解析必须能从接口的 `scope` 筛选上**观察到**（不再直接调模型函数）。
+
+        本用例替代原先直接调用 `patient_model.covers_patient()` 的写法 —— 那个函数
+        **已随排期下线按死代码删除**（它唯一的生产调用方是已删除的 `api/v1/schedule.py`）。
+        断言的可观察等价关系：
+
+        - `scope=mine`       ⟺ 「该治疗师就是可见归属者」；
+        - `scope=unassigned` ⟺ 「可见归属为空」（谁都不负责，谁都可能接手）。
+
+        于是原用例钉的三件事在这里一一对应：正常时原归属者"能动"（`mine` 里有它）；
+        临时释放后原归属者"不能动"而其他人可以（`mine` 里没有它、`unassigned` 里有它）；
+        被临时认领后只有认领者"能动"。
+        """
+        self.make_user("T003", "王五")
+
+        # 正常：可见归属 = 原归属者
+        self.assertIn(self.patient_no, self._list_scope("T001", "mine"))
+        self.assertNotIn(self.patient_no, self._list_scope("T002", "mine"))
+
+        # 临时释放（未被认领）：可见归属变 NULL —— 原归属者的 mine 里不再有它，
+        # 但它落到 unassigned，因此**任何治疗师**都可以接手。
+        # 这正是临时释放的意义：原归属者不在岗时，患者不该被"锁死"在他名下。
         self._open_temp(None)
-        self.assertIsNone(
-            patient_model.get_patient_or_raise(self.conn, self.patient_no)["visible_therapist_id"]
-        )
-        self.assertTrue(patient_model.covers_patient(self.conn, self.patient_no, int(self.original["id"])))
-        self.assertTrue(patient_model.covers_patient(self.conn, self.patient_no, int(self.cover["id"])))
+        self.assertNotIn(self.patient_no, self._list_scope("T001", "mine"))
+        self.assertIn(self.patient_no, self._list_scope("T001", "unassigned"))
+        self.assertIn(self.patient_no, self._list_scope("T003", "unassigned"))
 
-        # 被临时认领后：只有认领者能动这个患者，原归属者与其他人都不能
+        # 被临时认领后：只有认领者能看到"自己负责它"；原归属者与第三人都不能
         self.conn.execute(
             "UPDATE temporary_assignment SET temporary_therapist_id = ? WHERE patient_no = ?",
             (self.cover["id"], self.patient_no),
         )
-        self.assertFalse(patient_model.covers_patient(self.conn, self.patient_no, int(self.original["id"])))
-        self.assertTrue(patient_model.covers_patient(self.conn, self.patient_no, int(self.cover["id"])))
-        third = self.make_user("T003", "王五")
-        self.assertFalse(patient_model.covers_patient(self.conn, self.patient_no, int(third["id"])))
+        self.assertIn(self.patient_no, self._list_scope("T002", "mine"))
+        self.assertNotIn(self.patient_no, self._list_scope("T001", "mine"))
+        self.assertNotIn(self.patient_no, self._list_scope("T003", "mine"))
+        self.assertNotIn(self.patient_no, self._list_scope("T003", "unassigned"))
 
     def test_temp_related_patients_appear_in_temp_scope(self) -> None:
         """原归属者与临时认领者都能在 scope=temp 里看到该患者。"""

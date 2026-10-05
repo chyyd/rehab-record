@@ -1,4 +1,4 @@
-"""半日制作息语义（Q11 + S1）。这是排期/休息/请假共用的时间真源，必须严格。"""
+"""半日制作息语义（Q11 + S1）。这是全系统"半日"边界的唯一时间真源，必须严格。"""
 
 from __future__ import annotations
 
@@ -78,7 +78,7 @@ class TestPeriodLabelsAndNormalize(unittest.TestCase):
 
 
 class TestExpiryPerQ11(unittest.TestCase):
-    """M09 请假到期恢复时点必须取所属半日区间的结束时刻（Q11）。"""
+    """M09 临时指派到期时点必须取所属半日区间的结束时刻（Q11）。"""
 
     def setUp(self) -> None:
         self.cfg = WorkTimeConfig()

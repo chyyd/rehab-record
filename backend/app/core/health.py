@@ -31,7 +31,9 @@ def collect_health(settings: Settings | None = None, *, include_periods: bool = 
     }
 
     if include_periods:
-        # 把 Q11 的作息暴露出来，前端排期页据此渲染半日边界，避免前端硬编码时间
+        # 把 Q11 的作息暴露出来（`worktime` 明细 + `periods` 边界），供运维与客户端自描述；
+        # 排期页已随排期功能下线删除，这里不再服务于任何排班渲染，但"半日边界"仍是
+        # 治疗记录 `session_period` 与临时指派到期时点的定义，必须能查到。
         payload["worktime"] = {
             "morning": {"period": "am", "start": cfg.worktime.morning_start, "end": cfg.worktime.morning_end},
             "afternoon": {"period": "pm", "start": cfg.worktime.afternoon_start, "end": cfg.worktime.afternoon_end},
