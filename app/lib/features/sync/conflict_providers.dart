@@ -196,7 +196,17 @@ class ConflictController extends Notifier<ConflictState> {
     state = ConflictState(items: state.items, busy: true);
 
     // 1) 清空基线退回 pending 并推，捕获服务端当前 revision。
-    await services.sync.requeueWithoutBase(item.clientUuid);
+    //
+    // ★ 先确认队列行真的还在：不在了（多半是这条冲突已被"采用服务端"丢弃）
+    //   就必须直接报错 —— 否则后面推不出冲突，会被误判成"已覆盖成功"。
+    final stillQueued = await services.sync.requeueWithoutBase(item.clientUuid);
+    if (!stillQueued) {
+      await _afterDecision(
+        '这条冲突已经不在待推送队列里了（可能刚被"采用服务端"处理过），请下拉刷新后重看',
+        isError: true,
+      );
+      return false;
+    }
     final first = await services.sync.pushPending();
     final conflict = first.conflicts
         .where((c) => c.clientUuid == item.clientUuid)

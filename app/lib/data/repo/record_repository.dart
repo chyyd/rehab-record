@@ -281,11 +281,23 @@ class RecordRepository {
     // 已推送过的记录是 update，本地新建是 insert。
     if (existingId != null && existingId > 0) {
       final row = await findByLocalId(existingId);
+      // ★ 2026-10-05：`base_revision` **只在可信时带上**（即 > 0）。
+      //
+      // 为什么不能带 0：乐观锁的语义是"我基于第 N 版改的"。本地 `revision == 0`
+      // 意味着这份基线**不可信**（这条记录在服务端已经存在——它有正数 id——
+      // 所以服务端那版至少是 1）。带 0 上去必然对不上，服务端只能回一个含糊的
+      // `server_status=submitted`，治疗师看到的就是"一保存就冲突"。
+      //
+      // 改成本地 0 时**不带基线**：服务端会明确回 `missing_base_revision` +
+      // **真实的 `server_revision`**，而"保留我的"正是用那个值一步对齐基线
+      //（见 `ConflictController.keepMine`）。把一个说不清的冲突，
+      // 换成一个能被正确处理、并且能自愈的冲突。
+      final base = (row?.revision ?? 0) > 0 ? row!.revision : null;
       await _sync.enqueueUpdate(
         entity: 'treatment_record',
         clientUuid: uuid,
         payload: payload,
-        baseRevision: row?.revision,
+        baseRevision: base,
       );
     } else {
       await _sync.enqueueInsert(

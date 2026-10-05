@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:rehab_app/core/api_endpoints.dart';
@@ -330,6 +331,83 @@ void main() {
       expect(payload.containsKey('session_period'), isFalse);
       expect(payload.containsKey('duration_min'), isFalse);
       expect(payload.containsKey('patient_response'), isFalse);
+    });
+
+    /// 用户 2026-10-05 实测：「新建记录时会提示冲突……保留我的按钮无法生效」。
+    ///
+    /// 这条守**根因**：本地 `revision == 0` 时不能把它当基线带上。
+    ///
+    /// 乐观锁的语义是"我基于第 N 版改的"。一条**正数 id** 的记录在服务端一定存在，
+    /// 所以服务端那版至少是 1；本地却是 0，说明这份基线不可信
+    ///（历史遗留：上传后 revision 没回写）。带 0 上去必然对不上，
+    /// 服务端只能回一个含糊的 `server_status=submitted` —— 现场就是"一保存就冲突"。
+    ///
+    /// 不带基线时服务端回 `missing_base_revision` + **真实 `server_revision`**，
+    /// "保留我的"正好用那个值一步对齐（`ConflictController.keepMine`）。
+    test('★ 本地 revision=0 时不带 base_revision（改成可自愈的明确冲突）', () async {
+      // 造一条"服务端已有、但本地 revision 没回写"的记录：正数 id + revision 0。
+      await db.into(db.treatmentRecords).insertOnConflictUpdate(
+            TreatmentRecordsCompanion.insert(
+              id: const Value(77),
+              patientNo: 'ZY001',
+              therapistId: 2,
+              recordDate: '2026-10-06',
+              discipline: 'PT',
+              kind: 'daily',
+              clientUuid: const Value('u-stale'),
+              revision: const Value(0),
+              syncStatus: const Value('synced'),
+            ),
+          );
+
+      await repo.save(
+        existingId: 77,
+        patientNo: 'ZY001',
+        therapistId: 2,
+        recordDate: '2026-10-06',
+        discipline: 'PT',
+        kind: 'daily',
+        body: {'vas': 3},
+        status: 'submitted',
+      );
+
+      final queued = await db.select(db.changeQueue).getSingle();
+      expect(queued.op, 'update');
+      expect(
+        queued.baseRevision,
+        isNull,
+        reason: '基线不可信时必须不带；带 0 会换来一个说不清的冲突',
+      );
+    });
+
+    test('本地 revision 可信（>0）时带上它（这才是乐观锁该有的样子）', () async {
+      await db.into(db.treatmentRecords).insertOnConflictUpdate(
+            TreatmentRecordsCompanion.insert(
+              id: const Value(78),
+              patientNo: 'ZY001',
+              therapistId: 2,
+              recordDate: '2026-10-06',
+              discipline: 'PT',
+              kind: 'daily',
+              clientUuid: const Value('u-fresh'),
+              revision: const Value(5),
+              syncStatus: const Value('synced'),
+            ),
+          );
+
+      await repo.save(
+        existingId: 78,
+        patientNo: 'ZY001',
+        therapistId: 2,
+        recordDate: '2026-10-06',
+        discipline: 'PT',
+        kind: 'daily',
+        body: {'vas': 3},
+        status: 'submitted',
+      );
+
+      final queued = await db.select(db.changeQueue).getSingle();
+      expect(queued.baseRevision, 5);
     });
 
     test('读回本地草稿的 body（继续编辑要靠它）', () async {

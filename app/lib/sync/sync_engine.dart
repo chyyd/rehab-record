@@ -203,8 +203,14 @@ class SyncEngine {
   /// 服务端会判"无冲突"并**直接应用**——那就不是"由治疗师确认过才覆盖"了，
   /// 而是"推着推着悄悄覆盖"。清空后服务端一定返回一次冲突，
   /// 附带**当前的** `server_revision`，我们再用它做第二步。
-  Future<void> requeueWithoutBase(String clientUuid) async {
-    await (_db.update(_db.changeQueue)
+  ///
+  /// 返回**是否真的改到了队列行**。★ 2026-10-05 加这个返回值：
+  /// 队列行不存在时（例如这条冲突已经被"采用服务端"丢弃了），原来的实现会更新 0 行，
+  /// 于是第一步推不出冲突、`serverRevision` 为 null，调用方误判成"已经应用成功"，
+  /// 弹出「已用我的版本覆盖服务端」—— **什么都没做却报成功**，
+  /// 治疗师只会觉得"保留我的按钮没反应"。
+  Future<bool> requeueWithoutBase(String clientUuid) async {
+    final changed = await (_db.update(_db.changeQueue)
           ..where((t) => t.clientUuid.equals(clientUuid)))
         .write(const ChangeQueueCompanion(
       baseRevision: Value(null),
@@ -212,6 +218,7 @@ class SyncEngine {
       retryCount: Value(0),
       lastError: Value(null),
     ));
+    return changed > 0;
   }
 
   /// **保留我的版本（第二步）**：把服务端当前 `revision` 作为基线重新排队推送。
@@ -235,12 +242,41 @@ class SyncEngine {
 
   /// **放弃我的版本**：从队列里移除这条变更（本地副本稍后由拉取覆盖或由调用方清理）。
   ///
-  /// 调用方应在之后立刻做一次 `pullIncremental`，否则本地会留着"没推上去的改动"，
-  /// 与服务端不一致 —— 这也是"采用服务端版本"的实现方式（不逐个实体重取，
-  /// 直接用协议本来就有的拉取机制，比自造重取逻辑可靠）。
+  /// ★ 2026-10-05 修：原来只删队列行，**留下本地镜像行**，于是产生"孤儿"：
+  /// 队列里没有、服务端也没有，但本地那一行还挂着 `sync_status='pending'`，
+  /// 患者页照样把它列出来（显示"待上传"），治疗师点进去改就又排一条新变更。
+  /// 现场表现是「记录一直显示待上传、越点越乱」。
+  ///
+  /// 清理规则**必须区分两种情况**（这就是为什么不能无脑删行）：
+  ///
+  /// - 本地行是**负数占位 id** → 它从未获得服务端 id，说明这条新建**根本没成功过**，
+  ///   服务端不存在它。删掉就是"放弃这次本地新建"的正确语义。
+  ///   （若服务端其实有、只是本地没同步到，紧接着的 `pullIncremental` 会把它拉回来，
+  ///   所以删是安全的 —— 调用方本来就要求随后拉一次。）
+  /// - 本地行是**正数 id** → 服务端已经有这条记录（冲突发生在"改"上），
+  ///   **不能删**，那是别人的/自己的既有文书。只把同步标记落回 `synced`
+  ///   （放弃本地改动 = 本地与服务端一致了），内容由随后的拉取覆盖。
   Future<void> discardMine(String clientUuid) async {
+    final row = await (_db.select(_db.treatmentRecords)
+          ..where((t) => t.clientUuid.equals(clientUuid)))
+        .getSingleOrNull();
+
     await _db.delete(_db.changeQueue)
         .delete(ChangeQueueCompanion(clientUuid: Value(clientUuid)));
+
+    if (row == null) return;
+    if (row.id < 0) {
+      await (_db.delete(_db.treatmentRecords)
+            ..where((t) => t.clientUuid.equals(clientUuid)))
+          .go();
+    } else {
+      await (_db.update(_db.treatmentRecords)
+            ..where((t) => t.clientUuid.equals(clientUuid)))
+          .write(const TreatmentRecordsCompanion(
+        syncStatus: Value('synced'),
+        clientUuid: Value(null),
+      ));
+    }
   }
 
   /// 批量丢弃（如"全部采用服务端"）。

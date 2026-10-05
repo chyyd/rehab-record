@@ -363,4 +363,87 @@ void main() {
       expect(rows.single.clientUuid, isNull);
     });
   });
+
+  /// 用户 2026-10-05 实测报的问题：
+  /// 「新建记录时会提示冲突……保留我的按钮无法生效，采用服务端有效」。
+  ///
+  /// 查下来是**两个独立缺陷叠在一起**，这一组守第二个：
+  /// "采用服务端"（`discardMine`）原来**只删队列行、不清理本地镜像行**，
+  /// 于是留下"孤儿"：队列里没有、服务端也没有，本地却还挂着
+  /// `sync_status='pending'` 并照常显示在患者页上。
+  ///
+  /// 孤儿还会让"保留我的"**假成功**：队列行没了 → `requeueWithoutBase` 更新 0 行
+  /// → 第一步推不出冲突 → `serverRevision == null` → 走"已覆盖服务端"分支，
+  /// 什么都没做却报成功。所以清理规则与那两处返回值都要守住。
+  group('★ 放弃本地改动（采用服务端）不留下孤儿行', () {
+    Future<void> seedLocal({
+      required int localId,
+      required String uuid,
+    }) async {
+      await db.into(db.treatmentRecords).insertOnConflictUpdate(
+            TreatmentRecordsCompanion.insert(
+              id: Value(localId),
+              patientNo: 'ZY001',
+              therapistId: 2,
+              recordDate: '2026-10-06',
+              discipline: 'PT',
+              kind: 'daily',
+              clientUuid: Value(uuid),
+              syncStatus: const Value('pending'),
+            ),
+          );
+    }
+
+    test('负数占位 id（服务端从未收到）→ 连本地行一起删掉', () async {
+      await seedLocal(localId: -1, uuid: 'u-orphan');
+      await engine.enqueueInsert(
+        entity: 'treatment_record',
+        clientUuid: 'u-orphan',
+        payload: {'patient_no': 'ZY001'},
+      );
+
+      await engine.discardMine('u-orphan');
+
+      expect(await db.select(db.changeQueue).get(), isEmpty);
+      expect(
+        await db.select(db.treatmentRecords).get(),
+        isEmpty,
+        reason: '这条新建从没成功过，服务端不存在它 —— 留着就是幽灵记录',
+      );
+    });
+
+    test('正数 id（服务端已有这条）→ 保留行、只把同步标记落回 synced', () async {
+      // 冲突发生在"改"一条已有记录上时，本地行是服务端已有的，**不能删**。
+      await seedLocal(localId: 77, uuid: 'u-existing');
+      await engine.enqueueUpdate(
+        entity: 'treatment_record',
+        clientUuid: 'u-existing',
+        payload: {'patient_no': 'ZY001'},
+        baseRevision: 3,
+      );
+
+      await engine.discardMine('u-existing');
+
+      final rows = await db.select(db.treatmentRecords).get();
+      expect(rows.length, 1, reason: '服务端有这条记录，删了本地就凭空少一条');
+      expect(rows.single.id, 77);
+      expect(rows.single.syncStatus, 'synced');
+      expect(rows.single.clientUuid, isNull, reason: '放弃后它不再是"我的未推送改动"');
+    });
+
+    test('队列行不存在时 requeueWithoutBase 返回 false（供"保留我的"拒绝假成功）', () async {
+      expect(await engine.requeueWithoutBase('u-not-queued'), isFalse);
+
+      await engine.enqueueInsert(
+        entity: 'treatment_record',
+        clientUuid: 'u-queued',
+        payload: {'patient_no': 'ZY001'},
+      );
+      await engine.requeueWithoutBase('u-queued');
+      final row = await db.select(db.changeQueue).getSingle();
+      expect(row.syncStatus, 'pending');
+      expect(row.baseRevision, isNull);
+      expect(await engine.requeueWithoutBase('u-queued'), isTrue);
+    });
+  });
 }

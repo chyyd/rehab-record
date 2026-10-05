@@ -76,7 +76,7 @@
 | 测试 | **341 个测试全部通过、0 skip**；端到端 268 项 + **浏览器 UI 验收 60 项** | **已完成** |
 | 接口 | **45 个接口**（37 个路径：认证、用户、患者与出院、SOAP 记录表单、同步、汇总、打印、审计） | **已完成**（字典/选项集/反应定义/模板四组接口已删除） |
 | 管理后台 Web | **React 19 + Vite 8 + Ant Design 6 + TS**，**6 个模块**（总览 / 患者 / 治疗记录 / 汇总打印 / 用户 / 审计）；排期页、请假页、字典/选项集/反应定义/模板四个页面**已删除**；记录与汇总改为 SOAP 纯文本；患者页含**出院确认 / 取消待出院** | **已完成**（删除四个页面后重新构建 exit 0） |
-| 安卓 App | Flutter：**3 个页签**（患者 / 时间轴 / 我的）、汇总与 PDF 打印（三种去向）、同步与冲突处理；**Drift schemaVersion 6**（记录表按 SOAP 重建、删除 `record_items` 表）。**记录页已适配 SOAP 改造**（`GET /records/form` 一屏 chip + `body` 契约），**124 个本地测试全部通过** | **已完成** |
+| 安卓 App | Flutter：**3 个页签**（患者 / 时间轴 / 我的）、汇总与 PDF 打印（三种去向）、同步与冲突处理；**Drift schemaVersion 6**（记录表按 SOAP 重建、删除 `record_items` 表）。**记录页已适配 SOAP 改造**（`GET /records/form` 一屏 chip + `body` 契约），**129 个本地测试全部通过** | **已完成** |
 
 > **用哪个 Python**：必须用系统 Python 3.13
 > （`C:\Users\youda\AppData\Local\Programs\Python\Python313\python.exe`）。
