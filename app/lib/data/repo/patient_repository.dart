@@ -23,6 +23,7 @@ class PatientView {
     this.diagnosis,
     this.adminNote,
     this.assignedTherapistId,
+    this.assignedTherapistName,
     this.visibleTherapistId,
     required this.revision,
     required this.visible,
@@ -36,6 +37,10 @@ class PatientView {
   /// 注意事项（治疗师**只读**，仅管理员能改）。
   final String? adminNote;
   final int? assignedTherapistId;
+
+  /// 归属治疗师姓名（服务端解析）。2026-10-05 加 —— 详情页原来显示
+  /// 「治疗师 #2」这种原始 id，对治疗师没有意义。未分配时为 null。
+  final String? assignedTherapistName;
   final int? visibleTherapistId;
 
   /// 2026-10-05：`visibilityState` 字段**已删除**。服务端那个
@@ -50,6 +55,17 @@ class PatientView {
   bool get isPaused => status == 'paused';
   bool get isDischarged => status == 'discharged';
 
+  /// 「归属」栏要显示的文字：**有姓名就用姓名**，没有才退回 id、再退回"未分配"。
+  ///
+  /// 三级兜底的理由：姓名是服务端解析的（可能因离线/旧缓存为空），
+  /// 但"这个患者有人负责"这个事实仍要显示出来，不能因为拿不到姓名就显示成"未分配"。
+  String get ownerLabel {
+    if (assignedTherapistId == null) return '未分配';
+    final name = assignedTherapistName?.trim();
+    if (name != null && name.isNotEmpty) return name;
+    return '治疗师 #$assignedTherapistId';
+  }
+
   /// 从 Drift 行构造。参数类型显式写成生成的 `Patient`。
   static PatientView fromRow(Patient row) => PatientView(
         inpatientNo: row.inpatientNo,
@@ -58,6 +74,7 @@ class PatientView {
         diagnosis: row.diagnosis,
         adminNote: row.adminNote,
         assignedTherapistId: row.assignedTherapistId,
+        assignedTherapistName: row.assignedTherapistName,
         visibleTherapistId: row.visibleTherapistId,
         revision: row.revision,
         visible: row.visible,
@@ -293,6 +310,9 @@ class PatientRepository {
             diagnosis: Value(json['diagnosis'] as String?),
             adminNote: Value(json['admin_note'] as String?),
             assignedTherapistId: Value((json['assigned_therapist_id'] as num?)?.toInt()),
+            // 归属治疗师姓名（服务端解析，2026-10-05 加）。本地没有 user 表，
+            // 要显示姓名只能靠随患者一起下发的这个字段。
+            assignedTherapistName: Value(json['assigned_therapist_name'] as String?),
             visibleTherapistId: Value((json['visible_therapist_id'] as num?)?.toInt()),
             // 服务端仍会回 `visibility_state`，但它是恒为 'assigned' 的兼容字段，
             // App 本地不再镜像它（schemaVersion 4 已删列），这里刻意不读。

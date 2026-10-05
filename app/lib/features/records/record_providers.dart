@@ -222,10 +222,23 @@ class RecordEditorController extends Notifier<RecordEditorState> {
       final form = result.form;
 
       var values = form.initialValues();
-      // 继续编辑本地草稿：本地内容覆盖服务端预填（治疗师在改自己刚写的东西）。
+      // 继续编辑一条已有记录：**它的内容覆盖服务端预填**。
+      //
+      // 两种情况要分开（2026-10-05）：
+      //  · 本地草稿（id < 0）：只在本机，直接读本地 `body_json`；
+      //  · 服务端记录（id > 0）：用户要求「在原始记录上进行修改」，所以**回服务端取一次**
+      //    —— 本地镜像可能是旧的（别人改过、或还没同步过来）；
+      //    取不到（离线/被删）就退回本地内容，让治疗师至少还能在床上改。
       final localId = args.existingId;
       if (localId != null && localId < 0) {
         values = {...values, ...await services.records.readLocalBody(localId)};
+      } else if (localId != null && localId > 0) {
+        try {
+          final existing = await services.records.fetchRecord(localId);
+          values = {...values, ...existing.body};
+        } on AppError {
+          values = {...values, ...await services.records.readLocalBody(localId)};
+        }
       }
 
       // 多选字段的"最近用过"（模板里"本次训练项目"有 58 项）。

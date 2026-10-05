@@ -23,6 +23,13 @@ class PatientOut(BaseModel):
     assigned_therapist_id: int | None = Field(
         default=None, description="归属治疗师（可见归属恒等于它）；放弃或批量排空后为 NULL"
     )
+    assigned_therapist_name: str | None = Field(
+        default=None,
+        description=(
+            "归属治疗师的姓名（服务端解析）。客户端要显示**姓名**而不是"
+            "『治疗师 #2』这种原始 id —— 2026-10-05 加。未分配时为 null。"
+        ),
+    )
     visible_therapist_id: int | None = Field(
         default=None, description="可见归属，2026-10-05 起直接等于 assigned_therapist_id"
     )

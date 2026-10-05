@@ -829,8 +829,12 @@ check("CHANGELOG 的移除清单含九张旧模型的表",
 # --------------------------------------------------------------------------- #
 # 13. 安卓端与管理后台（页签 3 个、Drift 版本、模块清单）
 # --------------------------------------------------------------------------- #
-check("Drift schemaVersion 已升到 5（v5 治疗记录改 SOAP 模板驱动）",
-      "schemaVersion => 5" in APP_DB)
+check("Drift schemaVersion 已升到 6（v5 治疗记录改 SOAP、v6 加归属治疗师姓名）",
+      "schemaVersion => 6" in APP_DB)
+# v6：患者表加 `assigned_therapist_name`（归属治疗师姓名，由服务端解析后下发）。
+# 详情页原来显示「治疗师 #2」这种原始 id，对治疗师没有意义。
+check("Drift v6 给 patients 加 assigned_therapist_name 列",
+      "addColumn(patients, patients.assignedTherapistName)" in APP_DB)
 # v5：本地记录表重建（旧行是「主项目+子项目+参数」，新模型是「大类+形态+body」，
 # 两者没有可计算的映射 → 直接丢弃；服务端已清空重建，用户已确认「清掉重来」）。
 check("Drift v5 重建 treatment_records 并删掉 record_items 表",

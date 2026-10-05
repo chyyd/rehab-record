@@ -35,6 +35,7 @@ void main() {
     // 1) 手工造一个 v4 的库：旧表结构 + 一行旧记录。
     final legacy = NativeDatabase(file);
     await legacy.ensureOpen(_LegacyV4User());
+    await legacy.runCustom(_legacyPatientsSql, const []);
     await legacy.runCustom(_legacyTreatmentRecordsSql, const []);
     await legacy.runCustom(_legacyRecordItemsSql, const []);
     await legacy.runCustom(
@@ -170,6 +171,33 @@ CREATE TABLE record_items (
   params_snapshot_json TEXT,
   sort INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (id)
+)''';
+
+/// v4 的 `patients`。
+///
+/// ★ 2026-10-05 补：v6 迁移会 `ALTER TABLE patients ADD COLUMN
+/// assigned_therapist_name`，而原来的手工库**只有** `treatment_records` 与
+/// `record_items`，于是 v4 → 最新 的整条迁移链在这里炸 `no such table: patients`。
+///
+/// 教训：**手工造的旧库要覆盖该版本真实存在的表**，否则一旦后续迁移碰了别的表，
+/// 测试就会以一个与代码无关的错误失败（而这类失败很容易被误读成"迁移写错了"）。
+///
+/// 含 `visibility_state` 是**必须**的 —— v4 迁移里那句 `dropColumn` 就是删它，
+/// 少了这列那条历史迁移同样会炸。
+const String _legacyPatientsSql = '''
+CREATE TABLE patients (
+  inpatient_no TEXT NOT NULL,
+  name TEXT NOT NULL,
+  diagnosis TEXT,
+  admin_note TEXT,
+  assigned_therapist_id INTEGER,
+  visibility_state TEXT,
+  visible_therapist_id INTEGER,
+  status TEXT NOT NULL DEFAULT 'in_hospital',
+  revision INTEGER NOT NULL DEFAULT 0,
+  visible INTEGER NOT NULL DEFAULT 1,
+  fetched_at TEXT NOT NULL,
+  PRIMARY KEY (inpatient_no)
 )''';
 
 /// 只负责"把库标成 v4"的最小 user（迁移回调刻意留空）。

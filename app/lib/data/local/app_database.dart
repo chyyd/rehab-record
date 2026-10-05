@@ -32,7 +32,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 5;
+  int get schemaVersion => 6;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -90,6 +90,14 @@ class AppDatabase extends _$AppDatabase {
             await m.deleteTable('treatment_records');
             await m.createTable(treatmentRecords);
             await m.deleteTable('record_items');
+          }
+          // v6：患者表加 `assigned_therapist_name`（归属治疗师姓名）。
+          //
+          // 原来详情页显示「治疗师 #2」—— 原始 id 对治疗师没有意义。
+          // 姓名由**服务端**解析后随患者下发（本地没有 user 表，也不应该为了显示
+          // 姓名去镜像账号体系）。纯新增可空列，`addColumn` 就够，不动存量数据。
+          if (from < 6) {
+            await m.addColumn(patients, patients.assignedTherapistName);
           }
         },
         beforeOpen: (details) async {

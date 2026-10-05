@@ -56,7 +56,7 @@
 
 | 用途 | 选型 | 说明 |
 |---|---|---|
-| 本地库 | **Drift** | 拍定非 sqflite：类型安全 + 迁移 + 响应式查询，离线优先收益明显；**schemaVersion 5** |
+| 本地库 | **Drift** | 拍定非 sqflite：类型安全 + 迁移 + 响应式查询，离线优先收益明显；**schemaVersion 6** |
 | 状态管理 | **Riverpod** | `flutter_riverpod 3.x` |
 | 网络 | **Dio** | 自签 CA 走 **Dart 层 `SecurityContext`** 注入 |
 | 令牌存储 | **flutter_secure_storage** | refresh token 进 Android Keystore；access token 只放内存 |
@@ -249,7 +249,7 @@ flutter run                     # 跑到已连接设备/模拟器（已有 AVD r
 4. **展示**：列表用 `rendered_excerpt` 一行摘要，详情/打印用完整的 `rendered_text`。
 5. **本地库**：`TreatmentRecords` 是 `discipline` / `kind` / `seq_no` / `body_json` /
    `rendered_text`；**`RecordItems` 表已删除**（没有"明细"了）；`ref_cache` 存表单缓存与
-   "最近用过"顺序。**schemaVersion 5**（4 → 5 的迁移把旧行**直接丢弃** ——
+   "最近用过"顺序。**schemaVersion 6**（4 → 5 的迁移把旧行**直接丢弃** ——
    旧结构与新模型之间没有可计算的映射，服务端也已清空重建；详见 `app_database.dart` v5 注释）。
 6. **离线推送同样受硬阻断约束**（服务端会拒，见 `docs/sync-protocol.md` §4.3.1）：
    缺首评/缺复评/同一天同一大类第 3 条/待出院 → 409，且**整个请求**失败。
@@ -261,7 +261,7 @@ flutter run                     # 跑到已连接设备/模拟器（已有 AVD r
 
 | 已实现 | 说明 |
 |---|---|
-| Drift 本地库 | 5 张表；`change_queue` 是离线队列，`sync_state` 存游标；**schemaVersion 5** |
+| Drift 本地库 | 5 张表；`change_queue` 是离线队列，`sync_state` 存游标；**schemaVersion 6** |
 | 认证 | 工号+密码登录、refresh token 进安全存储、冷启动自动恢复、401 静默刷新 |
 | 患者列表 | 全科白板 + 我的/未分配筛选 + 本地搜索；**响应式**（落库即刷新） |
 | 患者详情 | 注意事项醒目、诊断/状态/归属、**竖排四大类按钮**（带"已记录 N 次 / 距复评还差 M 次"）、**出院按钮**、历史记录列表、汇总与打印入口 |

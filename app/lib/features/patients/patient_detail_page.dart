@@ -117,9 +117,9 @@ class PatientDetailPage extends ConsumerWidget {
               _InfoRow(label: '状态', value: _statusLabel(p.status)),
               _InfoRow(
                 label: '归属',
-                value: p.assignedTherapistId == null
-                    ? '未分配'
-                    : '治疗师 #${p.assignedTherapistId}',
+                // 优先显示**姓名**（服务端解析），拿不到才退回 id、再退回"未分配"。
+                // 三级兜底写在 `PatientView.ownerLabel` 里，列表页也用同一口径。
+                value: p.ownerLabel,
               ),
 
               const Divider(height: 32),
@@ -186,9 +186,16 @@ class PatientDetailPage extends ConsumerWidget {
                           for (final r in rows)
                             _RecordTile(
                               record: r,
-                              onTap: r.status == 'draft'
-                                  ? () => _openExisting(context, r)
-                                  : null,
+                              // ★ 2026-10-05：用户要求「治疗记录要可以点进去，
+                              // **在原始记录上进行修改**」→ 不再只让草稿可点。
+                              // 后端 `EDITABLE_BY_OWNER = (draft, submitted)`，
+                              // 已提交记录本来就能改（会走 `edit_count` 留痕）。
+                              //
+                              // 只有 `locked` 保持不可点：那是管理员锁定的归档记录，
+                              // 普通治疗师改会被 403 —— 点了只会得到一个错误弹窗。
+                              onTap: r.status == 'locked'
+                                  ? null
+                                  : () => _openExisting(context, r),
                             ),
                         ],
                       ),
@@ -500,8 +507,18 @@ class _RecordTile extends StatelessWidget {
         ? _firstContentLine(record.renderedText)
         : _bodyLine(body);
 
+    // 记录状态要一眼看到 —— 尤其"已锁定"和"已提交"的区别：
+    // 前者点不动（管理员才能改），后者**可以点进去改**（用户 2026-10-05 要求）。
+    final statusTag = switch (record.status) {
+      'draft' => ' · 草稿',
+      'locked' => ' · 已锁定',
+      _ => '',
+    };
+    final locked = onTap == null;
+
     return ListTile(
       contentPadding: EdgeInsets.zero,
+      enabled: !locked,
       leading: CircleAvatar(
         radius: 18,
         child: Text(
@@ -510,8 +527,7 @@ class _RecordTile extends StatelessWidget {
         ),
       ),
       title: Text(
-        '${shortDateFromIso(record.recordDate)} · $kindLabel'
-        '${record.status == 'draft' ? ' · 草稿' : ''}',
+        '${shortDateFromIso(record.recordDate)} · $kindLabel$statusTag',
       ),
       subtitle: Text(
         [
@@ -525,7 +541,11 @@ class _RecordTile extends StatelessWidget {
       trailing: record.syncStatus == 'pending'
           ? Icon(Icons.cloud_upload_outlined,
               size: 18, color: theme.colorScheme.outline)
-          : (onTap == null ? null : const Icon(Icons.edit_outlined, size: 18)),
+          : Icon(
+              locked ? Icons.lock_outline : Icons.edit_outlined,
+              size: 18,
+              color: theme.colorScheme.outline,
+            ),
       onTap: onTap,
     );
   }

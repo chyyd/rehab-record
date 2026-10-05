@@ -21,6 +21,15 @@ class Patients extends Table {
   TextColumn get diagnosis => text().nullable()();
   TextColumn get adminNote => text().nullable()();
   IntColumn get assignedTherapistId => integer().nullable()();
+
+  /// 归属治疗师的**姓名**（服务端解析后下发）。
+  ///
+  /// ★ 2026-10-05 新增（本地库 schemaVersion 5 → 6）：患者详情页原来显示
+  /// 「治疗师 #2」这种原始 id，对治疗师毫无意义。姓名是**服务端**拼出来的
+  /// （本地没有 `user` 表，也**不应该**为了显示姓名去同步一张用户表 ——
+  /// 那会把账号体系镜像到每台床旁设备上），所以服务端随患者一起下发。
+  TextColumn get assignedTherapistName => text().nullable()();
+
   IntColumn get visibleTherapistId => integer().nullable()();
 
   /// 2026-10-05：`visibility_state` 列**已删除**（本地库 schemaVersion 3 → 4）。

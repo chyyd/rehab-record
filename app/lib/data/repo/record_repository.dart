@@ -205,6 +205,19 @@ class RecordRepository {
     return decodeBody(row?.bodyJson);
   }
 
+  /// 按**服务端 id** 读一条记录（含 `body` / `status` / `kind` / `discipline`）。
+  ///
+  /// ★ 2026-10-05 新增：用户要求「患者详情页的治疗记录要可以点进去，**在原始记录上进行修改**」。
+  /// 本地只镜像了最近同步过的记录，而患者详情页列的是本地库里的行 ——
+  /// 已提交的记录在本地**只存了 `rendered_text` + `body_json`**，
+  /// 但"最近同步过"不等于"内容最新"（别人可能改过），所以编辑前**回服务端取一次**。
+  ///
+  /// 离线时抛 `AppError`，由调用方决定是否降级为"只用本地内容编辑"。
+  Future<RecordData> fetchRecord(int recordId) async {
+    final data = await _client.request(kRecord(recordId));
+    return RecordData.fromJson(Map<String, dynamic>.from(data as Map));
+  }
+
   /// 把 `body_json` 解出来（坏了当空表，不让页面炸掉）。
   static Map<String, dynamic> decodeBody(String? raw) {
     if (raw == null || raw.isEmpty) return {};

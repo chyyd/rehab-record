@@ -60,6 +60,17 @@ class $PatientsTable extends Patients with TableInfo<$PatientsTable, Patient> {
     type: DriftSqlType.int,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _assignedTherapistNameMeta =
+      const VerificationMeta('assignedTherapistName');
+  @override
+  late final GeneratedColumn<String> assignedTherapistName =
+      GeneratedColumn<String>(
+        'assigned_therapist_name',
+        aliasedName,
+        true,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+      );
   static const VerificationMeta _visibleTherapistIdMeta =
       const VerificationMeta('visibleTherapistId');
   @override
@@ -124,6 +135,7 @@ class $PatientsTable extends Patients with TableInfo<$PatientsTable, Patient> {
     diagnosis,
     adminNote,
     assignedTherapistId,
+    assignedTherapistName,
     visibleTherapistId,
     status,
     revision,
@@ -179,6 +191,15 @@ class $PatientsTable extends Patients with TableInfo<$PatientsTable, Patient> {
         assignedTherapistId.isAcceptableOrUnknown(
           data['assigned_therapist_id']!,
           _assignedTherapistIdMeta,
+        ),
+      );
+    }
+    if (data.containsKey('assigned_therapist_name')) {
+      context.handle(
+        _assignedTherapistNameMeta,
+        assignedTherapistName.isAcceptableOrUnknown(
+          data['assigned_therapist_name']!,
+          _assignedTherapistNameMeta,
         ),
       );
     }
@@ -248,6 +269,10 @@ class $PatientsTable extends Patients with TableInfo<$PatientsTable, Patient> {
         DriftSqlType.int,
         data['${effectivePrefix}assigned_therapist_id'],
       ),
+      assignedTherapistName: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}assigned_therapist_name'],
+      ),
       visibleTherapistId: attachedDatabase.typeMapping.read(
         DriftSqlType.int,
         data['${effectivePrefix}visible_therapist_id'],
@@ -283,6 +308,14 @@ class Patient extends DataClass implements Insertable<Patient> {
   final String? diagnosis;
   final String? adminNote;
   final int? assignedTherapistId;
+
+  /// 归属治疗师的**姓名**（服务端解析后下发）。
+  ///
+  /// ★ 2026-10-05 新增（本地库 schemaVersion 5 → 6）：患者详情页原来显示
+  /// 「治疗师 #2」这种原始 id，对治疗师毫无意义。姓名是**服务端**拼出来的
+  /// （本地没有 `user` 表，也**不应该**为了显示姓名去同步一张用户表 ——
+  /// 那会把账号体系镜像到每台床旁设备上），所以服务端随患者一起下发。
+  final String? assignedTherapistName;
   final int? visibleTherapistId;
 
   /// 2026-10-05：`visibility_state` 列**已删除**（本地库 schemaVersion 3 → 4）。
@@ -308,6 +341,7 @@ class Patient extends DataClass implements Insertable<Patient> {
     this.diagnosis,
     this.adminNote,
     this.assignedTherapistId,
+    this.assignedTherapistName,
     this.visibleTherapistId,
     required this.status,
     required this.revision,
@@ -327,6 +361,9 @@ class Patient extends DataClass implements Insertable<Patient> {
     }
     if (!nullToAbsent || assignedTherapistId != null) {
       map['assigned_therapist_id'] = Variable<int>(assignedTherapistId);
+    }
+    if (!nullToAbsent || assignedTherapistName != null) {
+      map['assigned_therapist_name'] = Variable<String>(assignedTherapistName);
     }
     if (!nullToAbsent || visibleTherapistId != null) {
       map['visible_therapist_id'] = Variable<int>(visibleTherapistId);
@@ -351,6 +388,9 @@ class Patient extends DataClass implements Insertable<Patient> {
       assignedTherapistId: assignedTherapistId == null && nullToAbsent
           ? const Value.absent()
           : Value(assignedTherapistId),
+      assignedTherapistName: assignedTherapistName == null && nullToAbsent
+          ? const Value.absent()
+          : Value(assignedTherapistName),
       visibleTherapistId: visibleTherapistId == null && nullToAbsent
           ? const Value.absent()
           : Value(visibleTherapistId),
@@ -374,6 +414,9 @@ class Patient extends DataClass implements Insertable<Patient> {
       assignedTherapistId: serializer.fromJson<int?>(
         json['assignedTherapistId'],
       ),
+      assignedTherapistName: serializer.fromJson<String?>(
+        json['assignedTherapistName'],
+      ),
       visibleTherapistId: serializer.fromJson<int?>(json['visibleTherapistId']),
       status: serializer.fromJson<String>(json['status']),
       revision: serializer.fromJson<int>(json['revision']),
@@ -390,6 +433,9 @@ class Patient extends DataClass implements Insertable<Patient> {
       'diagnosis': serializer.toJson<String?>(diagnosis),
       'adminNote': serializer.toJson<String?>(adminNote),
       'assignedTherapistId': serializer.toJson<int?>(assignedTherapistId),
+      'assignedTherapistName': serializer.toJson<String?>(
+        assignedTherapistName,
+      ),
       'visibleTherapistId': serializer.toJson<int?>(visibleTherapistId),
       'status': serializer.toJson<String>(status),
       'revision': serializer.toJson<int>(revision),
@@ -404,6 +450,7 @@ class Patient extends DataClass implements Insertable<Patient> {
     Value<String?> diagnosis = const Value.absent(),
     Value<String?> adminNote = const Value.absent(),
     Value<int?> assignedTherapistId = const Value.absent(),
+    Value<String?> assignedTherapistName = const Value.absent(),
     Value<int?> visibleTherapistId = const Value.absent(),
     String? status,
     int? revision,
@@ -417,6 +464,9 @@ class Patient extends DataClass implements Insertable<Patient> {
     assignedTherapistId: assignedTherapistId.present
         ? assignedTherapistId.value
         : this.assignedTherapistId,
+    assignedTherapistName: assignedTherapistName.present
+        ? assignedTherapistName.value
+        : this.assignedTherapistName,
     visibleTherapistId: visibleTherapistId.present
         ? visibleTherapistId.value
         : this.visibleTherapistId,
@@ -436,6 +486,9 @@ class Patient extends DataClass implements Insertable<Patient> {
       assignedTherapistId: data.assignedTherapistId.present
           ? data.assignedTherapistId.value
           : this.assignedTherapistId,
+      assignedTherapistName: data.assignedTherapistName.present
+          ? data.assignedTherapistName.value
+          : this.assignedTherapistName,
       visibleTherapistId: data.visibleTherapistId.present
           ? data.visibleTherapistId.value
           : this.visibleTherapistId,
@@ -454,6 +507,7 @@ class Patient extends DataClass implements Insertable<Patient> {
           ..write('diagnosis: $diagnosis, ')
           ..write('adminNote: $adminNote, ')
           ..write('assignedTherapistId: $assignedTherapistId, ')
+          ..write('assignedTherapistName: $assignedTherapistName, ')
           ..write('visibleTherapistId: $visibleTherapistId, ')
           ..write('status: $status, ')
           ..write('revision: $revision, ')
@@ -470,6 +524,7 @@ class Patient extends DataClass implements Insertable<Patient> {
     diagnosis,
     adminNote,
     assignedTherapistId,
+    assignedTherapistName,
     visibleTherapistId,
     status,
     revision,
@@ -485,6 +540,7 @@ class Patient extends DataClass implements Insertable<Patient> {
           other.diagnosis == this.diagnosis &&
           other.adminNote == this.adminNote &&
           other.assignedTherapistId == this.assignedTherapistId &&
+          other.assignedTherapistName == this.assignedTherapistName &&
           other.visibleTherapistId == this.visibleTherapistId &&
           other.status == this.status &&
           other.revision == this.revision &&
@@ -498,6 +554,7 @@ class PatientsCompanion extends UpdateCompanion<Patient> {
   final Value<String?> diagnosis;
   final Value<String?> adminNote;
   final Value<int?> assignedTherapistId;
+  final Value<String?> assignedTherapistName;
   final Value<int?> visibleTherapistId;
   final Value<String> status;
   final Value<int> revision;
@@ -510,6 +567,7 @@ class PatientsCompanion extends UpdateCompanion<Patient> {
     this.diagnosis = const Value.absent(),
     this.adminNote = const Value.absent(),
     this.assignedTherapistId = const Value.absent(),
+    this.assignedTherapistName = const Value.absent(),
     this.visibleTherapistId = const Value.absent(),
     this.status = const Value.absent(),
     this.revision = const Value.absent(),
@@ -523,6 +581,7 @@ class PatientsCompanion extends UpdateCompanion<Patient> {
     this.diagnosis = const Value.absent(),
     this.adminNote = const Value.absent(),
     this.assignedTherapistId = const Value.absent(),
+    this.assignedTherapistName = const Value.absent(),
     this.visibleTherapistId = const Value.absent(),
     required String status,
     this.revision = const Value.absent(),
@@ -539,6 +598,7 @@ class PatientsCompanion extends UpdateCompanion<Patient> {
     Expression<String>? diagnosis,
     Expression<String>? adminNote,
     Expression<int>? assignedTherapistId,
+    Expression<String>? assignedTherapistName,
     Expression<int>? visibleTherapistId,
     Expression<String>? status,
     Expression<int>? revision,
@@ -553,6 +613,8 @@ class PatientsCompanion extends UpdateCompanion<Patient> {
       if (adminNote != null) 'admin_note': adminNote,
       if (assignedTherapistId != null)
         'assigned_therapist_id': assignedTherapistId,
+      if (assignedTherapistName != null)
+        'assigned_therapist_name': assignedTherapistName,
       if (visibleTherapistId != null)
         'visible_therapist_id': visibleTherapistId,
       if (status != null) 'status': status,
@@ -569,6 +631,7 @@ class PatientsCompanion extends UpdateCompanion<Patient> {
     Value<String?>? diagnosis,
     Value<String?>? adminNote,
     Value<int?>? assignedTherapistId,
+    Value<String?>? assignedTherapistName,
     Value<int?>? visibleTherapistId,
     Value<String>? status,
     Value<int>? revision,
@@ -582,6 +645,8 @@ class PatientsCompanion extends UpdateCompanion<Patient> {
       diagnosis: diagnosis ?? this.diagnosis,
       adminNote: adminNote ?? this.adminNote,
       assignedTherapistId: assignedTherapistId ?? this.assignedTherapistId,
+      assignedTherapistName:
+          assignedTherapistName ?? this.assignedTherapistName,
       visibleTherapistId: visibleTherapistId ?? this.visibleTherapistId,
       status: status ?? this.status,
       revision: revision ?? this.revision,
@@ -608,6 +673,11 @@ class PatientsCompanion extends UpdateCompanion<Patient> {
     }
     if (assignedTherapistId.present) {
       map['assigned_therapist_id'] = Variable<int>(assignedTherapistId.value);
+    }
+    if (assignedTherapistName.present) {
+      map['assigned_therapist_name'] = Variable<String>(
+        assignedTherapistName.value,
+      );
     }
     if (visibleTherapistId.present) {
       map['visible_therapist_id'] = Variable<int>(visibleTherapistId.value);
@@ -638,6 +708,7 @@ class PatientsCompanion extends UpdateCompanion<Patient> {
           ..write('diagnosis: $diagnosis, ')
           ..write('adminNote: $adminNote, ')
           ..write('assignedTherapistId: $assignedTherapistId, ')
+          ..write('assignedTherapistName: $assignedTherapistName, ')
           ..write('visibleTherapistId: $visibleTherapistId, ')
           ..write('status: $status, ')
           ..write('revision: $revision, ')
@@ -2740,6 +2811,7 @@ typedef $$PatientsTableCreateCompanionBuilder = PatientsCompanion Function({
   Value<String?> diagnosis,
   Value<String?> adminNote,
   Value<int?> assignedTherapistId,
+  Value<String?> assignedTherapistName,
   Value<int?> visibleTherapistId,
   required String status,
   Value<int> revision,
@@ -2753,6 +2825,7 @@ typedef $$PatientsTableUpdateCompanionBuilder = PatientsCompanion Function({
   Value<String?> diagnosis,
   Value<String?> adminNote,
   Value<int?> assignedTherapistId,
+  Value<String?> assignedTherapistName,
   Value<int?> visibleTherapistId,
   Value<String> status,
   Value<int> revision,
@@ -2792,6 +2865,11 @@ class $$PatientsTableFilterComposer
 
   ColumnFilters<int> get assignedTherapistId => $composableBuilder(
     column: $table.assignedTherapistId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get assignedTherapistName => $composableBuilder(
+    column: $table.assignedTherapistName,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -2855,6 +2933,11 @@ class $$PatientsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get assignedTherapistName => $composableBuilder(
+    column: $table.assignedTherapistName,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<int> get visibleTherapistId => $composableBuilder(
     column: $table.visibleTherapistId,
     builder: (column) => ColumnOrderings(column),
@@ -2909,6 +2992,11 @@ class $$PatientsTableAnnotationComposer
     builder: (column) => column,
   );
 
+  GeneratedColumn<String> get assignedTherapistName => $composableBuilder(
+    column: $table.assignedTherapistName,
+    builder: (column) => column,
+  );
+
   GeneratedColumn<int> get visibleTherapistId => $composableBuilder(
     column: $table.visibleTherapistId,
     builder: (column) => column,
@@ -2960,6 +3048,7 @@ class $$PatientsTableTableManager
                 Value<String?> diagnosis = const Value.absent(),
                 Value<String?> adminNote = const Value.absent(),
                 Value<int?> assignedTherapistId = const Value.absent(),
+                Value<String?> assignedTherapistName = const Value.absent(),
                 Value<int?> visibleTherapistId = const Value.absent(),
                 Value<String> status = const Value.absent(),
                 Value<int> revision = const Value.absent(),
@@ -2972,6 +3061,7 @@ class $$PatientsTableTableManager
                 diagnosis: diagnosis,
                 adminNote: adminNote,
                 assignedTherapistId: assignedTherapistId,
+                assignedTherapistName: assignedTherapistName,
                 visibleTherapistId: visibleTherapistId,
                 status: status,
                 revision: revision,
@@ -2986,6 +3076,7 @@ class $$PatientsTableTableManager
                 Value<String?> diagnosis = const Value.absent(),
                 Value<String?> adminNote = const Value.absent(),
                 Value<int?> assignedTherapistId = const Value.absent(),
+                Value<String?> assignedTherapistName = const Value.absent(),
                 Value<int?> visibleTherapistId = const Value.absent(),
                 required String status,
                 Value<int> revision = const Value.absent(),
@@ -2998,6 +3089,7 @@ class $$PatientsTableTableManager
                 diagnosis: diagnosis,
                 adminNote: adminNote,
                 assignedTherapistId: assignedTherapistId,
+                assignedTherapistName: assignedTherapistName,
                 visibleTherapistId: visibleTherapistId,
                 status: status,
                 revision: revision,

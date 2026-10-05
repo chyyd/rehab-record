@@ -86,6 +86,16 @@ SELECT_COLUMN_NAMES = (
 
 # 带表别名的列清单，供 JOIN 查询使用
 _PATIENT_COLUMNS = ", ".join(f"p.{name}" for name in SELECT_COLUMN_NAMES)
+
+# ★ 2026-10-05：归属的**治疗师姓名**（客户端要显示"张三"而不是"治疗师 #2"）。
+#
+# 用相关子查询而**不是**再 JOIN 一次 `user`：这条 SQL 已经 JOIN 了两张视图，
+# 再加一个 LEFT JOIN 会让"每个患者恰好一行"这个前提更难看出来（子查询天然不会
+# 放大行数）。而且 `get_patient` 的单条查询也能直接用同一个片段。
+_ASSIGNED_THERAPIST_NAME_SQL = (
+    "(SELECT u.name FROM user u WHERE u.id = p.assigned_therapist_id)"
+    " AS assigned_therapist_name"
+)
 _VISIBILITY_COLUMNS = "v.visible_therapist_id"
 
 # --------------------------------------------------------------------------- #
@@ -155,7 +165,8 @@ def visibility_from(scope: Scope, user_id: int) -> tuple[str, list[Any]]:
 def get_patient(conn: sqlite3.Connection, inpatient_no: str) -> dict[str, Any] | None:
     return row_to_dict(
         conn.execute(
-            f"SELECT {_PATIENT_COLUMNS}, {_VISIBILITY_COLUMNS}"
+            f"SELECT {_PATIENT_COLUMNS}, {_VISIBILITY_COLUMNS},"
+            f" {_ASSIGNED_THERAPIST_NAME_SQL}"
             " FROM patient p JOIN v_patient_visibility v ON v.inpatient_no = p.inpatient_no"
             " WHERE p.inpatient_no = ?",
             (inpatient_no,),
@@ -250,7 +261,8 @@ def list_patients(
         order_params.append(user_id)
 
     rows = conn.execute(
-        f"SELECT {_PATIENT_COLUMNS}, {_VISIBILITY_COLUMNS} {joins} {where_sql}"
+        f"SELECT {_PATIENT_COLUMNS}, {_VISIBILITY_COLUMNS},"
+        f" {_ASSIGNED_THERAPIST_NAME_SQL} {joins} {where_sql}"
         f" {order_sql} LIMIT ? OFFSET ?",
         (*join_params, *params, *order_params, limit, offset),
     ).fetchall()
