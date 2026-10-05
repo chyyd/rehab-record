@@ -15,7 +15,8 @@ interface Overview {
   inpatients: number
   therapists: number
   todayRecords: number
-  todayDuration: number
+  /** 今日**已提交/已锁定**的日常治疗次数（首评/复评/出院小结不计，草稿不计）。 */
+  todayCountedRecords: number
   schemaVersion: unknown
   healthStatus: string
   recentAudits: { id: number; action: string; target_type: string; user_name?: string | null; created_at: string }[]
@@ -44,7 +45,8 @@ export function DashboardPage() {
     const patientPage = pick(patients, { items: [], total: 0, page: 1, page_size: 1 })
     const userPage = pick(users, { items: [], total: 0, page: 1, page_size: 200 })
     const recordPage = pick(records, { items: [], total: 0, page: 1, page_size: 1 })
-    const summaryData = pick(summary, null) as { totals?: { total_duration_min?: number } } | null
+    // 新口径的 TotalsOut 只有计数（**没有总时长**）：record_count 只算日常且已提交/已锁定
+    const summaryData = pick(summary, null) as { totals?: { record_count?: number } } | null
     const healthData = pick(health, null) as Record<string, unknown> | null
     const auditPage = pick(audits, { items: [], total: 0, page: 1, page_size: 8 })
 
@@ -53,7 +55,7 @@ export function DashboardPage() {
       inpatients: patientPage.items.filter((p) => p.status === 'in_hospital').length,
       therapists: userPage.items.filter((u) => u.role === 'therapist' && u.status === 'active').length,
       todayRecords: recordPage.total,
-      todayDuration: summaryData?.totals?.total_duration_min ?? 0,
+      todayCountedRecords: summaryData?.totals?.record_count ?? 0,
       schemaVersion: healthData?.schema_version ?? '—',
       healthStatus: String(healthData?.status ?? 'unknown'),
       recentAudits: auditPage.items,
@@ -80,11 +82,17 @@ export function DashboardPage() {
         <Col xs={12} md={6}>
           <Card>
             <Statistic title="今日治疗人次" value={data.todayRecords} suffix="次" />
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              含草稿
+            </Typography.Text>
           </Card>
         </Col>
         <Col xs={12} md={6}>
           <Card>
-            <Statistic title="今日总时长" value={data.todayDuration} suffix="分钟" />
+            <Statistic title="今日已提交治疗次数" value={data.todayCountedRecords} suffix="次" />
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              只算日常记录，评估文书不计
+            </Typography.Text>
           </Card>
         </Col>
         <Col xs={12} md={6}>

@@ -7,10 +7,6 @@ import { LoginPage } from './pages/LoginPage'
 import { DashboardPage } from './pages/DashboardPage'
 import { PatientsPage } from './pages/PatientsPage'
 import { UsersPage } from './pages/UsersPage'
-import { DictPage } from './pages/DictPage'
-import { OptionSetsPage } from './pages/OptionSetsPage'
-import { ResponseDefsPage } from './pages/ResponseDefsPage'
-import { TemplatesPage } from './pages/TemplatesPage'
 import { RecordsPage } from './pages/RecordsPage'
 import { SummaryPage } from './pages/SummaryPage'
 import { AuditLogsPage } from './pages/AuditLogsPage'
@@ -75,38 +71,10 @@ export function AppRoutes() {
             </RequireAdmin>
           }
         />
-        <Route
-          path="dict"
-          element={
-            <RequireAdmin>
-              <DictPage />
-            </RequireAdmin>
-          }
-        />
-        <Route
-          path="option-sets"
-          element={
-            <RequireAdmin>
-              <OptionSetsPage />
-            </RequireAdmin>
-          }
-        />
-        <Route
-          path="response-defs"
-          element={
-            <RequireAdmin>
-              <ResponseDefsPage />
-            </RequireAdmin>
-          }
-        />
-        <Route
-          path="templates"
-          element={
-            <RequireAdmin>
-              <TemplatesPage />
-            </RequireAdmin>
-          }
-        />
+        {/* 2026-10-05：删除 /dict、/option-sets、/response-defs、/templates 四条路由。
+            记录内容改由 `templates/*.json` **文件**驱动（用户要求「使用 json 格式保存模板，
+            不进数据库，以便以后我手动修改」），后台不再需要维护字典；
+            这四组后端接口也整体删除，留着路由只会点进去 404。 */}
         <Route
           path="audit-logs"
           element={

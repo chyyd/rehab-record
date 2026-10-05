@@ -41,24 +41,48 @@ const ACTION_LABEL: Record<string, string> = {
   upsert: '维护',
   disable: '停用',
   delete_draft: '删除草稿',
+  // 2026-10-05 出院流程（用户要求：任何治疗师可发起、管理员确认或满 7 天自动出院）
+  discharge_request: '发起出院',
+  pending_discharge: '转入待出院',
+  discharge_confirm: '确认出院',
+  discharge_cancel: '取消待出院',
 };
 
 /** 审计目标类型的中文名。
  *
  * 2026-10-05：`appointment` / `leave_record` / `rest_block` 随排期功能下线删除。
- * 注意**历史审计日志里可能仍有这些 target_type**（审计是只追加的，不随功能删除），
- * 所以下面的兜底逻辑必须保留 —— 否则旧日志会显示成空白。
+ *
+ * 2026-10-05：`main_item` / `sub_item` / `sub_item_param_def` / `option_set` /
+ * `response_def` / `record_template` 随**字典体系整体删除**（记录内容改由
+ * `templates/*.json` 文件驱动，用户要求「使用 json 格式保存模板，不进数据库，
+ * 以便以后我手动修改」）。这些实体已不存在，但**历史审计日志里仍有这些
+ * target_type**（审计只追加，不随功能删除），所以这里的标签与下面的兜底逻辑
+ * **必须保留** —— 删掉它们旧日志就会显示成空白或裸英文。
+ *
+ * 这类已删实体后面统一带「历史」二字：管理员一眼能看出"这是老账，不是现役对象"。
  */
 const TARGET_LABEL: Record<string, string> = {
   user: '用户',
   patient: '患者',
   treatment_record: '治疗记录',
-  option_set: '选项集',
-  record_template: '模板',
-  main_item: '主项目',
-  sub_item: '子项目',
-  sub_item_param_def: '参数定义',
+  // 以下 6 项是已删除的实体 —— 只在历史审计日志里出现
+  option_set: '选项集（历史）',
+  response_def: '患者反应定义（历史）',
+  record_template: '模板（历史）',
+  main_item: '主项目（历史）',
+  sub_item: '子项目（历史）',
+  sub_item_param_def: '参数定义（历史）',
 };
+
+/** 已删除实体的 target_type —— 命中时在"对象"列上加一条明确提示。 */
+const REMOVED_TARGET_TYPES = new Set([
+  'option_set',
+  'response_def',
+  'record_template',
+  'main_item',
+  'sub_item',
+  'sub_item_param_def',
+]);
 
 export function AuditLogsPage() {
   const [page, setPage] = useState(1);
@@ -230,12 +254,15 @@ export function AuditLogsPage() {
             {
               title: '对象',
               key: 'target',
-              width: 180,
+              width: 200,
               render: (_: unknown, r: AuditLogOut) => (
                 <span>
                   {TARGET_LABEL[r.target_type] ?? r.target_type}
                   {r.target_id ? (
                     <Typography.Text type="secondary"> #{r.target_id}</Typography.Text>
+                  ) : null}
+                  {REMOVED_TARGET_TYPES.has(r.target_type) ? (
+                    <Tag style={{ marginLeft: 4 }}>历史留痕</Tag>
                   ) : null}
                 </span>
               ),
@@ -273,6 +300,11 @@ export function AuditLogsPage() {
               <Descriptions.Item label="动作">{ACTION_LABEL[detail.action] ?? detail.action}</Descriptions.Item>
               <Descriptions.Item label="对象">
                 {TARGET_LABEL[detail.target_type] ?? detail.target_type} #{detail.target_id}
+                {REMOVED_TARGET_TYPES.has(detail.target_type) ? (
+                  <Typography.Text type="secondary" style={{ marginLeft: 8, fontSize: 12 }}>
+                    该对象类型已随字典体系删除，此处仅为历史留痕
+                  </Typography.Text>
+                ) : null}
               </Descriptions.Item>
             </Descriptions>
 

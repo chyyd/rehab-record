@@ -8,12 +8,9 @@ import { useMemo, useState } from 'react'
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { Avatar, Dropdown, Layout, Menu, Typography } from 'antd'
 import {
-  AppstoreOutlined,
   AuditOutlined,
   DashboardOutlined,
-  DatabaseOutlined,
   FileTextOutlined,
-  FormOutlined,
   LogoutOutlined,
   PrinterOutlined,
   TeamOutlined,
@@ -37,6 +34,12 @@ export interface NavItem {
  *
  * 2026-10-05：移除「全局排期」与「请假管理」—— 排期功能整体下线，
  * 本系统只记录"已经做了什么"，不做排班。
+ *
+ * 2026-10-05：再移除「字典管理 / 选项集管理 / 患者反应定义 / 科室模板」四项 ——
+ * 记录内容改由 `templates/*.json` **文件**驱动（用户要求「使用 json 格式保存模板，
+ * 不进数据库，以便以后我手动修改」），所以后台不再需要维护字典：
+ * 改字段只要改 JSON，不需要动代码、不需要迁移、不需要重新发后端。
+ * 对应的后端接口（`/dict`、`/option-sets`、`/response-defs`、`/templates`）也已删除。
  */
 export const NAV_ITEMS: NavItem[] = [
   { key: '/', label: '总览', icon: <DashboardOutlined /> },
@@ -44,10 +47,6 @@ export const NAV_ITEMS: NavItem[] = [
   { key: '/records', label: '治疗记录', icon: <FileTextOutlined /> },
   { key: '/summary', label: '汇总与打印', icon: <PrinterOutlined /> },
   { key: '/users', label: '用户管理', icon: <UserOutlined />, adminOnly: true },
-  { key: '/dict', label: '字典管理', icon: <DatabaseOutlined />, adminOnly: true },
-  { key: '/option-sets', label: '选项集管理', icon: <AppstoreOutlined />, adminOnly: true },
-  { key: '/response-defs', label: '患者反应定义', icon: <FormOutlined />, adminOnly: true },
-  { key: '/templates', label: '科室模板', icon: <FormOutlined />, adminOnly: true },
   { key: '/audit-logs', label: '审计日志', icon: <AuditOutlined />, adminOnly: true },
 ]
 

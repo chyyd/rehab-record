@@ -1,4 +1,18 @@
-/** 汇总与打印（M10）：按日期 / 按患者汇总 + 三套 PDF 下载。 */
+/**
+ * 汇总与打印：按日期 / 按患者汇总 + 三套 PDF 下载。
+ *
+ * 2026-10-05（脊柱级改造后）：汇总**彻底不再有表格**。
+ * 后端只输出记录落库时冻结的 `rendered_text`（SOAP 纯文本），
+ * 所以这里也按"文本块"渲染 —— 一、保留换行；二、按日期分块；
+ * 三、界面与 PDF 看到的是同一段文字（表格会把 A4 上的行文拆散，两者对不上）。
+ *
+ * 计数口径（用户明确要求）：
+ * - 只算 `kind='daily'` 且 `status IN ('submitted','locked')`；
+ * - 首评 / 阶段性复评 / 出院小结是**独立文书，不计治疗次数**，
+ *   但它们的正文会出现在按患者的每日文本里 —— 于是"只写了出院小结的那天"
+ *   会显示 `record_count: 0`。这是**预期行为**，UI 必须能读得通，
+ *   所以下面刻意写成「本次计数 0 次 · 其中含 1 份文书」，而不是"没有记录"。
+ */
 import { useState } from 'react'
 import {
   Button,
@@ -6,19 +20,27 @@ import {
   Col,
   DatePicker,
   Descriptions,
+  Empty,
   Radio,
   Row,
   Segmented,
   Select,
   Space,
   Statistic,
-  Table,
   Tag,
   Typography,
 } from 'antd'
 import { FilePdfOutlined, PrinterOutlined, ReloadOutlined } from '@ant-design/icons'
 import dayjs, { type Dayjs } from 'dayjs'
-import { patientsApi, summaryApi, type TotalsOut } from '../api/endpoints'
+import {
+  patientsApi,
+  summaryApi,
+  type DateSummaryOut,
+  type PatientDailyRowOut,
+  type PatientDailySummaryOut,
+  type SummaryRowOut,
+  type TotalsOut,
+} from '../api/endpoints'
 import { getAccessToken } from '../api/client'
 import { ErrorBox, PageHeader, PageSkeleton, useAsync } from '../components/Feedback'
 import { notify } from '../components/notify'
@@ -51,22 +73,43 @@ async function downloadPdf(url: string, filename: string) {
   URL.revokeObjectURL(objectUrl)
 }
 
+const DISCIPLINE_LABEL: Record<string, string> = {
+  PT: '运动',
+  OT: '生活技能',
+  ST_SW: '吞咽',
+  ST_SP: '言语',
+}
+
+const KIND_LABEL: Record<string, string> = {
+  initial: '首评',
+  daily: '日常',
+  reassessment: '阶段性复评',
+  discharge: '出院小结',
+}
+
+const STATUS_LABEL: Record<string, { text: string; color: string }> = {
+  draft: { text: '草稿', color: 'default' },
+  submitted: { text: '已提交', color: 'blue' },
+  locked: { text: '已锁定', color: 'green' },
+}
+
+const disciplineText = (r: { discipline: string; discipline_name?: string | null }) =>
+  r.discipline_name || DISCIPLINE_LABEL[r.discipline] || r.discipline
+
+const kindText = (r: { kind: string; kind_label?: string | null }) =>
+  r.kind_label || KIND_LABEL[r.kind] || r.kind
+
+/** 汇总计数卡片。**没有"总时长"** —— 新口径里不存在时长字段。 */
 function TotalsCards({ totals }: { totals: TotalsOut }) {
+  const disciplines = Object.entries(totals.discipline_counts ?? {})
   return (
     <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
       <Col xs={12} md={6}>
         <Card size="small">
-          <Statistic title="治疗次数" value={totals.record_count} suffix="次" />
-        </Card>
-      </Col>
-      <Col xs={12} md={6}>
-        <Card size="small">
-          <Statistic title="总时长" value={totals.total_duration_min} suffix="分钟" />
-        </Card>
-      </Col>
-      <Col xs={12} md={6}>
-        <Card size="small">
-          <Statistic title="子项目条目" value={totals.item_count} suffix="条" />
+          <Statistic title="治疗次数（仅日常）" value={totals.record_count} suffix="次" />
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            评估文书不计次数
+          </Typography.Text>
         </Card>
       </Col>
       <Col xs={12} md={6}>
@@ -74,23 +117,92 @@ function TotalsCards({ totals }: { totals: TotalsOut }) {
           <Statistic title="涉及患者" value={totals.patient_count} suffix="人" />
         </Card>
       </Col>
+      <Col xs={24} md={12}>
+        <Card size="small" title="按大类分布（仅日常）">
+          {disciplines.length === 0 ? (
+            <Typography.Text type="secondary">没有日常记录。</Typography.Text>
+          ) : (
+            <Space size={4} wrap>
+              {disciplines.map(([name, count]) => (
+                <Tag key={name} color="blue">
+                  {name} × {count}
+                </Tag>
+              ))}
+            </Space>
+          )}
+        </Card>
+      </Col>
     </Row>
   )
 }
 
-function FrequencyTags({ title, counts }: { title: string; counts: Record<string, number> }) {
+/** 治疗师分布（仅日常）。 */
+function TherapistCounts({ counts }: { counts: Record<string, number> }) {
   const entries = Object.entries(counts ?? {})
   if (entries.length === 0) return null
   return (
-    <Descriptions.Item label={title}>
-      <Space size={4} wrap>
-        {entries.map(([name, count]) => (
-          <Tag key={name}>
-            {name} × {count}
-          </Tag>
-        ))}
-      </Space>
-    </Descriptions.Item>
+    <Descriptions size="small" column={1} bordered style={{ marginBottom: 16 }}>
+      <Descriptions.Item label="治疗师分布（仅日常）">
+        <Space size={4} wrap>
+          {entries.map(([name, count]) => (
+            <Tag key={name}>
+              {name} × {count}
+            </Tag>
+          ))}
+        </Space>
+      </Descriptions.Item>
+    </Descriptions>
+  )
+}
+
+/** 一段 SOAP 纯文本。保留换行、等宽字体、可滚动 —— 与 PDF 里看到的一致。 */
+function SoapTextBlock({ text, caption }: { text: string; caption?: React.ReactNode }) {
+  return (
+    <div style={{ marginBottom: 12 }}>
+      {caption ? (
+        <div style={{ marginBottom: 4, fontSize: 12, color: 'rgba(0,0,0,0.65)' }}>{caption}</div>
+      ) : null}
+      <pre
+        style={{
+          background: '#fafafa',
+          border: '1px solid #f0f0f0',
+          borderLeft: '3px solid #1677ff',
+          borderRadius: 6,
+          padding: 12,
+          margin: 0,
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-word',
+          fontFamily:
+            'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
+          fontSize: 13,
+          lineHeight: 1.7,
+        }}
+      >
+        {text}
+      </pre>
+    </div>
+  )
+}
+
+/** 一条汇总记录的元信息（患者 / 大类 / 形态 / 治疗师 / 状态 / 序次）。 */
+function RowMeta({ row, showPatient = true }: { row: SummaryRowOut; showPatient?: boolean }) {
+  const status = STATUS_LABEL[row.status] ?? { text: row.status, color: 'default' }
+  return (
+    <Space size={4} wrap style={{ marginBottom: 6 }}>
+      {showPatient ? (
+        <Typography.Text strong>
+          {row.patient_name ?? '—'}（{row.patient_no}）
+        </Typography.Text>
+      ) : null}
+      <Tag>{disciplineText(row)}</Tag>
+      <Tag color={row.kind === 'daily' ? 'default' : 'geekblue'}>{kindText(row)}</Tag>
+      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+        {row.therapist_name ?? '—'}
+        {row.is_temporary ? '（临时）' : ''}
+        {row.kind === 'daily' && row.seq_no ? ` · 第 ${row.seq_no} 次` : ''}
+      </Typography.Text>
+      <Tag color={status.color}>{status.text}</Tag>
+    </Space>
   )
 }
 
@@ -105,7 +217,8 @@ function DateSummary() {
     [day, groupBy],
   )
 
-  const totals = data?.totals as TotalsOut | undefined
+  const totals = data?.totals
+  const groups = (data as DateSummaryOut | null)?.groups ?? []
 
   return (
     <>
@@ -134,12 +247,7 @@ function DateSummary() {
         <Button
           type="primary"
           icon={<FilePdfOutlined />}
-          onClick={() =>
-            downloadPdf(
-              summaryApi.printDateUrl(day, groupBy),
-              `按日期汇总-${day}.pdf`,
-            )
-          }
+          onClick={() => downloadPdf(summaryApi.printDateUrl(day, groupBy), `按日期汇总-${day}.pdf`)}
         >
           导出 PDF
         </Button>
@@ -152,64 +260,32 @@ function DateSummary() {
       ) : (
         <>
           {totals ? <TotalsCards totals={totals} /> : null}
+          {totals ? <TherapistCounts counts={totals.therapist_counts} /> : null}
 
-          {totals ? (
-            <Descriptions size="small" column={1} bordered style={{ marginBottom: 16 }}>
-              <FrequencyTags title="主项目频次" counts={totals.main_item_counts} />
-              <FrequencyTags title="子项目频次" counts={totals.sub_item_counts} />
-              <FrequencyTags title="治疗师分布" counts={totals.therapist_counts} />
-            </Descriptions>
-          ) : null}
-
-          {(data?.groups as { key: string; totals: TotalsOut; rows: Record<string, unknown>[] }[] | undefined)
-            ?.length === 0 ? (
+          {groups.length === 0 ? (
             <Card>
-              <Typography.Text type="secondary">当日没有已提交的治疗记录。</Typography.Text>
+              <Empty
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description="当日没有已提交/已锁定的日常记录（首评、复评、出院小结不计入按日期汇总）。"
+              />
             </Card>
           ) : (
-            (data?.groups as { key: string; totals: TotalsOut; rows: Record<string, unknown>[] }[])?.map(
-              (group) => (
-                <Card
-                  key={group.key}
-                  size="small"
-                  title={`${group.key}（${group.totals.record_count} 次 / ${group.totals.total_duration_min} 分钟）`}
-                  style={{ marginBottom: 16 }}
-                >
-                  <Table
-                    rowKey={(r) => String((r as { record_id: number }).record_id)}
-                    size="small"
-                    pagination={false}
-                    dataSource={group.rows}
-                    scroll={{ x: 900 }}
-                    columns={[
-                      {
-                        title: '患者',
-                        key: 'patient',
-                        width: 150,
-                        render: (_: unknown, r: Record<string, unknown>) =>
-                          `${r.patient_name ?? ''}（${r.patient_no ?? ''}）`,
-                      },
-                      {
-                        title: '半日',
-                        dataIndex: 'session_period',
-                        width: 70,
-                        render: (v: string) => (v === 'am' ? '上午' : v === 'pm' ? '下午' : '—'),
-                      },
-                      { title: '主项目', dataIndex: 'main_item_name', width: 160 },
-                      { title: '子项目', dataIndex: 'sub_item_name_snapshot', width: 150 },
-                      { title: '参数', dataIndex: 'params_digest', ellipsis: true },
-                      { title: '患者反应', dataIndex: 'response_digest', width: 140 },
-                      {
-                        title: '时长',
-                        dataIndex: 'duration_min',
-                        width: 80,
-                        render: (v: number) => `${v ?? 0} 分`,
-                      },
-                    ]}
+            groups.map((group) => (
+              <Card
+                key={group.key}
+                size="small"
+                title={`${group.key}（本次计数 ${group.totals.record_count} 次 · ${group.rows.length} 份文书）`}
+                style={{ marginBottom: 16 }}
+              >
+                {group.rows.map((row) => (
+                  <SoapTextBlock
+                    key={row.id}
+                    caption={<RowMeta row={row} showPatient={groupBy !== 'patient'} />}
+                    text={row.rendered_text || '（无正文）'}
                   />
-                </Card>
-              ),
-            )
+                ))}
+              </Card>
+            ))
           )}
         </>
       )}
@@ -217,7 +293,7 @@ function DateSummary() {
   )
 }
 
-/** 按患者汇总 */
+/** 按患者汇总（逐日 SOAP 文本块） */
 function PatientSummary() {
   const [patientNo, setPatientNo] = useState<string | undefined>()
   const [range, setRange] = useState<[Dayjs, Dayjs] | null>(null)
@@ -235,13 +311,12 @@ function PatientSummary() {
             from: range?.[0]?.format('YYYY-MM-DD'),
             to: range?.[1]?.format('YYYY-MM-DD'),
           })
-        : Promise.resolve(null),
+        : Promise.resolve(null as PatientDailySummaryOut | null),
     [patientNo, range?.[0]?.valueOf(), range?.[1]?.valueOf()],
   )
 
-  const totals = (data as { totals?: TotalsOut } | null)?.totals
-  const days =
-    (data as { days?: Record<string, unknown>[] } | null)?.days ?? []
+  const totals = data?.totals
+  const days = data?.days ?? []
 
   return (
     <>
@@ -287,8 +362,7 @@ function PatientSummary() {
           icon={<PrinterOutlined />}
           disabled={!patientNo}
           onClick={() =>
-            patientNo &&
-            downloadPdf(summaryApi.printPatientUrl(patientNo), `患者汇总-${patientNo}.pdf`)
+            patientNo && downloadPdf(summaryApi.printPatientUrl(patientNo), `患者汇总-${patientNo}.pdf`)
           }
         >
           单患者汇总 PDF
@@ -305,61 +379,84 @@ function PatientSummary() {
         <PageSkeleton />
       ) : (
         <>
+          {data?.patient ? (
+            <Descriptions size="small" column={2} bordered style={{ marginBottom: 16 }}>
+              <Descriptions.Item label="患者">
+                {data.patient.name}（{data.patient.inpatient_no}）
+              </Descriptions.Item>
+              <Descriptions.Item label="诊断">{data.patient.diagnosis || '—'}</Descriptions.Item>
+            </Descriptions>
+          ) : null}
+
           {totals ? <TotalsCards totals={totals} /> : null}
-          <Table
-            rowKey="record_date"
-            size="small"
-            dataSource={days}
-            pagination={false}
-            scroll={{ x: 1000 }}
-            columns={[
-              { title: '日期', dataIndex: 'record_date', width: 110 },
-              {
-                title: '半日',
-                dataIndex: 'session_periods',
-                width: 90,
-                render: (v: string[]) =>
-                  (v ?? []).map((p) => (p === 'am' ? '上午' : p === 'pm' ? '下午' : p)).join('、') || '—',
-              },
-              {
-                title: '治疗师',
-                dataIndex: 'therapists',
-                width: 110,
-                render: (v: string[], r: Record<string, unknown>) =>
-                  `${(v ?? []).join('、')}${r.temporary ? '（临时）' : ''}`,
-              },
-              {
-                title: '主项目',
-                dataIndex: 'main_items',
-                width: 170,
-                render: (v: string[]) => (v ?? []).join('、') || '—',
-              },
-              {
-                title: '子项目',
-                dataIndex: 'sub_items',
-                width: 170,
-                render: (v: string[]) => (v ?? []).join('、') || '—',
-              },
-              {
-                title: '参数',
-                dataIndex: 'params',
-                ellipsis: true,
-                render: (v: string[]) => (v ?? []).join('；') || '—',
-              },
-              {
-                title: '患者反应',
-                dataIndex: 'responses',
-                width: 140,
-                render: (v: string[]) => (v ?? []).join('；') || '—',
-              },
-              {
-                title: '时长',
-                dataIndex: 'duration_min',
-                width: 80,
-                render: (v: number) => `${v ?? 0} 分`,
-              },
-            ]}
-          />
+          {totals ? <TherapistCounts counts={totals.therapist_counts} /> : null}
+
+          {days.length === 0 ? (
+            <Card>
+              <Empty
+                image={Empty.PRESENTED_IMAGE_SIMPLE}
+                description="该患者在此区间内没有已提交/已锁定的文书。"
+              />
+            </Card>
+          ) : (
+            days.map((day: PatientDailyRowOut) => {
+              // ⚠ 只含出院小结/首评的那天 record_count 就是 0 —— 预期行为，别写成"无记录"
+              const assessmentCount = day.records.filter((r) => r.kind !== 'daily').length
+              const countHint =
+                day.record_count === 0 && assessmentCount > 0
+                  ? `本次计数 0 次 · 当天只有 ${assessmentCount} 份评估文书（不计治疗次数）`
+                  : `本次计数 ${day.record_count} 次 · ${day.records.length} 份文书`
+              return (
+                <Card
+                  key={day.record_date}
+                  size="small"
+                  title={`${day.record_date}（${countHint}）`}
+                  style={{ marginBottom: 16 }}
+                >
+                  <Space size={4} wrap style={{ marginBottom: 8 }}>
+                    {day.therapists.length > 0 ? (
+                      <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                        治疗师：{day.therapists.join('、')}
+                        {day.temporary ? '（含临时）' : ''}
+                      </Typography.Text>
+                    ) : null}
+                    {day.disciplines.map((d) => (
+                      <Tag key={d}>{d}</Tag>
+                    ))}
+                  </Space>
+
+                  {day.records.map((record) => {
+                    const status = STATUS_LABEL[record.status] ?? {
+                      text: record.status,
+                      color: 'default',
+                    }
+                    return (
+                      <SoapTextBlock
+                        key={record.record_id}
+                        caption={
+                          <Space size={4} wrap>
+                            <Tag>{disciplineText(record)}</Tag>
+                            <Tag color={record.kind === 'daily' ? 'default' : 'geekblue'}>
+                              {kindText(record)}
+                            </Tag>
+                            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                              {record.therapist_name ?? '—'}
+                              {record.is_temporary ? '（临时）' : ''}
+                              {record.kind === 'daily' && record.seq_no
+                                ? ` · 第 ${record.seq_no} 次`
+                                : ''}
+                            </Typography.Text>
+                            <Tag color={status.color}>{status.text}</Tag>
+                          </Space>
+                        }
+                        text={record.rendered_text || '（无正文）'}
+                      />
+                    )
+                  })}
+                </Card>
+              )
+            })
+          )}
         </>
       )}
     </>
@@ -373,7 +470,7 @@ export function SummaryPage() {
     <>
       <PageHeader
         title="汇总与打印"
-        description="统计只计已提交与已锁定的记录（草稿不计入），导出为中文 PDF。"
+        description="只计已提交与已锁定的日常记录（草稿不计；首评/复评/出院小结是独立文书，不计治疗次数）。内容为 SOAP 纯文本，界面与 PDF 同源。"
         extra={
           <Segmented
             value={mode}

@@ -145,260 +145,202 @@ export const patientsApi = {
     api.post<PatientOut>(`/api/v1/patients/${encodeURIComponent(no)}/release`),
   assignments: (no: string) =>
     api.get<AssignmentHistoryOut[]>(`/api/v1/patients/${encodeURIComponent(no)}/assignments`),
+
+  // ------------------------------------------------------------------------- //
+  // 出院流程（2026-10-05 新增）
+  //
+  // 发起人**可以是任何治疗师**（治疗师才是写小结的人），所以 requestDischarge 在
+  // 任何登录身份下都可用；确认与取消是管理员动作，后端用 AdminUser 强制。
+  // ------------------------------------------------------------------------- //
+  /** 发起出院：必须带上该患者**已提交的出院小结**的 record_id（出院 = 小结写完，不是点按钮）。 */
+  requestDischarge: (no: string, record_id: number) =>
+    api.post<PatientOut>(`/api/v1/patients/${encodeURIComponent(no)}/discharge`, { record_id }),
+  /** 确认出院：待出院 → 已出院（管理员）。 */
+  confirmDischarge: (no: string) =>
+    api.post<PatientOut>(`/api/v1/patients/${encodeURIComponent(no)}/discharge/confirm`),
+  /** 取消待出院：待出院 → 在院（管理员，用于患者反悔）。 */
+  cancelDischarge: (no: string) =>
+    api.post<PatientOut>(`/api/v1/patients/${encodeURIComponent(no)}/discharge/cancel`),
 }
 
 // --------------------------------------------------------------------------- //
-// 字典
+// 治疗记录（SOAP 模板驱动）
+//
+// 2026-10-05：记录内容改由 `templates/*.json` **文件**驱动（用户要求
+// 「使用 json 格式保存模板，不进数据库，以便以后我手动修改」），
+// 所以**字典 / 选项集 / 患者反应定义 / 科室模板**这四组接口与页面整体删除 ——
+// 后台不再需要维护字典：字段定义改文件即可，不需要动代码、不需要迁移。
+//
+// 已删除的端点（**不要再调用**，后端已无这些路由，会 404）：
+// `/api/v1/dict/**`、`/api/v1/templates*`、`/api/v1/option-sets*`、
+// `/api/v1/admin/option-sets*`、`/api/v1/response-defs*`。
+//
+// 同时记录本身也变成了「结构化 body + 冻结的 rendered_text」：
+// 列表与详情都直接给 **SOAP 纯文本**，不再有 `items` / `session_period`（半日）/
+// `duration_min` / `patient_response` 这些旧字段。
 // --------------------------------------------------------------------------- //
-export interface ParamDefOut {
-  id: number
-  sub_item_id: number
-  param_key: string
-  param_name: string
-  input_type: 'select' | 'multi_select' | 'number' | 'text'
-  options: string[]
-  default_value?: string | null
-  required: number
-  unit?: string | null
-  sort: number
+
+/** 康复大类（`templates/disciplines.json` 的四项，后端枚举接口也返回同一份）。 */
+export type Discipline = 'PT' | 'OT' | 'ST_SW' | 'ST_SP'
+
+/** 记录形态：首评 / 日常 / 阶段性复评 / 出院小结。只有 daily 计治疗次数。 */
+export type RecordKind = 'initial' | 'daily' | 'reassessment' | 'discharge'
+
+export type RecordStatus = 'draft' | 'submitted' | 'locked'
+
+export interface RecordEnumsOut {
+  statuses: string[]
+  kinds: string[]
+  disciplines: { key: string; name: string; order: number }[]
 }
 
-export interface SubItemOut {
-  id: number
-  main_item_id: number
-  name: string
-  code: string
-  alias?: string | null
-  sort: number
-  status: string
-  params?: ParamDefOut[]
-}
-
-export interface MainItemOut {
-  id: number
-  name: string
-  code: string
-  alias?: string | null
-  sort: number
-  status: string
-  sub_items?: SubItemOut[]
-}
-
-export interface DeleteResultOut {
-  id: number
-  deleted: boolean
-  soft_deleted?: boolean
-  reason?: string | null
-  name?: string | null
-  code?: string | null
-  status?: string | null
-}
-
-export const dictApi = {
-  tree: () => api.get<MainItemOut[]>('/api/v1/dict/tree'),
-  /** 含停用项，供管理端展示完整字典 */
-  mainItems: () => api.get<MainItemOut[]>('/api/v1/dict/main-items'),
-  subItems: (main_item_id?: number) =>
-    api.get<SubItemOut[]>('/api/v1/dict/sub-items', main_item_id ? { main_item_id } : undefined),
-  params: (sub_item_id: number) =>
-    api.get<ParamDefOut[]>(`/api/v1/dict/sub-items/${sub_item_id}/params`),
-
-  createMainItem: (payload: Partial<MainItemOut>) =>
-    api.post<MainItemOut>('/api/v1/dict/main-items', payload),
-  updateMainItem: (id: number, payload: Partial<MainItemOut>) =>
-    api.put<MainItemOut>(`/api/v1/dict/main-items/${id}`, payload),
-  deleteMainItem: (id: number) => api.delete<DeleteResultOut>(`/api/v1/dict/main-items/${id}`),
-
-  createSubItem: (payload: Partial<SubItemOut>) =>
-    api.post<SubItemOut>('/api/v1/dict/sub-items', payload),
-  updateSubItem: (id: number, payload: Partial<SubItemOut>) =>
-    api.put<SubItemOut>(`/api/v1/dict/sub-items/${id}`, payload),
-  deleteSubItem: (id: number) => api.delete<DeleteResultOut>(`/api/v1/dict/sub-items/${id}`),
-
-  createParam: (sub_item_id: number, payload: Record<string, unknown>) =>
-    api.post<ParamDefOut>(`/api/v1/dict/sub-items/${sub_item_id}/params`, payload),
-  updateParam: (id: number, payload: Record<string, unknown>) =>
-    api.put<ParamDefOut>(`/api/v1/dict/params/${id}`, payload),
-  deleteParam: (id: number) => api.delete<DeleteResultOut>(`/api/v1/dict/params/${id}`),
-}
-
-// --------------------------------------------------------------------------- //
-// 选项集
-// --------------------------------------------------------------------------- //
-export interface OptionItemOut {
-  id?: number
-  value: string
-  label: string
-  is_default: number
-  sort: number
-}
-
-export interface OptionSetOut {
-  id: number
-  scope: 'global' | 'dept' | 'personal'
-  owner_user_id?: number | null
-  dept_tag?: string | null
-  code: string
-  name: string
-  alias?: string | null
-  items: OptionItemOut[]
-}
-
-export const optionSetsApi = {
-  all: (scope?: string) => api.get<OptionSetOut[]>('/api/v1/admin/option-sets', scope ? { scope } : undefined),
-  upsert: (payload: {
-    code: string
-    name: string
-    values: string[]
-    dept_tag?: string | null
-    default_values?: string[]
-  }) => api.put<OptionSetOut>('/api/v1/admin/option-sets', payload),
-  remove: (id: number) => api.delete<void>(`/api/v1/admin/option-sets/${id}`),
-  resolve: (code: string) =>
-    api.get<{ code: string; source: string; options: { value: string; label: string }[]; defaults: string[] }>(
-      '/api/v1/option-sets/resolve',
-      { code },
-    ),
-}
-
-// --------------------------------------------------------------------------- //
-// 患者反应定义（只读）
-// --------------------------------------------------------------------------- //
-export interface ResponseDefOut {
-  id: number
-  main_item_id?: number | null
-  code: string
-  label: string
-  value_type: 'tag' | 'number' | 'select' | 'text'
-  value_key?: string | null
-  value_unit?: string | null
-  value_min?: number | null
-  value_max?: number | null
-  options: string[]
-}
-
-export const responseDefsApi = {
-  list: (main_item_id?: number) =>
-    api.get<ResponseDefOut[]>('/api/v1/response-defs', main_item_id ? { main_item_id } : undefined),
-}
-
-// --------------------------------------------------------------------------- //
-// 模板
-// --------------------------------------------------------------------------- //
-export interface TemplateItemOut {
-  id?: number
-  template_id?: number
-  sub_item_id: number
-  params: Record<string, unknown>
-  sort: number
-}
-
-export interface TemplateOut {
-  id: number
-  scope: 'dept' | 'personal'
-  owner_user_id?: number | null
-  main_item_id: number
-  code?: string | null
-  name: string
-  sort: number
-  status: string
-  items: TemplateItemOut[]
-}
-
-export const templatesApi = {
-  list: (main_item_id?: number) =>
-    api.get<TemplateOut[]>('/api/v1/templates', main_item_id ? { main_item_id } : undefined),
-  get: (id: number) => api.get<TemplateOut>(`/api/v1/templates/${id}`),
-  create: (payload: {
-    name: string
-    scope: string
-    main_item_id: number
-    items: { sub_item_id: number; params: Record<string, unknown> }[]
-    sort?: number
-  }) => api.post<TemplateOut>('/api/v1/templates', payload),
-  update: (id: number, payload: Record<string, unknown>) =>
-    api.put<TemplateOut>(`/api/v1/templates/${id}`, payload),
-  remove: (id: number) => api.delete<void>(`/api/v1/templates/${id}`),
-  apply: (id: number) => api.post<Record<string, unknown>>(`/api/v1/templates/${id}/apply`),
-}
-
-// --------------------------------------------------------------------------- //
-// 治疗记录
-// --------------------------------------------------------------------------- //
 export interface RecordListItemOut {
   id: number
   patient_no: string
   patient_name?: string | null
   therapist_id: number
   therapist_name?: string | null
+  /** 推导值：记录人 ≠ 当时的归属治疗师；**不是存储列**。 */
+  is_temporary: number
   record_date: string
-  session_period?: string | null
+  discipline: string
+  discipline_name?: string | null
+  kind: string
+  kind_label?: string | null
+  /** 第几次日常；只有 `daily` 有（评估文书为 null）。 */
   seq_no?: number | null
-  status: 'draft' | 'submitted' | 'locked'
+  /** 评估文书挂靠的日常序号。 */
+  span_seq?: number | null
+  status: RecordStatus | string
   edit_count: number
-  item_count: number
-}
-
-export interface RecordItemOut {
-  id: number
-  main_item_id: number
-  sub_item_id: number
-  sub_item_name_snapshot?: string | null
-  params: Record<string, unknown>
-  params_snapshot?: { param_key: string; param_name: string; value: unknown }[] | null
+  /** 生成时**冻结**的 SOAP 纯文本。 */
+  rendered_text: string
+  /** 列表用的一行摘要（后端截断后的纯文本）。 */
+  rendered_excerpt?: string
 }
 
 export interface RecordOut extends RecordListItemOut {
-  is_temporary: number
-  duration_min?: number | null
-  patient_response?: Record<string, unknown> | null
+  /** `{field_key: value}` 结构化答案（模板字段的原始取值）。 */
+  body: Record<string, unknown>
   note?: string | null
   locked_at?: string | null
+  created_at?: string | null
   submitted_at?: string | null
+  updated_at?: string | null
   revision: number
-  items: RecordItemOut[]
 }
 
 export const recordsApi = {
+  /** 记录列表。`status` 走 `status` 参数；日期区间走 `from` / `to`。 */
   list: (params: PageParams & {
     patient_no?: string
     therapist_id?: number
     status?: string
+    discipline?: string
+    kind?: string
     from?: string
     to?: string
-    scope?: string
+    scope?: 'mine' | 'visible'
   } = {}) => api.get<Page<RecordListItemOut>>('/api/v1/records', params),
   get: (id: number) => api.get<RecordOut>(`/api/v1/records/${id}`),
   lock: (id: number) => api.post<RecordOut>(`/api/v1/records/${id}/lock`),
-  timeline: (params: PageParams & { from?: string; to?: string; scope?: string } = {}) =>
-    api.get<Page<RecordListItemOut & { main_item_names: string[] }>>('/api/v1/timeline', params),
+  submit: (id: number) => api.post<RecordOut>(`/api/v1/records/${id}/submit`),
+  /** 状态 / 形态 / 四大类枚举（界面的下拉项应与后端同源）。 */
+  enums: () => api.get<RecordEnumsOut>('/api/v1/records/enums'),
+  timeline: (params: PageParams & {
+    from?: string
+    to?: string
+    discipline?: string
+    kind?: string
+    scope?: 'mine' | 'visible'
+  } = {}) => api.get<Page<RecordListItemOut>>('/api/v1/timeline', params),
 }
 
 // --------------------------------------------------------------------------- //
 // 汇总与打印
+//
+// 2026-10-05：汇总与打印全部改为 **SOAP 纯文本**口径，不再是表格。
+// - 计数：只算 `kind='daily'` 且 `status IN ('submitted','locked')`
+//   —— 首评 / 复评 / 出院小结是独立文书，**不计治疗次数**；
+// - 内容：`rendered_text`（多日按时间顺序往下排、不分页）。
 // --------------------------------------------------------------------------- //
 export interface TotalsOut {
+  /** 治疗次数：只算日常记录，按记录去重。 */
   record_count: number
-  item_count: number
-  total_duration_min: number
+  /** 涉及患者数（同样只算日常）。 */
   patient_count: number
-  main_item_counts: Record<string, number>
-  sub_item_counts: Record<string, number>
   therapist_counts: Record<string, number>
+  /** 按康复大类（中文名）分布。 */
+  discipline_counts: Record<string, number>
+}
+
+/** 汇总行 = 列表项 + 患者姓名与临时标记（后端 `SummaryRowOut`）。 */
+export interface SummaryRowOut extends RecordListItemOut {
+  record_id: number
+}
+
+export interface DateSummaryOut {
+  date: string
+  group_by: string
+  totals: TotalsOut
+  groups: { key: string; totals: TotalsOut; rows: SummaryRowOut[] }[]
+}
+
+export interface PatientDailyRecordOut {
+  record_id: number
+  discipline: string
+  discipline_name?: string | null
+  kind: string
+  kind_label?: string | null
+  seq_no?: number | null
+  status: string
+  therapist_name?: string | null
+  is_temporary: number
+  note?: string | null
+  rendered_text: string
+}
+
+export interface PatientDailyRowOut {
+  record_date: string
+  /**
+   * 当天的**日常**记录条数（评估文书不计）。
+   * ⚠ 只含出院小结 / 首评的那天会是 `0` —— 这是**预期行为**，不是缺数据。
+   */
+  record_count: number
+  therapists: string[]
+  disciplines: string[]
+  temporary: boolean
+  records: PatientDailyRecordOut[]
+  /** 当天各条文书的 SOAP 纯文本（按时间顺序）。 */
+  texts: string[]
+}
+
+export interface PatientDailySummaryOut {
+  patient: {
+    inpatient_no: string
+    name: string
+    diagnosis?: string | null
+    admin_note?: string | null
+    status?: string | null
+  }
+  date_from?: string | null
+  date_to?: string | null
+  totals: TotalsOut
+  days: PatientDailyRowOut[]
 }
 
 export const summaryApi = {
   byDate: (date: string, group_by = 'therapist') =>
-    api.get<{ date: string; group_by: string; totals: TotalsOut; groups: unknown[] }>(
-      '/api/v1/summary/date',
-      { date, group_by },
-    ),
+    api.get<DateSummaryOut>('/api/v1/summary/date', { date, group_by }),
   byPatient: (no: string, params: { from?: string; to?: string } = {}) =>
-    api.get<Record<string, unknown>>(`/api/v1/summary/patient/${encodeURIComponent(no)}`, params),
+    api.get<PatientDailySummaryOut>(`/api/v1/summary/patient/${encodeURIComponent(no)}`, params),
+  /** 单患者总览：基本信息 + 全部文书（SOAP 文本）+ 统计。 */
   overview: (no: string) =>
-    api.get<{ patient: PatientOut; totals: TotalsOut; records: unknown[] }>(
-      `/api/v1/summary/patient/${encodeURIComponent(no)}/overview`,
-    ),
+    api.get<{
+      patient: PatientDailySummaryOut['patient']
+      totals: TotalsOut
+      records: (PatientDailyRecordOut & { record_no: number; record_date: string })[]
+    }>(`/api/v1/summary/patient/${encodeURIComponent(no)}/overview`),
   /** PDF 走浏览器直接下载（带 Cookie 与 Bearer 由后端各自处理） */
   printPatientUrl: (no: string) => `/api/v1/print/patient/${encodeURIComponent(no)}`,
   printDateUrl: (date: string, group_by = 'therapist') =>
