@@ -4,6 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:rehab_app/core/providers.dart';
 import 'package:rehab_app/features/auth/auth_controller.dart';
 import 'package:rehab_app/features/patients/patients_providers.dart';
+import 'package:rehab_app/features/sync/conflict_providers.dart';
+import 'package:rehab_app/features/sync/conflicts_page.dart';
 
 /// "我的"页签：当前用户、同步状态、退出登录。
 ///
@@ -17,7 +19,9 @@ class SettingsPage extends ConsumerWidget {
     final user = ref.watch(currentUserProvider);
     final services = ref.watch(appServicesProvider).value;
     final pending = ref.watch(pendingCountProvider);
+    final conflicts = ref.watch(conflictCountProvider);
     final lastSync = ref.watch(lastPatientSyncProvider);
+    final conflictCount = conflicts.value ?? 0;
 
     return ListView(
       children: [
@@ -30,6 +34,24 @@ class SettingsPage extends ConsumerWidget {
           ),
         ),
         const Divider(),
+
+        // 冲突放在最上面：它需要治疗师做决定，不能埋在设置里被忽略。
+        ListTile(
+          leading: Icon(
+            conflictCount > 0 ? Icons.report_problem_outlined : Icons.check_circle_outline,
+            color: conflictCount > 0 ? Theme.of(context).colorScheme.error : null,
+          ),
+          title: Text(conflictCount > 0 ? '待处理的冲突（$conflictCount）' : '待处理的冲突'),
+          subtitle: Text(
+            conflictCount > 0
+                ? '有 $conflictCount 条改动没能上传，需要你决定保留哪一版'
+                : '没有冲突',
+          ),
+          trailing: conflictCount > 0 ? const Icon(Icons.chevron_right) : null,
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute<void>(builder: (_) => const ConflictsPage()),
+          ),
+        ),
 
         ListTile(
           leading: const Icon(Icons.dns_outlined),

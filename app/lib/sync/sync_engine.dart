@@ -171,6 +171,92 @@ class SyncEngine {
   }
 
   // ------------------------------------------------------------------------- //
+  // 冲突处理（见 docs/sync-protocol.md §4.4 与 §6）
+  // ------------------------------------------------------------------------- //
+  /// 队列里处于**冲突**状态的条目（按入队时间正序）。
+  Future<List<ChangeQueueData>> conflicts() async {
+    return (_db.select(_db.changeQueue)
+          ..where((t) => t.syncStatus.equals('conflict'))
+          ..orderBy([(t) => OrderingTerm.asc(t.createdAt)]))
+        .get();
+  }
+
+  /// 冲突条数（不查全表，避免每次进页面都读整个队列）。
+  Future<int> conflictCount() async {
+    final rows = await (_db.select(_db.changeQueue)
+          ..where((t) => t.syncStatus.equals('conflict')))
+        .get();
+    return rows.length;
+  }
+
+  /// 观察冲突队列（响应式：裁决后界面自动更新）。
+  Stream<List<ChangeQueueData>> watchConflicts() {
+    return (_db.select(_db.changeQueue)
+          ..where((t) => t.syncStatus.equals('conflict'))
+          ..orderBy([(t) => OrderingTerm.asc(t.createdAt)]))
+        .watch();
+  }
+
+  /// **保留我的版本（第一步）**：清空基线并退回 `pending`，让服务端重新判一次冲突。
+  ///
+  /// 之所以要清空而不是留着旧基线：留着旧基线时，如果服务和旧基线恰好一致，
+  /// 服务端会判"无冲突"并**直接应用**——那就不是"由治疗师确认过才覆盖"了，
+  /// 而是"推着推着悄悄覆盖"。清空后服务端一定返回一次冲突，
+  /// 附带**当前的** `server_revision`，我们再用它做第二步。
+  Future<void> requeueWithoutBase(String clientUuid) async {
+    await (_db.update(_db.changeQueue)
+          ..where((t) => t.clientUuid.equals(clientUuid)))
+        .write(const ChangeQueueCompanion(
+      baseRevision: Value(null),
+      syncStatus: Value('pending'),
+      retryCount: Value(0),
+      lastError: Value(null),
+    ));
+  }
+
+  /// **保留我的版本（第二步）**：把服务端当前 `revision` 作为基线重新排队推送。
+  ///
+  /// 服务端 `resolve_conflict` 的第一条判定是
+  /// `base_revision == server_revision → 无冲突，直接应用`，
+  /// 所以"以我的版本覆盖服务端"不需要任何特殊接口，只要把基线对齐到服务端当前版本。
+  ///
+  /// [serverRevision] 来自冲突响应里的 `server_revision`（协议 §4.4）。
+  Future<void> keepMine(String clientUuid, int serverRevision) async {
+    await (_db.update(_db.changeQueue)
+          ..where((t) => t.clientUuid.equals(clientUuid)))
+        .write(ChangeQueueCompanion(
+      baseRevision: Value(serverRevision),
+      syncStatus: const Value('pending'),
+      // 裁决后这是一次全新的尝试，重试计数清零，否则会被退避策略压住。
+      retryCount: const Value(0),
+      lastError: const Value(null),
+    ));
+  }
+
+  /// **放弃我的版本**：从队列里移除这条变更（本地副本稍后由拉取覆盖或由调用方清理）。
+  ///
+  /// 调用方应在之后立刻做一次 `pullIncremental`，否则本地会留着"没推上去的改动"，
+  /// 与服务端不一致 —— 这也是"采用服务端版本"的实现方式（不逐个实体重取，
+  /// 直接用协议本来就有的拉取机制，比自造重取逻辑可靠）。
+  Future<void> discardMine(String clientUuid) async {
+    await _db.delete(_db.changeQueue)
+        .delete(ChangeQueueCompanion(clientUuid: Value(clientUuid)));
+  }
+
+  /// 批量丢弃（如"全部采用服务端"）。
+  Future<void> discardMany(Iterable<String> clientUuids) async {
+    for (final uuid in clientUuids) {
+      await discardMine(uuid);
+    }
+  }
+
+  /// 推送后重新统计冲突（裁决动作结束后调用，返回最新冲突数）。
+  Future<int> refreshConflicts() async {
+    await pushPending();
+    return conflictCount();
+  }
+
+  // ------------------------------------------------------------------------- //
   // 推送
   // ------------------------------------------------------------------------- //
   /// 把队列里待推送的变更分批推给服务端。
