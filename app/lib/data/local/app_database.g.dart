@@ -698,745 +698,6 @@ class PatientsCompanion extends UpdateCompanion<Patient> {
   }
 }
 
-class $AppointmentsTable extends Appointments
-    with TableInfo<$AppointmentsTable, Appointment> {
-  @override
-  final GeneratedDatabase attachedDatabase;
-  final String? _alias;
-  $AppointmentsTable(this.attachedDatabase, [this._alias]);
-  static const VerificationMeta _idMeta = const VerificationMeta('id');
-  @override
-  late final GeneratedColumn<int> id = GeneratedColumn<int>(
-    'id',
-    aliasedName,
-    false,
-    type: DriftSqlType.int,
-    requiredDuringInsert: false,
-  );
-  static const VerificationMeta _patientNoMeta = const VerificationMeta(
-    'patientNo',
-  );
-  @override
-  late final GeneratedColumn<String> patientNo = GeneratedColumn<String>(
-    'patient_no',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
-  static const VerificationMeta _therapistIdMeta = const VerificationMeta(
-    'therapistId',
-  );
-  @override
-  late final GeneratedColumn<int> therapistId = GeneratedColumn<int>(
-    'therapist_id',
-    aliasedName,
-    false,
-    type: DriftSqlType.int,
-    requiredDuringInsert: true,
-  );
-  static const VerificationMeta _dateMeta = const VerificationMeta('date');
-  @override
-  late final GeneratedColumn<String> date = GeneratedColumn<String>(
-    'date',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
-  static const VerificationMeta _periodMeta = const VerificationMeta('period');
-  @override
-  late final GeneratedColumn<String> period = GeneratedColumn<String>(
-    'period',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
-  static const VerificationMeta _startTimeMeta = const VerificationMeta(
-    'startTime',
-  );
-  @override
-  late final GeneratedColumn<String> startTime = GeneratedColumn<String>(
-    'start_time',
-    aliasedName,
-    true,
-    type: DriftSqlType.string,
-    requiredDuringInsert: false,
-  );
-  static const VerificationMeta _endTimeMeta = const VerificationMeta(
-    'endTime',
-  );
-  @override
-  late final GeneratedColumn<String> endTime = GeneratedColumn<String>(
-    'end_time',
-    aliasedName,
-    true,
-    type: DriftSqlType.string,
-    requiredDuringInsert: false,
-  );
-  static const VerificationMeta _slotLabelMeta = const VerificationMeta(
-    'slotLabel',
-  );
-  @override
-  late final GeneratedColumn<String> slotLabel = GeneratedColumn<String>(
-    'slot_label',
-    aliasedName,
-    true,
-    type: DriftSqlType.string,
-    requiredDuringInsert: false,
-  );
-  static const VerificationMeta _statusMeta = const VerificationMeta('status');
-  @override
-  late final GeneratedColumn<String> status = GeneratedColumn<String>(
-    'status',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: false,
-    defaultValue: const Constant('planned'),
-  );
-  static const VerificationMeta _noteMeta = const VerificationMeta('note');
-  @override
-  late final GeneratedColumn<String> note = GeneratedColumn<String>(
-    'note',
-    aliasedName,
-    true,
-    type: DriftSqlType.string,
-    requiredDuringInsert: false,
-  );
-  static const VerificationMeta _revisionMeta = const VerificationMeta(
-    'revision',
-  );
-  @override
-  late final GeneratedColumn<int> revision = GeneratedColumn<int>(
-    'revision',
-    aliasedName,
-    false,
-    type: DriftSqlType.int,
-    requiredDuringInsert: false,
-    defaultValue: const Constant(0),
-  );
-  static const VerificationMeta _clientUuidMeta = const VerificationMeta(
-    'clientUuid',
-  );
-  @override
-  late final GeneratedColumn<String> clientUuid = GeneratedColumn<String>(
-    'client_uuid',
-    aliasedName,
-    true,
-    type: DriftSqlType.string,
-    requiredDuringInsert: false,
-  );
-  static const VerificationMeta _syncStatusMeta = const VerificationMeta(
-    'syncStatus',
-  );
-  @override
-  late final GeneratedColumn<String> syncStatus = GeneratedColumn<String>(
-    'sync_status',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: false,
-    defaultValue: const Constant('synced'),
-  );
-  @override
-  List<GeneratedColumn> get $columns => [
-    id,
-    patientNo,
-    therapistId,
-    date,
-    period,
-    startTime,
-    endTime,
-    slotLabel,
-    status,
-    note,
-    revision,
-    clientUuid,
-    syncStatus,
-  ];
-  @override
-  String get aliasedName => _alias ?? actualTableName;
-  @override
-  String get actualTableName => $name;
-  static const String $name = 'appointments';
-  @override
-  VerificationContext validateIntegrity(
-    Insertable<Appointment> instance, {
-    bool isInserting = false,
-  }) {
-    final context = VerificationContext();
-    final data = instance.toColumns(true);
-    if (data.containsKey('id')) {
-      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
-    }
-    if (data.containsKey('patient_no')) {
-      context.handle(
-        _patientNoMeta,
-        patientNo.isAcceptableOrUnknown(data['patient_no']!, _patientNoMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_patientNoMeta);
-    }
-    if (data.containsKey('therapist_id')) {
-      context.handle(
-        _therapistIdMeta,
-        therapistId.isAcceptableOrUnknown(
-          data['therapist_id']!,
-          _therapistIdMeta,
-        ),
-      );
-    } else if (isInserting) {
-      context.missing(_therapistIdMeta);
-    }
-    if (data.containsKey('date')) {
-      context.handle(
-        _dateMeta,
-        date.isAcceptableOrUnknown(data['date']!, _dateMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_dateMeta);
-    }
-    if (data.containsKey('period')) {
-      context.handle(
-        _periodMeta,
-        period.isAcceptableOrUnknown(data['period']!, _periodMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_periodMeta);
-    }
-    if (data.containsKey('start_time')) {
-      context.handle(
-        _startTimeMeta,
-        startTime.isAcceptableOrUnknown(data['start_time']!, _startTimeMeta),
-      );
-    }
-    if (data.containsKey('end_time')) {
-      context.handle(
-        _endTimeMeta,
-        endTime.isAcceptableOrUnknown(data['end_time']!, _endTimeMeta),
-      );
-    }
-    if (data.containsKey('slot_label')) {
-      context.handle(
-        _slotLabelMeta,
-        slotLabel.isAcceptableOrUnknown(data['slot_label']!, _slotLabelMeta),
-      );
-    }
-    if (data.containsKey('status')) {
-      context.handle(
-        _statusMeta,
-        status.isAcceptableOrUnknown(data['status']!, _statusMeta),
-      );
-    }
-    if (data.containsKey('note')) {
-      context.handle(
-        _noteMeta,
-        note.isAcceptableOrUnknown(data['note']!, _noteMeta),
-      );
-    }
-    if (data.containsKey('revision')) {
-      context.handle(
-        _revisionMeta,
-        revision.isAcceptableOrUnknown(data['revision']!, _revisionMeta),
-      );
-    }
-    if (data.containsKey('client_uuid')) {
-      context.handle(
-        _clientUuidMeta,
-        clientUuid.isAcceptableOrUnknown(data['client_uuid']!, _clientUuidMeta),
-      );
-    }
-    if (data.containsKey('sync_status')) {
-      context.handle(
-        _syncStatusMeta,
-        syncStatus.isAcceptableOrUnknown(data['sync_status']!, _syncStatusMeta),
-      );
-    }
-    return context;
-  }
-
-  @override
-  Set<GeneratedColumn> get $primaryKey => {id};
-  @override
-  Appointment map(Map<String, dynamic> data, {String? tablePrefix}) {
-    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
-    return Appointment(
-      id: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
-        data['${effectivePrefix}id'],
-      )!,
-      patientNo: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}patient_no'],
-      )!,
-      therapistId: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
-        data['${effectivePrefix}therapist_id'],
-      )!,
-      date: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}date'],
-      )!,
-      period: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}period'],
-      )!,
-      startTime: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}start_time'],
-      ),
-      endTime: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}end_time'],
-      ),
-      slotLabel: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}slot_label'],
-      ),
-      status: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}status'],
-      )!,
-      note: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}note'],
-      ),
-      revision: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
-        data['${effectivePrefix}revision'],
-      )!,
-      clientUuid: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}client_uuid'],
-      ),
-      syncStatus: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}sync_status'],
-      )!,
-    );
-  }
-
-  @override
-  $AppointmentsTable createAlias(String alias) {
-    return $AppointmentsTable(attachedDatabase, alias);
-  }
-}
-
-class Appointment extends DataClass implements Insertable<Appointment> {
-  /// 服务端 `appointment.id`；本地新建时先用负数占位，推送成功后用返回值回写。
-  final int id;
-  final String patientNo;
-  final int therapistId;
-  final String date;
-  final String period;
-  final String? startTime;
-  final String? endTime;
-  final String? slotLabel;
-  final String status;
-  final String? note;
-  final int revision;
-  final String? clientUuid;
-
-  /// `local` / `pending` / `synced` / `conflict`（协议 §6）。
-  final String syncStatus;
-  const Appointment({
-    required this.id,
-    required this.patientNo,
-    required this.therapistId,
-    required this.date,
-    required this.period,
-    this.startTime,
-    this.endTime,
-    this.slotLabel,
-    required this.status,
-    this.note,
-    required this.revision,
-    this.clientUuid,
-    required this.syncStatus,
-  });
-  @override
-  Map<String, Expression> toColumns(bool nullToAbsent) {
-    final map = <String, Expression>{};
-    map['id'] = Variable<int>(id);
-    map['patient_no'] = Variable<String>(patientNo);
-    map['therapist_id'] = Variable<int>(therapistId);
-    map['date'] = Variable<String>(date);
-    map['period'] = Variable<String>(period);
-    if (!nullToAbsent || startTime != null) {
-      map['start_time'] = Variable<String>(startTime);
-    }
-    if (!nullToAbsent || endTime != null) {
-      map['end_time'] = Variable<String>(endTime);
-    }
-    if (!nullToAbsent || slotLabel != null) {
-      map['slot_label'] = Variable<String>(slotLabel);
-    }
-    map['status'] = Variable<String>(status);
-    if (!nullToAbsent || note != null) {
-      map['note'] = Variable<String>(note);
-    }
-    map['revision'] = Variable<int>(revision);
-    if (!nullToAbsent || clientUuid != null) {
-      map['client_uuid'] = Variable<String>(clientUuid);
-    }
-    map['sync_status'] = Variable<String>(syncStatus);
-    return map;
-  }
-
-  AppointmentsCompanion toCompanion(bool nullToAbsent) {
-    return AppointmentsCompanion(
-      id: Value(id),
-      patientNo: Value(patientNo),
-      therapistId: Value(therapistId),
-      date: Value(date),
-      period: Value(period),
-      startTime: startTime == null && nullToAbsent
-          ? const Value.absent()
-          : Value(startTime),
-      endTime: endTime == null && nullToAbsent
-          ? const Value.absent()
-          : Value(endTime),
-      slotLabel: slotLabel == null && nullToAbsent
-          ? const Value.absent()
-          : Value(slotLabel),
-      status: Value(status),
-      note: note == null && nullToAbsent ? const Value.absent() : Value(note),
-      revision: Value(revision),
-      clientUuid: clientUuid == null && nullToAbsent
-          ? const Value.absent()
-          : Value(clientUuid),
-      syncStatus: Value(syncStatus),
-    );
-  }
-
-  factory Appointment.fromJson(
-    Map<String, dynamic> json, {
-    ValueSerializer? serializer,
-  }) {
-    serializer ??= driftRuntimeOptions.defaultSerializer;
-    return Appointment(
-      id: serializer.fromJson<int>(json['id']),
-      patientNo: serializer.fromJson<String>(json['patientNo']),
-      therapistId: serializer.fromJson<int>(json['therapistId']),
-      date: serializer.fromJson<String>(json['date']),
-      period: serializer.fromJson<String>(json['period']),
-      startTime: serializer.fromJson<String?>(json['startTime']),
-      endTime: serializer.fromJson<String?>(json['endTime']),
-      slotLabel: serializer.fromJson<String?>(json['slotLabel']),
-      status: serializer.fromJson<String>(json['status']),
-      note: serializer.fromJson<String?>(json['note']),
-      revision: serializer.fromJson<int>(json['revision']),
-      clientUuid: serializer.fromJson<String?>(json['clientUuid']),
-      syncStatus: serializer.fromJson<String>(json['syncStatus']),
-    );
-  }
-  @override
-  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
-    serializer ??= driftRuntimeOptions.defaultSerializer;
-    return <String, dynamic>{
-      'id': serializer.toJson<int>(id),
-      'patientNo': serializer.toJson<String>(patientNo),
-      'therapistId': serializer.toJson<int>(therapistId),
-      'date': serializer.toJson<String>(date),
-      'period': serializer.toJson<String>(period),
-      'startTime': serializer.toJson<String?>(startTime),
-      'endTime': serializer.toJson<String?>(endTime),
-      'slotLabel': serializer.toJson<String?>(slotLabel),
-      'status': serializer.toJson<String>(status),
-      'note': serializer.toJson<String?>(note),
-      'revision': serializer.toJson<int>(revision),
-      'clientUuid': serializer.toJson<String?>(clientUuid),
-      'syncStatus': serializer.toJson<String>(syncStatus),
-    };
-  }
-
-  Appointment copyWith({
-    int? id,
-    String? patientNo,
-    int? therapistId,
-    String? date,
-    String? period,
-    Value<String?> startTime = const Value.absent(),
-    Value<String?> endTime = const Value.absent(),
-    Value<String?> slotLabel = const Value.absent(),
-    String? status,
-    Value<String?> note = const Value.absent(),
-    int? revision,
-    Value<String?> clientUuid = const Value.absent(),
-    String? syncStatus,
-  }) => Appointment(
-    id: id ?? this.id,
-    patientNo: patientNo ?? this.patientNo,
-    therapistId: therapistId ?? this.therapistId,
-    date: date ?? this.date,
-    period: period ?? this.period,
-    startTime: startTime.present ? startTime.value : this.startTime,
-    endTime: endTime.present ? endTime.value : this.endTime,
-    slotLabel: slotLabel.present ? slotLabel.value : this.slotLabel,
-    status: status ?? this.status,
-    note: note.present ? note.value : this.note,
-    revision: revision ?? this.revision,
-    clientUuid: clientUuid.present ? clientUuid.value : this.clientUuid,
-    syncStatus: syncStatus ?? this.syncStatus,
-  );
-  Appointment copyWithCompanion(AppointmentsCompanion data) {
-    return Appointment(
-      id: data.id.present ? data.id.value : this.id,
-      patientNo: data.patientNo.present ? data.patientNo.value : this.patientNo,
-      therapistId: data.therapistId.present
-          ? data.therapistId.value
-          : this.therapistId,
-      date: data.date.present ? data.date.value : this.date,
-      period: data.period.present ? data.period.value : this.period,
-      startTime: data.startTime.present ? data.startTime.value : this.startTime,
-      endTime: data.endTime.present ? data.endTime.value : this.endTime,
-      slotLabel: data.slotLabel.present ? data.slotLabel.value : this.slotLabel,
-      status: data.status.present ? data.status.value : this.status,
-      note: data.note.present ? data.note.value : this.note,
-      revision: data.revision.present ? data.revision.value : this.revision,
-      clientUuid: data.clientUuid.present
-          ? data.clientUuid.value
-          : this.clientUuid,
-      syncStatus: data.syncStatus.present
-          ? data.syncStatus.value
-          : this.syncStatus,
-    );
-  }
-
-  @override
-  String toString() {
-    return (StringBuffer('Appointment(')
-          ..write('id: $id, ')
-          ..write('patientNo: $patientNo, ')
-          ..write('therapistId: $therapistId, ')
-          ..write('date: $date, ')
-          ..write('period: $period, ')
-          ..write('startTime: $startTime, ')
-          ..write('endTime: $endTime, ')
-          ..write('slotLabel: $slotLabel, ')
-          ..write('status: $status, ')
-          ..write('note: $note, ')
-          ..write('revision: $revision, ')
-          ..write('clientUuid: $clientUuid, ')
-          ..write('syncStatus: $syncStatus')
-          ..write(')'))
-        .toString();
-  }
-
-  @override
-  int get hashCode => Object.hash(
-    id,
-    patientNo,
-    therapistId,
-    date,
-    period,
-    startTime,
-    endTime,
-    slotLabel,
-    status,
-    note,
-    revision,
-    clientUuid,
-    syncStatus,
-  );
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      (other is Appointment &&
-          other.id == this.id &&
-          other.patientNo == this.patientNo &&
-          other.therapistId == this.therapistId &&
-          other.date == this.date &&
-          other.period == this.period &&
-          other.startTime == this.startTime &&
-          other.endTime == this.endTime &&
-          other.slotLabel == this.slotLabel &&
-          other.status == this.status &&
-          other.note == this.note &&
-          other.revision == this.revision &&
-          other.clientUuid == this.clientUuid &&
-          other.syncStatus == this.syncStatus);
-}
-
-class AppointmentsCompanion extends UpdateCompanion<Appointment> {
-  final Value<int> id;
-  final Value<String> patientNo;
-  final Value<int> therapistId;
-  final Value<String> date;
-  final Value<String> period;
-  final Value<String?> startTime;
-  final Value<String?> endTime;
-  final Value<String?> slotLabel;
-  final Value<String> status;
-  final Value<String?> note;
-  final Value<int> revision;
-  final Value<String?> clientUuid;
-  final Value<String> syncStatus;
-  const AppointmentsCompanion({
-    this.id = const Value.absent(),
-    this.patientNo = const Value.absent(),
-    this.therapistId = const Value.absent(),
-    this.date = const Value.absent(),
-    this.period = const Value.absent(),
-    this.startTime = const Value.absent(),
-    this.endTime = const Value.absent(),
-    this.slotLabel = const Value.absent(),
-    this.status = const Value.absent(),
-    this.note = const Value.absent(),
-    this.revision = const Value.absent(),
-    this.clientUuid = const Value.absent(),
-    this.syncStatus = const Value.absent(),
-  });
-  AppointmentsCompanion.insert({
-    this.id = const Value.absent(),
-    required String patientNo,
-    required int therapistId,
-    required String date,
-    required String period,
-    this.startTime = const Value.absent(),
-    this.endTime = const Value.absent(),
-    this.slotLabel = const Value.absent(),
-    this.status = const Value.absent(),
-    this.note = const Value.absent(),
-    this.revision = const Value.absent(),
-    this.clientUuid = const Value.absent(),
-    this.syncStatus = const Value.absent(),
-  }) : patientNo = Value(patientNo),
-       therapistId = Value(therapistId),
-       date = Value(date),
-       period = Value(period);
-  static Insertable<Appointment> custom({
-    Expression<int>? id,
-    Expression<String>? patientNo,
-    Expression<int>? therapistId,
-    Expression<String>? date,
-    Expression<String>? period,
-    Expression<String>? startTime,
-    Expression<String>? endTime,
-    Expression<String>? slotLabel,
-    Expression<String>? status,
-    Expression<String>? note,
-    Expression<int>? revision,
-    Expression<String>? clientUuid,
-    Expression<String>? syncStatus,
-  }) {
-    return RawValuesInsertable({
-      if (id != null) 'id': id,
-      if (patientNo != null) 'patient_no': patientNo,
-      if (therapistId != null) 'therapist_id': therapistId,
-      if (date != null) 'date': date,
-      if (period != null) 'period': period,
-      if (startTime != null) 'start_time': startTime,
-      if (endTime != null) 'end_time': endTime,
-      if (slotLabel != null) 'slot_label': slotLabel,
-      if (status != null) 'status': status,
-      if (note != null) 'note': note,
-      if (revision != null) 'revision': revision,
-      if (clientUuid != null) 'client_uuid': clientUuid,
-      if (syncStatus != null) 'sync_status': syncStatus,
-    });
-  }
-
-  AppointmentsCompanion copyWith({
-    Value<int>? id,
-    Value<String>? patientNo,
-    Value<int>? therapistId,
-    Value<String>? date,
-    Value<String>? period,
-    Value<String?>? startTime,
-    Value<String?>? endTime,
-    Value<String?>? slotLabel,
-    Value<String>? status,
-    Value<String?>? note,
-    Value<int>? revision,
-    Value<String?>? clientUuid,
-    Value<String>? syncStatus,
-  }) {
-    return AppointmentsCompanion(
-      id: id ?? this.id,
-      patientNo: patientNo ?? this.patientNo,
-      therapistId: therapistId ?? this.therapistId,
-      date: date ?? this.date,
-      period: period ?? this.period,
-      startTime: startTime ?? this.startTime,
-      endTime: endTime ?? this.endTime,
-      slotLabel: slotLabel ?? this.slotLabel,
-      status: status ?? this.status,
-      note: note ?? this.note,
-      revision: revision ?? this.revision,
-      clientUuid: clientUuid ?? this.clientUuid,
-      syncStatus: syncStatus ?? this.syncStatus,
-    );
-  }
-
-  @override
-  Map<String, Expression> toColumns(bool nullToAbsent) {
-    final map = <String, Expression>{};
-    if (id.present) {
-      map['id'] = Variable<int>(id.value);
-    }
-    if (patientNo.present) {
-      map['patient_no'] = Variable<String>(patientNo.value);
-    }
-    if (therapistId.present) {
-      map['therapist_id'] = Variable<int>(therapistId.value);
-    }
-    if (date.present) {
-      map['date'] = Variable<String>(date.value);
-    }
-    if (period.present) {
-      map['period'] = Variable<String>(period.value);
-    }
-    if (startTime.present) {
-      map['start_time'] = Variable<String>(startTime.value);
-    }
-    if (endTime.present) {
-      map['end_time'] = Variable<String>(endTime.value);
-    }
-    if (slotLabel.present) {
-      map['slot_label'] = Variable<String>(slotLabel.value);
-    }
-    if (status.present) {
-      map['status'] = Variable<String>(status.value);
-    }
-    if (note.present) {
-      map['note'] = Variable<String>(note.value);
-    }
-    if (revision.present) {
-      map['revision'] = Variable<int>(revision.value);
-    }
-    if (clientUuid.present) {
-      map['client_uuid'] = Variable<String>(clientUuid.value);
-    }
-    if (syncStatus.present) {
-      map['sync_status'] = Variable<String>(syncStatus.value);
-    }
-    return map;
-  }
-
-  @override
-  String toString() {
-    return (StringBuffer('AppointmentsCompanion(')
-          ..write('id: $id, ')
-          ..write('patientNo: $patientNo, ')
-          ..write('therapistId: $therapistId, ')
-          ..write('date: $date, ')
-          ..write('period: $period, ')
-          ..write('startTime: $startTime, ')
-          ..write('endTime: $endTime, ')
-          ..write('slotLabel: $slotLabel, ')
-          ..write('status: $status, ')
-          ..write('note: $note, ')
-          ..write('revision: $revision, ')
-          ..write('clientUuid: $clientUuid, ')
-          ..write('syncStatus: $syncStatus')
-          ..write(')'))
-        .toString();
-  }
-}
-
 class $TreatmentRecordsTable extends TreatmentRecords
     with TableInfo<$TreatmentRecordsTable, TreatmentRecord> {
   @override
@@ -1570,17 +831,6 @@ class $TreatmentRecordsTable extends TreatmentRecords
     requiredDuringInsert: false,
     defaultValue: const Constant(0),
   );
-  static const VerificationMeta _appointmentIdMeta = const VerificationMeta(
-    'appointmentId',
-  );
-  @override
-  late final GeneratedColumn<int> appointmentId = GeneratedColumn<int>(
-    'appointment_id',
-    aliasedName,
-    true,
-    type: DriftSqlType.int,
-    requiredDuringInsert: false,
-  );
   static const VerificationMeta _isTemporaryMeta = const VerificationMeta(
     'isTemporary',
   );
@@ -1654,7 +904,6 @@ class $TreatmentRecordsTable extends TreatmentRecords
     seqNo,
     editCount,
     revision,
-    appointmentId,
     isTemporary,
     originalTherapistId,
     clientUuid,
@@ -1760,15 +1009,6 @@ class $TreatmentRecordsTable extends TreatmentRecords
         revision.isAcceptableOrUnknown(data['revision']!, _revisionMeta),
       );
     }
-    if (data.containsKey('appointment_id')) {
-      context.handle(
-        _appointmentIdMeta,
-        appointmentId.isAcceptableOrUnknown(
-          data['appointment_id']!,
-          _appointmentIdMeta,
-        ),
-      );
-    }
     if (data.containsKey('is_temporary')) {
       context.handle(
         _isTemporaryMeta,
@@ -1865,10 +1105,6 @@ class $TreatmentRecordsTable extends TreatmentRecords
         DriftSqlType.int,
         data['${effectivePrefix}revision'],
       )!,
-      appointmentId: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
-        data['${effectivePrefix}appointment_id'],
-      ),
       isTemporary: attachedDatabase.typeMapping.read(
         DriftSqlType.bool,
         data['${effectivePrefix}is_temporary'],
@@ -1916,7 +1152,6 @@ class TreatmentRecord extends DataClass implements Insertable<TreatmentRecord> {
   final int? seqNo;
   final int editCount;
   final int revision;
-  final int? appointmentId;
 
   /// 2026-10-03 起"全科白板"，实测这两个字段恒为 false/NULL（协议 §10）。
   /// 保留只为与服务端字段一一对应，**不要**再用它做 UI 判断。
@@ -1945,7 +1180,6 @@ class TreatmentRecord extends DataClass implements Insertable<TreatmentRecord> {
     this.seqNo,
     required this.editCount,
     required this.revision,
-    this.appointmentId,
     required this.isTemporary,
     this.originalTherapistId,
     this.clientUuid,
@@ -1977,9 +1211,6 @@ class TreatmentRecord extends DataClass implements Insertable<TreatmentRecord> {
     }
     map['edit_count'] = Variable<int>(editCount);
     map['revision'] = Variable<int>(revision);
-    if (!nullToAbsent || appointmentId != null) {
-      map['appointment_id'] = Variable<int>(appointmentId);
-    }
     map['is_temporary'] = Variable<bool>(isTemporary);
     if (!nullToAbsent || originalTherapistId != null) {
       map['original_therapist_id'] = Variable<int>(originalTherapistId);
@@ -2016,9 +1247,6 @@ class TreatmentRecord extends DataClass implements Insertable<TreatmentRecord> {
           : Value(seqNo),
       editCount: Value(editCount),
       revision: Value(revision),
-      appointmentId: appointmentId == null && nullToAbsent
-          ? const Value.absent()
-          : Value(appointmentId),
       isTemporary: Value(isTemporary),
       originalTherapistId: originalTherapistId == null && nullToAbsent
           ? const Value.absent()
@@ -2053,7 +1281,6 @@ class TreatmentRecord extends DataClass implements Insertable<TreatmentRecord> {
       seqNo: serializer.fromJson<int?>(json['seqNo']),
       editCount: serializer.fromJson<int>(json['editCount']),
       revision: serializer.fromJson<int>(json['revision']),
-      appointmentId: serializer.fromJson<int?>(json['appointmentId']),
       isTemporary: serializer.fromJson<bool>(json['isTemporary']),
       originalTherapistId: serializer.fromJson<int?>(
         json['originalTherapistId'],
@@ -2079,7 +1306,6 @@ class TreatmentRecord extends DataClass implements Insertable<TreatmentRecord> {
       'seqNo': serializer.toJson<int?>(seqNo),
       'editCount': serializer.toJson<int>(editCount),
       'revision': serializer.toJson<int>(revision),
-      'appointmentId': serializer.toJson<int?>(appointmentId),
       'isTemporary': serializer.toJson<bool>(isTemporary),
       'originalTherapistId': serializer.toJson<int?>(originalTherapistId),
       'clientUuid': serializer.toJson<String?>(clientUuid),
@@ -2101,7 +1327,6 @@ class TreatmentRecord extends DataClass implements Insertable<TreatmentRecord> {
     Value<int?> seqNo = const Value.absent(),
     int? editCount,
     int? revision,
-    Value<int?> appointmentId = const Value.absent(),
     bool? isTemporary,
     Value<int?> originalTherapistId = const Value.absent(),
     Value<String?> clientUuid = const Value.absent(),
@@ -2124,9 +1349,6 @@ class TreatmentRecord extends DataClass implements Insertable<TreatmentRecord> {
     seqNo: seqNo.present ? seqNo.value : this.seqNo,
     editCount: editCount ?? this.editCount,
     revision: revision ?? this.revision,
-    appointmentId: appointmentId.present
-        ? appointmentId.value
-        : this.appointmentId,
     isTemporary: isTemporary ?? this.isTemporary,
     originalTherapistId: originalTherapistId.present
         ? originalTherapistId.value
@@ -2161,9 +1383,6 @@ class TreatmentRecord extends DataClass implements Insertable<TreatmentRecord> {
       seqNo: data.seqNo.present ? data.seqNo.value : this.seqNo,
       editCount: data.editCount.present ? data.editCount.value : this.editCount,
       revision: data.revision.present ? data.revision.value : this.revision,
-      appointmentId: data.appointmentId.present
-          ? data.appointmentId.value
-          : this.appointmentId,
       isTemporary: data.isTemporary.present
           ? data.isTemporary.value
           : this.isTemporary,
@@ -2197,7 +1416,6 @@ class TreatmentRecord extends DataClass implements Insertable<TreatmentRecord> {
           ..write('seqNo: $seqNo, ')
           ..write('editCount: $editCount, ')
           ..write('revision: $revision, ')
-          ..write('appointmentId: $appointmentId, ')
           ..write('isTemporary: $isTemporary, ')
           ..write('originalTherapistId: $originalTherapistId, ')
           ..write('clientUuid: $clientUuid, ')
@@ -2221,7 +1439,6 @@ class TreatmentRecord extends DataClass implements Insertable<TreatmentRecord> {
     seqNo,
     editCount,
     revision,
-    appointmentId,
     isTemporary,
     originalTherapistId,
     clientUuid,
@@ -2244,7 +1461,6 @@ class TreatmentRecord extends DataClass implements Insertable<TreatmentRecord> {
           other.seqNo == this.seqNo &&
           other.editCount == this.editCount &&
           other.revision == this.revision &&
-          other.appointmentId == this.appointmentId &&
           other.isTemporary == this.isTemporary &&
           other.originalTherapistId == this.originalTherapistId &&
           other.clientUuid == this.clientUuid &&
@@ -2265,7 +1481,6 @@ class TreatmentRecordsCompanion extends UpdateCompanion<TreatmentRecord> {
   final Value<int?> seqNo;
   final Value<int> editCount;
   final Value<int> revision;
-  final Value<int?> appointmentId;
   final Value<bool> isTemporary;
   final Value<int?> originalTherapistId;
   final Value<String?> clientUuid;
@@ -2284,7 +1499,6 @@ class TreatmentRecordsCompanion extends UpdateCompanion<TreatmentRecord> {
     this.seqNo = const Value.absent(),
     this.editCount = const Value.absent(),
     this.revision = const Value.absent(),
-    this.appointmentId = const Value.absent(),
     this.isTemporary = const Value.absent(),
     this.originalTherapistId = const Value.absent(),
     this.clientUuid = const Value.absent(),
@@ -2304,7 +1518,6 @@ class TreatmentRecordsCompanion extends UpdateCompanion<TreatmentRecord> {
     this.seqNo = const Value.absent(),
     this.editCount = const Value.absent(),
     this.revision = const Value.absent(),
-    this.appointmentId = const Value.absent(),
     this.isTemporary = const Value.absent(),
     this.originalTherapistId = const Value.absent(),
     this.clientUuid = const Value.absent(),
@@ -2326,7 +1539,6 @@ class TreatmentRecordsCompanion extends UpdateCompanion<TreatmentRecord> {
     Expression<int>? seqNo,
     Expression<int>? editCount,
     Expression<int>? revision,
-    Expression<int>? appointmentId,
     Expression<bool>? isTemporary,
     Expression<int>? originalTherapistId,
     Expression<String>? clientUuid,
@@ -2347,7 +1559,6 @@ class TreatmentRecordsCompanion extends UpdateCompanion<TreatmentRecord> {
       if (seqNo != null) 'seq_no': seqNo,
       if (editCount != null) 'edit_count': editCount,
       if (revision != null) 'revision': revision,
-      if (appointmentId != null) 'appointment_id': appointmentId,
       if (isTemporary != null) 'is_temporary': isTemporary,
       if (originalTherapistId != null)
         'original_therapist_id': originalTherapistId,
@@ -2370,7 +1581,6 @@ class TreatmentRecordsCompanion extends UpdateCompanion<TreatmentRecord> {
     Value<int?>? seqNo,
     Value<int>? editCount,
     Value<int>? revision,
-    Value<int?>? appointmentId,
     Value<bool>? isTemporary,
     Value<int?>? originalTherapistId,
     Value<String?>? clientUuid,
@@ -2390,7 +1600,6 @@ class TreatmentRecordsCompanion extends UpdateCompanion<TreatmentRecord> {
       seqNo: seqNo ?? this.seqNo,
       editCount: editCount ?? this.editCount,
       revision: revision ?? this.revision,
-      appointmentId: appointmentId ?? this.appointmentId,
       isTemporary: isTemporary ?? this.isTemporary,
       originalTherapistId: originalTherapistId ?? this.originalTherapistId,
       clientUuid: clientUuid ?? this.clientUuid,
@@ -2440,9 +1649,6 @@ class TreatmentRecordsCompanion extends UpdateCompanion<TreatmentRecord> {
     if (revision.present) {
       map['revision'] = Variable<int>(revision.value);
     }
-    if (appointmentId.present) {
-      map['appointment_id'] = Variable<int>(appointmentId.value);
-    }
     if (isTemporary.present) {
       map['is_temporary'] = Variable<bool>(isTemporary.value);
     }
@@ -2476,7 +1682,6 @@ class TreatmentRecordsCompanion extends UpdateCompanion<TreatmentRecord> {
           ..write('seqNo: $seqNo, ')
           ..write('editCount: $editCount, ')
           ..write('revision: $revision, ')
-          ..write('appointmentId: $appointmentId, ')
           ..write('isTemporary: $isTemporary, ')
           ..write('originalTherapistId: $originalTherapistId, ')
           ..write('clientUuid: $clientUuid, ')
@@ -4121,7 +3326,6 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   _$AppDatabase(QueryExecutor e) : super(e);
   $AppDatabaseManager get managers => $AppDatabaseManager(this);
   late final $PatientsTable patients = $PatientsTable(this);
-  late final $AppointmentsTable appointments = $AppointmentsTable(this);
   late final $TreatmentRecordsTable treatmentRecords = $TreatmentRecordsTable(
     this,
   );
@@ -4135,7 +3339,6 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   @override
   List<DatabaseSchemaEntity> get allSchemaEntities => [
     patients,
-    appointments,
     treatmentRecords,
     recordItems,
     changeQueue,
@@ -4467,367 +3670,6 @@ typedef $$PatientsTableProcessedTableManager =
       Patient,
       PrefetchHooks Function()
     >;
-typedef $$AppointmentsTableCreateCompanionBuilder =
-    AppointmentsCompanion Function({
-      Value<int> id,
-      required String patientNo,
-      required int therapistId,
-      required String date,
-      required String period,
-      Value<String?> startTime,
-      Value<String?> endTime,
-      Value<String?> slotLabel,
-      Value<String> status,
-      Value<String?> note,
-      Value<int> revision,
-      Value<String?> clientUuid,
-      Value<String> syncStatus,
-    });
-typedef $$AppointmentsTableUpdateCompanionBuilder =
-    AppointmentsCompanion Function({
-      Value<int> id,
-      Value<String> patientNo,
-      Value<int> therapistId,
-      Value<String> date,
-      Value<String> period,
-      Value<String?> startTime,
-      Value<String?> endTime,
-      Value<String?> slotLabel,
-      Value<String> status,
-      Value<String?> note,
-      Value<int> revision,
-      Value<String?> clientUuid,
-      Value<String> syncStatus,
-    });
-
-class $$AppointmentsTableFilterComposer
-    extends Composer<_$AppDatabase, $AppointmentsTable> {
-  $$AppointmentsTableFilterComposer({
-    required super.$db,
-    required super.$table,
-    super.joinBuilder,
-    super.$addJoinBuilderToRootComposer,
-    super.$removeJoinBuilderFromRootComposer,
-  });
-  ColumnFilters<int> get id => $composableBuilder(
-    column: $table.id,
-    builder: (column) => ColumnFilters(column),
-  );
-
-  ColumnFilters<String> get patientNo => $composableBuilder(
-    column: $table.patientNo,
-    builder: (column) => ColumnFilters(column),
-  );
-
-  ColumnFilters<int> get therapistId => $composableBuilder(
-    column: $table.therapistId,
-    builder: (column) => ColumnFilters(column),
-  );
-
-  ColumnFilters<String> get date => $composableBuilder(
-    column: $table.date,
-    builder: (column) => ColumnFilters(column),
-  );
-
-  ColumnFilters<String> get period => $composableBuilder(
-    column: $table.period,
-    builder: (column) => ColumnFilters(column),
-  );
-
-  ColumnFilters<String> get startTime => $composableBuilder(
-    column: $table.startTime,
-    builder: (column) => ColumnFilters(column),
-  );
-
-  ColumnFilters<String> get endTime => $composableBuilder(
-    column: $table.endTime,
-    builder: (column) => ColumnFilters(column),
-  );
-
-  ColumnFilters<String> get slotLabel => $composableBuilder(
-    column: $table.slotLabel,
-    builder: (column) => ColumnFilters(column),
-  );
-
-  ColumnFilters<String> get status => $composableBuilder(
-    column: $table.status,
-    builder: (column) => ColumnFilters(column),
-  );
-
-  ColumnFilters<String> get note => $composableBuilder(
-    column: $table.note,
-    builder: (column) => ColumnFilters(column),
-  );
-
-  ColumnFilters<int> get revision => $composableBuilder(
-    column: $table.revision,
-    builder: (column) => ColumnFilters(column),
-  );
-
-  ColumnFilters<String> get clientUuid => $composableBuilder(
-    column: $table.clientUuid,
-    builder: (column) => ColumnFilters(column),
-  );
-
-  ColumnFilters<String> get syncStatus => $composableBuilder(
-    column: $table.syncStatus,
-    builder: (column) => ColumnFilters(column),
-  );
-}
-
-class $$AppointmentsTableOrderingComposer
-    extends Composer<_$AppDatabase, $AppointmentsTable> {
-  $$AppointmentsTableOrderingComposer({
-    required super.$db,
-    required super.$table,
-    super.joinBuilder,
-    super.$addJoinBuilderToRootComposer,
-    super.$removeJoinBuilderFromRootComposer,
-  });
-  ColumnOrderings<int> get id => $composableBuilder(
-    column: $table.id,
-    builder: (column) => ColumnOrderings(column),
-  );
-
-  ColumnOrderings<String> get patientNo => $composableBuilder(
-    column: $table.patientNo,
-    builder: (column) => ColumnOrderings(column),
-  );
-
-  ColumnOrderings<int> get therapistId => $composableBuilder(
-    column: $table.therapistId,
-    builder: (column) => ColumnOrderings(column),
-  );
-
-  ColumnOrderings<String> get date => $composableBuilder(
-    column: $table.date,
-    builder: (column) => ColumnOrderings(column),
-  );
-
-  ColumnOrderings<String> get period => $composableBuilder(
-    column: $table.period,
-    builder: (column) => ColumnOrderings(column),
-  );
-
-  ColumnOrderings<String> get startTime => $composableBuilder(
-    column: $table.startTime,
-    builder: (column) => ColumnOrderings(column),
-  );
-
-  ColumnOrderings<String> get endTime => $composableBuilder(
-    column: $table.endTime,
-    builder: (column) => ColumnOrderings(column),
-  );
-
-  ColumnOrderings<String> get slotLabel => $composableBuilder(
-    column: $table.slotLabel,
-    builder: (column) => ColumnOrderings(column),
-  );
-
-  ColumnOrderings<String> get status => $composableBuilder(
-    column: $table.status,
-    builder: (column) => ColumnOrderings(column),
-  );
-
-  ColumnOrderings<String> get note => $composableBuilder(
-    column: $table.note,
-    builder: (column) => ColumnOrderings(column),
-  );
-
-  ColumnOrderings<int> get revision => $composableBuilder(
-    column: $table.revision,
-    builder: (column) => ColumnOrderings(column),
-  );
-
-  ColumnOrderings<String> get clientUuid => $composableBuilder(
-    column: $table.clientUuid,
-    builder: (column) => ColumnOrderings(column),
-  );
-
-  ColumnOrderings<String> get syncStatus => $composableBuilder(
-    column: $table.syncStatus,
-    builder: (column) => ColumnOrderings(column),
-  );
-}
-
-class $$AppointmentsTableAnnotationComposer
-    extends Composer<_$AppDatabase, $AppointmentsTable> {
-  $$AppointmentsTableAnnotationComposer({
-    required super.$db,
-    required super.$table,
-    super.joinBuilder,
-    super.$addJoinBuilderToRootComposer,
-    super.$removeJoinBuilderFromRootComposer,
-  });
-  GeneratedColumn<int> get id =>
-      $composableBuilder(column: $table.id, builder: (column) => column);
-
-  GeneratedColumn<String> get patientNo =>
-      $composableBuilder(column: $table.patientNo, builder: (column) => column);
-
-  GeneratedColumn<int> get therapistId => $composableBuilder(
-    column: $table.therapistId,
-    builder: (column) => column,
-  );
-
-  GeneratedColumn<String> get date =>
-      $composableBuilder(column: $table.date, builder: (column) => column);
-
-  GeneratedColumn<String> get period =>
-      $composableBuilder(column: $table.period, builder: (column) => column);
-
-  GeneratedColumn<String> get startTime =>
-      $composableBuilder(column: $table.startTime, builder: (column) => column);
-
-  GeneratedColumn<String> get endTime =>
-      $composableBuilder(column: $table.endTime, builder: (column) => column);
-
-  GeneratedColumn<String> get slotLabel =>
-      $composableBuilder(column: $table.slotLabel, builder: (column) => column);
-
-  GeneratedColumn<String> get status =>
-      $composableBuilder(column: $table.status, builder: (column) => column);
-
-  GeneratedColumn<String> get note =>
-      $composableBuilder(column: $table.note, builder: (column) => column);
-
-  GeneratedColumn<int> get revision =>
-      $composableBuilder(column: $table.revision, builder: (column) => column);
-
-  GeneratedColumn<String> get clientUuid => $composableBuilder(
-    column: $table.clientUuid,
-    builder: (column) => column,
-  );
-
-  GeneratedColumn<String> get syncStatus => $composableBuilder(
-    column: $table.syncStatus,
-    builder: (column) => column,
-  );
-}
-
-class $$AppointmentsTableTableManager
-    extends
-        RootTableManager<
-          _$AppDatabase,
-          $AppointmentsTable,
-          Appointment,
-          $$AppointmentsTableFilterComposer,
-          $$AppointmentsTableOrderingComposer,
-          $$AppointmentsTableAnnotationComposer,
-          $$AppointmentsTableCreateCompanionBuilder,
-          $$AppointmentsTableUpdateCompanionBuilder,
-          (
-            Appointment,
-            BaseReferences<_$AppDatabase, $AppointmentsTable, Appointment>,
-          ),
-          Appointment,
-          PrefetchHooks Function()
-        > {
-  $$AppointmentsTableTableManager(_$AppDatabase db, $AppointmentsTable table)
-    : super(
-        TableManagerState(
-          db: db,
-          table: table,
-          createFilteringComposer: () =>
-              $$AppointmentsTableFilterComposer($db: db, $table: table),
-          createOrderingComposer: () =>
-              $$AppointmentsTableOrderingComposer($db: db, $table: table),
-          createComputedFieldComposer: () =>
-              $$AppointmentsTableAnnotationComposer($db: db, $table: table),
-          updateCompanionCallback:
-              ({
-                Value<int> id = const Value.absent(),
-                Value<String> patientNo = const Value.absent(),
-                Value<int> therapistId = const Value.absent(),
-                Value<String> date = const Value.absent(),
-                Value<String> period = const Value.absent(),
-                Value<String?> startTime = const Value.absent(),
-                Value<String?> endTime = const Value.absent(),
-                Value<String?> slotLabel = const Value.absent(),
-                Value<String> status = const Value.absent(),
-                Value<String?> note = const Value.absent(),
-                Value<int> revision = const Value.absent(),
-                Value<String?> clientUuid = const Value.absent(),
-                Value<String> syncStatus = const Value.absent(),
-              }) => AppointmentsCompanion(
-                id: id,
-                patientNo: patientNo,
-                therapistId: therapistId,
-                date: date,
-                period: period,
-                startTime: startTime,
-                endTime: endTime,
-                slotLabel: slotLabel,
-                status: status,
-                note: note,
-                revision: revision,
-                clientUuid: clientUuid,
-                syncStatus: syncStatus,
-              ),
-          createCompanionCallback:
-              ({
-                Value<int> id = const Value.absent(),
-                required String patientNo,
-                required int therapistId,
-                required String date,
-                required String period,
-                Value<String?> startTime = const Value.absent(),
-                Value<String?> endTime = const Value.absent(),
-                Value<String?> slotLabel = const Value.absent(),
-                Value<String> status = const Value.absent(),
-                Value<String?> note = const Value.absent(),
-                Value<int> revision = const Value.absent(),
-                Value<String?> clientUuid = const Value.absent(),
-                Value<String> syncStatus = const Value.absent(),
-              }) => AppointmentsCompanion.insert(
-                id: id,
-                patientNo: patientNo,
-                therapistId: therapistId,
-                date: date,
-                period: period,
-                startTime: startTime,
-                endTime: endTime,
-                slotLabel: slotLabel,
-                status: status,
-                note: note,
-                revision: revision,
-                clientUuid: clientUuid,
-                syncStatus: syncStatus,
-              ),
-          withReferenceMapper: (p0) => p0
-              .map(
-                (e) => (
-                  e.readTable<$AppointmentsTable, Appointment>(table),
-                  BaseReferences<
-                    _$AppDatabase,
-                    $AppointmentsTable,
-                    Appointment
-                  >(db, table, e),
-                ),
-              )
-              .toList(),
-          prefetchHooksCallback: null,
-        ),
-      );
-}
-
-typedef $$AppointmentsTableProcessedTableManager =
-    ProcessedTableManager<
-      _$AppDatabase,
-      $AppointmentsTable,
-      Appointment,
-      $$AppointmentsTableFilterComposer,
-      $$AppointmentsTableOrderingComposer,
-      $$AppointmentsTableAnnotationComposer,
-      $$AppointmentsTableCreateCompanionBuilder,
-      $$AppointmentsTableUpdateCompanionBuilder,
-      (
-        Appointment,
-        BaseReferences<_$AppDatabase, $AppointmentsTable, Appointment>,
-      ),
-      Appointment,
-      PrefetchHooks Function()
-    >;
 typedef $$TreatmentRecordsTableCreateCompanionBuilder =
     TreatmentRecordsCompanion Function({
       Value<int> id,
@@ -4842,7 +3684,6 @@ typedef $$TreatmentRecordsTableCreateCompanionBuilder =
       Value<int?> seqNo,
       Value<int> editCount,
       Value<int> revision,
-      Value<int?> appointmentId,
       Value<bool> isTemporary,
       Value<int?> originalTherapistId,
       Value<String?> clientUuid,
@@ -4863,7 +3704,6 @@ typedef $$TreatmentRecordsTableUpdateCompanionBuilder =
       Value<int?> seqNo,
       Value<int> editCount,
       Value<int> revision,
-      Value<int?> appointmentId,
       Value<bool> isTemporary,
       Value<int?> originalTherapistId,
       Value<String?> clientUuid,
@@ -4937,11 +3777,6 @@ class $$TreatmentRecordsTableFilterComposer
 
   ColumnFilters<int> get revision => $composableBuilder(
     column: $table.revision,
-    builder: (column) => ColumnFilters(column),
-  );
-
-  ColumnFilters<int> get appointmentId => $composableBuilder(
-    column: $table.appointmentId,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -5040,11 +3875,6 @@ class $$TreatmentRecordsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
-  ColumnOrderings<int> get appointmentId => $composableBuilder(
-    column: $table.appointmentId,
-    builder: (column) => ColumnOrderings(column),
-  );
-
   ColumnOrderings<bool> get isTemporary => $composableBuilder(
     column: $table.isTemporary,
     builder: (column) => ColumnOrderings(column),
@@ -5126,11 +3956,6 @@ class $$TreatmentRecordsTableAnnotationComposer
   GeneratedColumn<int> get revision =>
       $composableBuilder(column: $table.revision, builder: (column) => column);
 
-  GeneratedColumn<int> get appointmentId => $composableBuilder(
-    column: $table.appointmentId,
-    builder: (column) => column,
-  );
-
   GeneratedColumn<bool> get isTemporary => $composableBuilder(
     column: $table.isTemporary,
     builder: (column) => column,
@@ -5206,7 +4031,6 @@ class $$TreatmentRecordsTableTableManager
                 Value<int?> seqNo = const Value.absent(),
                 Value<int> editCount = const Value.absent(),
                 Value<int> revision = const Value.absent(),
-                Value<int?> appointmentId = const Value.absent(),
                 Value<bool> isTemporary = const Value.absent(),
                 Value<int?> originalTherapistId = const Value.absent(),
                 Value<String?> clientUuid = const Value.absent(),
@@ -5225,7 +4049,6 @@ class $$TreatmentRecordsTableTableManager
                 seqNo: seqNo,
                 editCount: editCount,
                 revision: revision,
-                appointmentId: appointmentId,
                 isTemporary: isTemporary,
                 originalTherapistId: originalTherapistId,
                 clientUuid: clientUuid,
@@ -5246,7 +4069,6 @@ class $$TreatmentRecordsTableTableManager
                 Value<int?> seqNo = const Value.absent(),
                 Value<int> editCount = const Value.absent(),
                 Value<int> revision = const Value.absent(),
-                Value<int?> appointmentId = const Value.absent(),
                 Value<bool> isTemporary = const Value.absent(),
                 Value<int?> originalTherapistId = const Value.absent(),
                 Value<String?> clientUuid = const Value.absent(),
@@ -5265,7 +4087,6 @@ class $$TreatmentRecordsTableTableManager
                 seqNo: seqNo,
                 editCount: editCount,
                 revision: revision,
-                appointmentId: appointmentId,
                 isTemporary: isTemporary,
                 originalTherapistId: originalTherapistId,
                 clientUuid: clientUuid,
@@ -6205,8 +5026,6 @@ class $AppDatabaseManager {
   $AppDatabaseManager(this._db);
   $$PatientsTableTableManager get patients =>
       $$PatientsTableTableManager(_db, _db.patients);
-  $$AppointmentsTableTableManager get appointments =>
-      $$AppointmentsTableTableManager(_db, _db.appointments);
   $$TreatmentRecordsTableTableManager get treatmentRecords =>
       $$TreatmentRecordsTableTableManager(_db, _db.treatmentRecords);
   $$RecordItemsTableTableManager get recordItems =>

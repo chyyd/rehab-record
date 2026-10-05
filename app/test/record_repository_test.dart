@@ -311,7 +311,6 @@ void main() {
         therapistId: 2,
         recordDate: '2027-03-01',
         sessionPeriod: 'am',
-        appointmentId: null,
         durationMin: 30,
         note: '首次',
         response: PatientResponseDraft(tags: {'无不适'}, items: {'pain': 2}),
@@ -350,7 +349,6 @@ void main() {
         therapistId: 2,
         recordDate: '2027-03-01',
         sessionPeriod: null,
-        appointmentId: null,
         durationMin: null,
         note: null,
         response: PatientResponseDraft(),
@@ -377,7 +375,6 @@ void main() {
         therapistId: 2,
         recordDate: '2027-03-01',
         sessionPeriod: null,
-        appointmentId: null,
         durationMin: null,
         note: null,
         response: PatientResponseDraft(),
@@ -395,14 +392,14 @@ void main() {
       final id = await repo.saveDraft(
         existingId: null,
         patientNo: 'ZY001', therapistId: 2, recordDate: '2027-03-01',
-        sessionPeriod: null, appointmentId: null, durationMin: null, note: 'v1',
+        sessionPeriod: null, durationMin: null, note: 'v1',
         response: PatientResponseDraft(), items: const [], status: 'draft',
       );
 
       await repo.saveDraft(
         existingId: id,
         patientNo: 'ZY001', therapistId: 2, recordDate: '2027-03-01',
-        sessionPeriod: null, appointmentId: null, durationMin: 45, note: 'v2',
+        sessionPeriod: null, durationMin: 45, note: 'v2',
         response: PatientResponseDraft(), items: const [], status: 'draft',
       );
 
@@ -427,7 +424,7 @@ void main() {
       await repo.saveDraft(
         existingId: null,
         patientNo: 'ZY001', therapistId: 2, recordDate: '2027-03-01',
-        sessionPeriod: null, appointmentId: null, durationMin: null, note: null,
+        sessionPeriod: null, durationMin: null, note: null,
         response: PatientResponseDraft(), items: const [], status: 'draft',
       );
       await pumpEventQueue();
@@ -503,7 +500,7 @@ void main() {
       await repo.saveDraft(
         existingId: null,
         patientNo: 'ZY001', therapistId: 2, recordDate: '2027-03-01',
-        sessionPeriod: 'am', appointmentId: null, durationMin: null, note: null,
+        sessionPeriod: 'am', durationMin: null, note: null,
         response: PatientResponseDraft(), items: const [], status: 'draft',
       );
       expect(await repo.countForDay(patientNo: 'ZY001', recordDate: '2027-03-01'), 1);

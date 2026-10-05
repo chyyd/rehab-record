@@ -1,100 +1,32 @@
-"""请假（M08/M09）、患者反应（M04）、记录留痕（M11）与选项集（M03）。"""
+"""临时指派（M09）、患者反应（M04）、记录留痕（M11）与选项集（M03）。
+
+> 2026-10-05：请假（`leave_record`）随排期功能整体下线被删除 ——
+> 本文件原本的 `TestLeaveRecord` 整组用例随之删除（被测的表已经不存在了）。
+> **临时指派保留**：它是归属解析的一部分（`v_patient_visibility` 依赖它），
+> 与请假无关，见 `app/models/temporary_assignment.py`。
+"""
 
 from __future__ import annotations
 
 import sqlite3
 import unittest
-from datetime import date
+from datetime import date, datetime
 
+from app.core.clock import period_expiry
 from app.core.config import WorkTimeConfig
-from app.core.worktime import period_end_datetime
 from tests.support import DbTestCase
 
 
-class TestLeaveRecord(DbTestCase):
-    """Q6：无审批流，登记即生效。"""
-
-    def setUp(self) -> None:
-        super().setUp()
-        self.migrate()
-        self.t1 = self.add_user("T001", "张三")
-        self.admin = self.add_user("A001", "管理员", role="admin")
-
-    def _insert_leave(self, **kw: object) -> int:
-        payload = {
-            "therapist_id": self.t1,
-            "start_date": "2026-10-05",
-            "end_date": "2026-10-05",
-            "leave_type": "half_day_am",
-            "period": "am",
-            "source": "therapist_self",
-            "created_by": self.t1,
-            "applied_at": "2026-10-05T06:00:00+08:00",
-        }
-        payload.update(kw)
-        cols = ", ".join(payload)
-        marks = ", ".join("?" for _ in payload)
-        cur = self.conn.execute(f"INSERT INTO leave_record ({cols}) VALUES ({marks})", tuple(payload.values()))
-        return int(cur.lastrowid)
-
-    def test_default_status_is_active_without_approval(self) -> None:
-        """没有 pending 状态：登记即为 active。"""
-        leave_id = self._insert_leave()
-        row = self.conn.execute("SELECT status, source FROM leave_record WHERE id = ?", (leave_id,)).fetchone()
-        self.assertEqual(row["status"], "active")
-        self.assertEqual(row["source"], "therapist_self")
-
-    def test_admin_entry_source(self) -> None:
-        leave_id = self._insert_leave(source="admin_entry", created_by=self.admin)
-        row = self.conn.execute("SELECT source, created_by FROM leave_record WHERE id = ?", (leave_id,)).fetchone()
-        self.assertEqual(row["source"], "admin_entry")
-        self.assertEqual(row["created_by"], self.admin)
-
-    def test_leave_type_enum_enforced(self) -> None:
-        with self.assertRaises(sqlite3.IntegrityError):
-            self._insert_leave(leave_type="vacation")
-
-    def test_end_date_must_not_precede_start(self) -> None:
-        with self.assertRaises(sqlite3.IntegrityError):
-            self._insert_leave(start_date="2026-10-06", end_date="2026-10-05", leave_type="multi_day")
-
-    def test_multi_day_leave(self) -> None:
-        leave_id = self._insert_leave(
-            start_date="2026-10-05", end_date="2026-10-09", leave_type="multi_day", period=None
-        )
-        row = self.conn.execute(
-            "SELECT leave_type, period, status FROM leave_record WHERE id = ?", (leave_id,)
-        ).fetchone()
-        self.assertEqual(row["leave_type"], "multi_day")
-        self.assertIsNone(row["period"])
-
-    def test_updated_at_only_changes_on_state_change(self) -> None:
-        """后台定时扫描不应把 updated_at 刷成噪声，同步端靠它判断真实变更。
-
-        时间戳精度是毫秒，所以两次操作之间要跨过毫秒边界；休眠 5ms 足以稳定跨越。
-        """
-        import time
-
-        leave_id = self._insert_leave()
-        before = self.conn.execute("SELECT updated_at FROM leave_record WHERE id = ?", (leave_id,)).fetchone()[0]
-        # 只改原因，不改状态 → 不应刷新 updated_at
-        time.sleep(0.005)
-        self.conn.execute("UPDATE leave_record SET reason = '复诊' WHERE id = ?", (leave_id,))
-        unchanged = self.conn.execute("SELECT updated_at FROM leave_record WHERE id = ?", (leave_id,)).fetchone()[0]
-        self.assertEqual(before, unchanged, "只改非状态字段不应刷新 updated_at")
-        # 取消 → 必须刷新
-        time.sleep(0.005)
-        self.conn.execute(
-            "UPDATE leave_record SET status = 'cancelled', cancelled_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')"
-            " WHERE id = ?",
-            (leave_id,),
-        )
-        changed = self.conn.execute("SELECT updated_at FROM leave_record WHERE id = ?", (leave_id,)).fetchone()[0]
-        self.assertNotEqual(before, changed, "状态变化必须刷新 updated_at")
-
-
 class TestTemporaryAssignment(DbTestCase):
-    """M09：单日假临时释放/临时认领，原归属不变。"""
+    """M09：临时释放 / 临时认领，原归属不变。
+
+    2026-10-05 起临时指派不再由"单日假"自动产生（见 `app/models/temporary_assignment.py`），
+    但它仍是**归属解析**的依据，所以状态机与到期时点继续有测试盯着。
+    """
+
+    # 远未来的日期：`expires_at` 是否已过期会参与 SQL 比较（`v_patient_visibility`），
+    # 写死"今天"会让用例随运行时刻时红时绿。
+    TEMP_DAY = date(2099, 1, 5)
 
     def setUp(self) -> None:
         super().setUp()
@@ -104,12 +36,18 @@ class TestTemporaryAssignment(DbTestCase):
         self.p1 = self.add_patient("ZY001", "王五", therapist_id=self.original)
 
     def _open_temp(self, temporary_therapist_id: int | None, period: str = "am") -> int:
-        expires = period_end_datetime(date(2026, 10, 5), period, WorkTimeConfig()).isoformat(sep=" ")
+        # 必须用**库格式**的到期时点（UTC + 毫秒 + Z，见 core/clock.py）：
+        # 写成 '2099-01-05 11:30:00' 这种本地墙钟字符串会因为 ' ' < 'T'
+        # 被 SQL 字符串比较判定成"已过期"，fixture 就不再代表一条有效的临时指派。
+        expires = period_expiry(self.TEMP_DAY, period, WorkTimeConfig())
         cur = self.conn.execute(
             "INSERT INTO temporary_assignment"
             " (patient_no, original_therapist_id, temporary_therapist_id, date, period, expires_at)"
-            " VALUES (?, ?, ?, '2026-10-05', ?, ?)",
-            (self.p1, self.original, temporary_therapist_id, period, expires),
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                self.p1, self.original, temporary_therapist_id,
+                self.TEMP_DAY.isoformat(), period, expires,
+            ),
         )
         return int(cur.lastrowid)
 
@@ -140,11 +78,19 @@ class TestTemporaryAssignment(DbTestCase):
             self._open_temp(self.cover)
 
     def test_expiry_uses_q11_boundary(self) -> None:
+        """下午假的到期时点是**当地** 17:30（Q11）；存库时统一转成 UTC。
+
+        注意不能直接断言字符串里有 "17:30"：库里存的是 UTC 时间戳
+        （+08:00 下 17:30 会存成 09:30Z），所以这里转回本地时区再比时刻。
+        """
         temp_id = self._open_temp(None, "pm")
         expires = self.conn.execute(
             "SELECT expires_at FROM temporary_assignment WHERE id = ?", (temp_id,)
         ).fetchone()[0]
-        self.assertIn("17:30", expires, "下午假的到期时点应为 17:30（Q11）")
+        self.assertRegex(expires, r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$", expires)
+        local = datetime.fromisoformat(expires.replace("Z", "+00:00")).astimezone()
+        self.assertEqual(local.strftime("%H:%M"), "17:30", "下午假的到期时点应为当地 17:30（Q11）")
+        self.assertEqual(local.date(), self.TEMP_DAY)
 
     def test_closing_frees_the_slot(self) -> None:
         temp_id = self._open_temp(None)

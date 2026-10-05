@@ -1,7 +1,9 @@
 # 环境搭建与运行（setup）
 
-**当前状态**：阶段 0–5 后端已交付并全部验证（**554 个测试通过、0 skip**；端到端 190 项、
-跨文档一致性 156 项、浏览器 UI 验收 66 项）。
+**当前状态**：阶段 0–5 后端、管理后台与安卓 App 均已交付并验证（**469 个测试通过、0 skip**；
+端到端 182 项、跨文档一致性由 `check_docs_consistency.py` 自报、浏览器 UI 验收 60 项）。
+**排期、休息块、请假三项功能已于 2026-10-05 整体下线**（科室确认排班不是本系统的职责），
+`appointment`/`rest_block`/`leave_record` 三张表已由迁移 008 删除。
 
 ---
 
@@ -26,7 +28,7 @@ DSH 自带的 `dsh-primary-runtime` Python 3.12 **不要用** —— 那个环�
 | 包 | 用途 | 未装时的兜底 |
 |---|---|---|
 | `argon2-cffi` 25.1.0 | 密码哈希 | 标准库 `hashlib.scrypt` / `pbkdf2_hmac` |
-| `APScheduler` 3.11.3 | 请假到期恢复、每日备份 | 标准库 `threading.Timer` 或系统计划任务 |
+| `APScheduler` 3.11.3 | 临时指派到期清理、每日备份（也可用系统计划任务） | 标准库 `threading.Timer` 或系统计划任务 |
 
 需要重装或换机器时：
 
@@ -43,9 +45,9 @@ cd backend
 $py = "C:\Users\youda\AppData\Local\Programs\Python\Python313\python.exe"
 
 & $py -m app.cli init      # 建库 + 迁移到最新 + 健康检查
-& $py -m app.cli seed      # 导入全部种子（字典/反应定义/选项集，幂等）
+& $py -m app.cli seed      # 导入全部种子（字典/反应定义/选项集/四大高频模板，幂等）
 & $py -m app.cli health    # 健康检查（JSON）
-& $py -m app.cli periods   # 半日制作息与请假到期时点（Q11）
+& $py -m app.cli periods   # 半日制作息（Q11：决定记录的 session_period 与临时指派到期时点）
 & $py -m app.cli tables    # 列出表与行数
 ```
 
@@ -61,15 +63,22 @@ $py = "C:\Users\youda\AppData\Local\Programs\Python\Python313\python.exe"
 
 ```powershell
 cd backend
-& $py -m unittest discover -s tests -t . -v      # 554 个测试
+& $py -m unittest discover -s tests -t . -v      # 469 个测试
 & $py scripts\verify_http.py                     # 阶段 0 HTTP 端到端（14 项）
 & $py scripts\verify_stage1.py                   # 阶段 1 认证与患者（25 项）
-& $py scripts\verify_stage2.py                   # 阶段 2 排期与请假（29 项）
+& $py scripts\verify_stage2.py                   # 患者列表排序：我最近一次已提交治疗（22 项）
 & $py scripts\verify_stage3.py                   # 阶段 3 字典与治疗记录（35 项）
-& $py scripts\verify_stage4.py                   # 阶段 4 离线与同步（29 项）
+& $py scripts\verify_stage4.py                   # 阶段 4 离线与同步（28 项）
 & $py scripts\verify_stage5.py                   # 阶段 5 汇总打印、后台与模板种子（58 项）
-& $py scripts\check_docs_consistency.py          # 跨文档一致性（156 项）
+& $py scripts\count_verify_checks.py             # 复核上面 6 个脚本的项数（合计 182 项）
+& $py scripts\check_docs_consistency.py          # 跨文档一致性
 ```
+
+> **数字怎么来的**：`scripts/count_verify_checks.py` 用 AST 数"运行时会执行的 `check()` 次数"
+> （字面量循环会展开，如 `verify_stage2.py` 里一次核对 3 个已下线的接口路径）。
+> `check_docs_consistency.py` 会拿这份结果去核对本节的数字，改了脚本却忘了改文档就会失败。
+> 注意 `verify_stage2.py` 已**重写**为"患者列表排序"验收（原排期/请假断言随功能下线作废），
+> 所以项数由 29 降到 22；`verify_stage4.py` 去掉了 1 条排期幂等断言（29 → 28）。
 
 ---
 
@@ -117,11 +126,12 @@ cd backend
 
 ---
 
-## 5. 后续（阶段 1+）
+## 5. 后续
 
 系统 Python 3.13 已具备 FastAPI / SQLAlchemy / Alembic / PyJWT / reportlab / pypdf，
-阶段 0–5 后端与管理后台 Web 均已交付并验证完毕。**剩余未开工的只有安卓 App**
-（Flutter 环境尚未安装），见 `README.md` 进度表与 `开发计划.md` 末尾的下一步。
+阶段 0–5 后端、管理后台 Web 与安卓 App 均已交付并验证完毕。
+**排期、休息块、请假已整体下线**（2026-10-05），当前没有排期相关待办，
+见 `README.md` 进度表与 `开发计划.md` 末尾的下一步。
 
 **不建议**为本项目另建 venv：当前系统 Python 已装好全部所需包，另建 venv 需要重新下载安装，
 反而引入不必要的失败点。如果后续要隔离，再迁到 venv 也不影响仓库内容。

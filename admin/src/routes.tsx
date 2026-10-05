@@ -11,8 +11,6 @@ import { DictPage } from './pages/DictPage'
 import { OptionSetsPage } from './pages/OptionSetsPage'
 import { ResponseDefsPage } from './pages/ResponseDefsPage'
 import { TemplatesPage } from './pages/TemplatesPage'
-import { LeavePage } from './pages/LeavePage'
-import { SchedulePage } from './pages/SchedulePage'
 import { RecordsPage } from './pages/RecordsPage'
 import { SummaryPage } from './pages/SummaryPage'
 import { AuditLogsPage } from './pages/AuditLogsPage'
@@ -67,10 +65,8 @@ export function AppRoutes() {
       >
         <Route index element={<DashboardPage />} />
         <Route path="patients" element={<PatientsPage />} />
-        <Route path="schedule" element={<SchedulePage />} />
         <Route path="records" element={<RecordsPage />} />
         <Route path="summary" element={<SummaryPage />} />
-        <Route path="leave" element={<LeavePage />} />
         <Route
           path="users"
           element={

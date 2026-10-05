@@ -19,7 +19,9 @@
 
 > 注意区分两个层次：
 > - `can_view_patient()` / `visible_patient_numbers()`：**能不能看到**（本模块，已放开为科室级）
-> - `patient_model.can_schedule()`：**归属语义**（可见归属解析），仍保留但不再作为排期前置条件
+> - `patient_model.covers_patient()`：**归属语义**（可见归属解析）——
+>   单日临时指派期间，原归属者不能动、临时认领者可以动
+>   （原名 `can_schedule`，排期下线后改名，见该函数文档）
 """
 
 from __future__ import annotations

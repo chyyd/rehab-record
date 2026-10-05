@@ -3,7 +3,7 @@
 
 import 'dart:convert';
 
-import 'package:drift/drift.dart' show Selectable, Value;
+import 'package:drift/drift.dart' show Selectable, TableUpdateQuery, Value, Variable;
 
 import 'package:rehab_app/core/api_endpoints.dart';
 import 'package:rehab_app/data/local/app_database.dart';
@@ -90,22 +90,68 @@ class PatientRepository {
     bool onlyMine = false,
   }) async {
     final rows = await _visibleQuery(includeHidden: includeHidden).get();
-    return _shape(rows, therapistId: therapistId, onlyMine: onlyMine);
+    final treated = await _lastTreatedQuery(therapistId: therapistId).get();
+    return _shape(
+      rows,
+      therapistId: therapistId,
+      onlyMine: onlyMine,
+      lastTreated: _index(treated),
+    );
   }
 
-  /// **响应式**版本：本地库一变就重新发射。
+  /// **响应式**版本：本地库一变就重新发射（患者或治疗记录变动都算）。
   ///
   /// ★ 必须用它而不是 [listLocal]：登录后的首次同步是后台写的，
   /// 一次性快照不会因为落库而重建 —— 实测表现为"同步成功但界面一直空列表，
   /// 除非手动下拉刷新"。床旁场景下这等于看不到患者。
+  ///
+  /// ★ 排序要同时看**治疗记录**：2026-10-05 起患者列表按"我最近一次已提交治疗"
+  /// 排（与服务端 `v_patient_last_treated` 同一语义）。所以订阅的是
+  /// `tableUpdates`（两张表任一变动都会触发）而不是单表查询流 ——
+  /// 只观察 `patients` 的话，刚提交一条记录后列表顺序不会变，
+  /// 而"接着记今天做过的患者"正是这个排序存在的理由。
   Stream<List<PatientView>> watchLocal({
     bool includeHidden = false,
     int? therapistId,
     bool onlyMine = false,
   }) {
-    return _visibleQuery(includeHidden: includeHidden).watch().map(
-          (rows) => _shape(rows, therapistId: therapistId, onlyMine: onlyMine),
-        );
+    // 排序同时依赖 `patients` 与 `treatment_records`，所以两张表都要观察：
+    // 只订阅单表查询流的话，刚提交一条记录后列表顺序不会变 ——
+    // 而"接着记今天做过的患者"正是这个排序存在的理由。
+    final query = TableUpdateQuery.allOf([
+      TableUpdateQuery.onTable(_db.patients),
+      TableUpdateQuery.onTable(_db.treatmentRecords),
+    ]);
+    // ★ 订阅时必须**先立刻发射一帧当前快照**：`tableUpdates` 只在表被写入时发事件
+    // （drift `DatabaseConnectionUser.tableUpdates` 的语义），而它替换掉的
+    // `select().watch()` 是"订阅即发射"的。少了这一帧，"启动后没有任何写入"
+    //（例如完全离线、本地库已是最新）时列表会一直空着 —— 正是本文件开头
+    // 记录的那个缺陷在离线场景下的翻版（`patient_repository_test.dart`
+    // "落库后自动发射" 那条用例守的就是它）。
+    return Stream<void>.multi((controller) {
+      controller.add(null);
+      final sub = _db.tableUpdates(query).listen(
+            (_) => controller.add(null),
+            onError: controller.addError,
+            onDone: controller.close,
+          );
+      controller.onCancel = sub.cancel;
+    }, isBroadcast: true)
+        .asyncMap((_) async => listLocal(
+              includeHidden: includeHidden,
+              therapistId: therapistId,
+              onlyMine: onlyMine,
+            ))
+        .distinct(_sameRows);
+  }
+
+  /// 只有真的"内容或顺序变了"才发射，避免无谓重建。
+  bool _sameRows(List<PatientView> a, List<PatientView> b) {
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i].inpatientNo != b[i].inpatientNo) return false;
+    }
+    return true;
   }
 
   Selectable<Patient> _visibleQuery({required bool includeHidden}) {
@@ -116,10 +162,35 @@ class PatientRepository {
     return query;
   }
 
+  /// 「我最近一次已提交治疗」的日期（与服务端 `v_patient_last_treated` 同口径）。
+  ///
+  /// 只算 `status = 'submitted'`：草稿不算，否则"写了一半没提交"会把患者顶到最前，
+  /// 而那条记录在汇总/时间轴里都还不存在，看起来像系统错乱。
+  Selectable<LastTreatedRow> _lastTreatedQuery({required int? therapistId}) {
+    return _db.customSelect(
+      'SELECT patient_no AS patient_no, MAX(record_date) AS last_date'
+      ' FROM treatment_records'
+      " WHERE status = 'submitted'"
+      '${therapistId == null ? '' : ' AND therapist_id = ?'}'
+      ' GROUP BY patient_no',
+      variables: [if (therapistId != null) Variable.withInt(therapistId)],
+      readsFrom: {_db.treatmentRecords},
+    ).map(
+      (row) => LastTreatedRow(
+        patientNo: row.read<String>('patient_no'),
+        lastDate: row.read<String>('last_date'),
+      ),
+    );
+  }
+
+  Map<String, String> _index(List<LastTreatedRow> rows) =>
+      {for (final r in rows) r.patientNo: r.lastDate};
+
   List<PatientView> _shape(
     List<Patient> rows, {
     required int? therapistId,
     required bool onlyMine,
+    required Map<String, String> lastTreated,
   }) {
     var patients = rows.map(PatientView.fromRow).toList();
     if (onlyMine && therapistId != null) {
@@ -128,8 +199,26 @@ class PatientRepository {
               p.assignedTherapistId == therapistId || p.assignedTherapistId == null)
           .toList();
     }
-    // 与服务端一致的排序语义："我的患者优先 → 未分配 → 其他"。
-    patients.sort((a, b) => _rank(a, therapistId).compareTo(_rank(b, therapistId)));
+    // 与服务端一致的排序语义：
+    //   我的患者优先 → 未分配 → 其他；组内按"我最近一次已提交治疗"**降序**
+    //   （从没治过的排最后）。
+    //
+    // 为什么组内是"最近治疗的"而不是"下一个排期的"：本系统不做排班，
+    // 治疗师打开列表是为了**接着记今天做过的患者**，所以"我刚治过谁"才是正确依据。
+    patients.sort((a, b) {
+      final byRank = _rank(a, therapistId).compareTo(_rank(b, therapistId));
+      if (byRank != 0) return byRank;
+      final aDate = lastTreated[a.inpatientNo];
+      final bDate = lastTreated[b.inpatientNo];
+      if (aDate == null && bDate == null) {
+        return a.inpatientNo.compareTo(b.inpatientNo);
+      }
+      if (aDate == null) return 1; // 没治过的排后面
+      if (bDate == null) return -1;
+      final byDate = bDate.compareTo(aDate); // 降序：最近的在前
+      if (byDate != 0) return byDate;
+      return a.inpatientNo.compareTo(b.inpatientNo);
+    });
     return patients;
   }
 
@@ -241,4 +330,18 @@ class PatientRepository {
           ?.value,
     });
   }
+}
+
+/// 「某患者最近一次已提交治疗的日期」的一行。
+///
+/// 与服务端视图 `v_patient_last_treated` 同口径：只算 `status = 'submitted'`。
+/// 做成独立类型而不是元组：Drift 的 `customSelect(...).map(...)` 需要能构造的类，
+/// 而且排序逻辑读起来更清楚。
+class LastTreatedRow {
+  const LastTreatedRow({required this.patientNo, required this.lastDate});
+
+  final String patientNo;
+
+  /// `YYYY-MM-DD`（本地墙钟日期，与服务端一致）。
+  final String lastDate;
 }

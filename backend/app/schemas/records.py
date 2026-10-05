@@ -161,12 +161,13 @@ class RecordOut(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     id: int
-    appointment_id: int | None = None
     patient_no: str
     patient_name: str | None = None
     therapist_id: int
     therapist_name: str | None = None
-    original_therapist_id: int | None = None
+
+    # 查询时推导（记录人 ≠ 该患者当时的归属人），**不是存储列**——
+    # 存一份就会与事实不一致。见 app/models/treatment.py::temporary_expr。
     is_temporary: int = 0
     record_date: str
     session_period: str | None = None
@@ -208,9 +209,8 @@ class RecordListOut(BaseModel):
 
 class RecordCreateRequest(BaseModel):
     patient_no: str = Field(min_length=1)
-    record_date: str | None = Field(default=None, description="不传则由排期或当天推导")
+    record_date: str | None = Field(default=None, description="不传则用当天")
     session_period: str | None = Field(default=None, description=" / ".join(PERIODS))
-    appointment_id: int | None = Field(default=None, description="从排期进入时传入，自动带入日期与半日")
     duration_min: int | None = Field(default=None, ge=0)
     note: str | None = None
     patient_response: dict[str, Any] | None = Field(

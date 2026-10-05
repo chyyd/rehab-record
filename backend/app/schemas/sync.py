@@ -85,7 +85,6 @@ class SyncInfoOut(BaseModel):
             "treatment_record:draft": "client_wins",
             "treatment_record:submitted": "server_wins",
             "treatment_record:locked": "server_wins",
-            "appointment": "server_wins",
             "dictionary": "server_wins",
         },
         description="冲突策略说明，供客户端决定提示方式",

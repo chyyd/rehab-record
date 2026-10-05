@@ -324,101 +324,6 @@ export const templatesApi = {
 }
 
 // --------------------------------------------------------------------------- //
-// 请假
-// --------------------------------------------------------------------------- //
-export interface LeaveOut {
-  id: number
-  therapist_id: number
-  therapist_name?: string | null
-  leave_type: string
-  start_date: string
-  end_date?: string | null
-  status: 'active' | 'cancelled'
-  source: 'therapist_self' | 'admin_entry'
-  reason?: string | null
-  created_by_name?: string | null
-  created_at: string
-}
-
-export const leaveApi = {
-  list: (params: PageParams & { therapist_id?: number; status?: string; from?: string; to?: string } = {}) =>
-    api.get<LeaveOut[]>('/api/v1/leave', params),
-  enums: () => api.get<Record<string, unknown>>('/api/v1/leave/enums'),
-  adminCreate: (payload: {
-    leave_type: string
-    start_date: string
-    end_date?: string | null
-    therapist_id: number
-    reason?: string | null
-  }) => api.post<LeaveOut>('/api/v1/leave/admin', payload),
-  cancel: (id: number, cancel_reason?: string) =>
-    api.post<Record<string, unknown>>(`/api/v1/leave/${id}/cancel`, { cancel_reason }),
-  effective: (date: string, period: string, therapist_id?: number) =>
-    api.get<{ on_leave: boolean }>('/api/v1/leave/effective', { date, period, therapist_id }),
-}
-
-// --------------------------------------------------------------------------- //
-// 排期与休息块
-// --------------------------------------------------------------------------- //
-export interface AppointmentOut {
-  id: number
-  patient_no: string
-  patient_name?: string | null
-  therapist_id: number
-  therapist_name?: string | null
-  date: string
-  period: 'am' | 'pm'
-  status: string
-  start_time?: string | null
-  end_time?: string | null
-  slot_label?: string | null
-  note?: string | null
-  revision?: number
-}
-
-export interface AvailabilitySlotOut {
-  date: string
-  period: 'am' | 'pm'
-  available: boolean
-  reasons: string[]
-}
-
-export interface RestBlockOut {
-  id: number
-  therapist_id: number
-  scope: 'weekly' | 'date'
-  weekday?: number | null
-  specific_date?: string | null
-  period?: 'am' | 'pm' | null
-  reason?: string | null
-}
-
-export const scheduleApi = {
-  list: (params: { from: string; to: string; therapist_id?: number; patient_no?: string } = { from: '', to: '' }) =>
-    api.get<AppointmentOut[]>('/api/v1/schedule', params),
-  create: (payload: Record<string, unknown>) => api.post<AppointmentOut>('/api/v1/schedule', payload),
-  update: (id: number, payload: Record<string, unknown>) =>
-    api.put<AppointmentOut>(`/api/v1/schedule/${id}`, payload),
-  cancel: (id: number) => api.delete<AppointmentOut>(`/api/v1/schedule/${id}`),
-  availability: (params: { from: string; to: string; therapist_id?: number }) =>
-    api.get<AvailabilitySlotOut[]>('/api/v1/schedule/availability', params),
-  periods: () =>
-    api.get<{ periods: Record<string, { start: string; end: string; label?: string }> }>(
-      '/api/v1/schedule/periods',
-    ),
-  copy: (payload: { mode: string; target_date: string }) =>
-    api.post<Record<string, unknown>>('/api/v1/schedule/copy', payload),
-
-  restBlocks: (therapist_id?: number) =>
-    api.get<RestBlockOut[]>('/api/v1/rest-blocks', therapist_id ? { therapist_id } : undefined),
-  createRestBlock: (payload: Record<string, unknown>) =>
-    api.post<RestBlockOut>('/api/v1/rest-blocks', payload),
-  updateRestBlock: (id: number, payload: Record<string, unknown>) =>
-    api.put<RestBlockOut>(`/api/v1/rest-blocks/${id}`, payload),
-  deleteRestBlock: (id: number) => api.delete<void>(`/api/v1/rest-blocks/${id}`),
-}
-
-// --------------------------------------------------------------------------- //
 // 治疗记录
 // --------------------------------------------------------------------------- //
 export interface RecordListItemOut {
@@ -445,8 +350,6 @@ export interface RecordItemOut {
 }
 
 export interface RecordOut extends RecordListItemOut {
-  appointment_id?: number | null
-  original_therapist_id?: number | null
   is_temporary: number
   duration_min?: number | null
   patient_response?: Record<string, unknown> | null

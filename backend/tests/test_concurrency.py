@@ -125,7 +125,8 @@ class TestConcurrentApiRequests(ApiTestCase):
         "/api/v1/summary/date?date=2027-03-01",
         "/api/v1/admin/option-sets?scope=global",
         "/api/v1/response-defs",
-        "/api/v1/leave?status=active",
+        # 排期 / 请假接口已于 2026-10-05 随功能下线删除
+        "/api/v1/timeline?page=1&page_size=1",
     ]
 
     def test_parallel_list_requests_all_succeed(self) -> None:

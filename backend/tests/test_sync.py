@@ -4,8 +4,12 @@
 1. **幂等**：同一条变更带同一个 `client_uuid` 重复推送不产生重复数据（弱网重试是常态）；
 2. **游标**：`change_log.id` 即游标；增量拉取不漏不重；无新变更时游标不前移；
 3. **冲突分层**：记录仍是草稿 → 客户端优先；已提交/已锁定 → 服务端优先并回报冲突；
-4. **范围限制**：一期只允许治疗记录与排期离线写，字典类只读；
+4. **范围限制**：一期只允许**治疗记录**离线写（排期随功能下线一并移除），字典类只读；
 5. **批量边界**：单次推送/拉取有上限，超限明确报错而不是静默截断。
+
+> 2026-10-05：排期（appointment）功能整体下线，本文件里凡是靠排期构造的场景
+> 都改用治疗记录覆盖 —— 幂等重试、冲突分层、游标语义、离线批量后拉取、
+> `/sync/info` 契约这些**协议保障**必须继续有测试盯着，不能因为实体少了一个就删掉。
 """
 
 from __future__ import annotations
@@ -72,12 +76,14 @@ class SyncTestCase(ApiTestCase):
 class TestSyncInfo(SyncTestCase):
     def test_info_describes_contract(self) -> None:
         body = self.client.get("/api/v1/sync/info", headers=self.h1).json()
-        self.assertEqual(body["pushable_entities"], ["treatment_record", "appointment"])
-        self.assertEqual(body["pullable_entities"], ["patient", "appointment", "treatment_record"])
+        # 排期下线后只剩治疗记录可离线写；患者仍只支持服务端 → 客户端的拉取
+        self.assertEqual(body["pushable_entities"], ["treatment_record"])
+        self.assertEqual(body["pullable_entities"], ["patient", "treatment_record"])
         self.assertEqual(body["max_push_batch"], 200)
         self.assertIn("treatment_record:draft", body["conflict_policy"])
         self.assertEqual(body["conflict_policy"]["treatment_record:draft"], "client_wins")
         self.assertEqual(body["conflict_policy"]["treatment_record:submitted"], "server_wins")
+        self.assertEqual(body["conflict_policy"]["treatment_record:locked"], "server_wins")
         self.assertIn("change_log.id", body["note"])
 
 
@@ -112,25 +118,36 @@ class TestChangeLogWritten(SyncTestCase):
         ops = [c["op"] for c in self.pull().json()["changes"]]
         self.assertEqual(ops, ["insert", "update", "update"], "创建/提交/锁定都应进日志")
 
-    def test_appointment_changes_are_logged(self) -> None:
-        self.client.post(
-            "/api/v1/schedule",
-            json={"patient_no": "ZY001", "date": "2027-03-01", "period": "am"},
-            headers=self.h1,
-        )
-        entities = [c["entity"] for c in self.pull().json()["changes"]]
-        self.assertEqual(entities, ["appointment"])
-
-    def test_cancel_appointment_is_logged(self) -> None:
-        appt = self.client.post(
-            "/api/v1/schedule",
-            json={"patient_no": "ZY001", "date": "2027-03-01", "period": "am"},
-            headers=self.h1,
+    def test_record_insert_and_update_are_logged(self) -> None:
+        """新建与修改都要进日志，且快照能用于客户端本地重建。"""
+        created = self.client.post(
+            "/api/v1/records", json=self.record_payload(), headers=self.h1
         ).json()
-        self.client.delete(f"/api/v1/schedule/{appt['id']}", headers=self.h1)
+        self.client.put(
+            f"/api/v1/records/{created['id']}", json={"note": "改过了"}, headers=self.h1
+        )
         changes = self.pull().json()["changes"]
+        self.assertEqual([c["entity"] for c in changes], ["treatment_record", "treatment_record"])
         self.assertEqual([c["op"] for c in changes], ["insert", "update"])
-        self.assertEqual(changes[-1]["payload"]["status"], "cancelled")
+        self.assertEqual(changes[-1]["payload"]["note"], "改过了")
+        self.assertEqual(changes[-1]["entity_id"], str(created["id"]))
+
+    def test_delete_draft_is_audited_server_side(self) -> None:
+        """草稿删除是服务端可见的操作（审计留痕）。
+
+        注意：删除**不进** `change_log`（当前实现如此）—— 客户端删的是自己刚建的草稿，
+        不需要服务端回灌；这里只钉住"服务端确实记录了这次删除"。
+        """
+        created = self.client.post(
+            "/api/v1/records", json=self.record_payload(), headers=self.h1
+        ).json()
+        resp = self.client.delete(f"/api/v1/records/{created['id']}", headers=self.h1)
+        self.assertEqual(resp.status_code, 204, resp.text)
+        row = self.conn.execute(
+            "SELECT action FROM audit_log WHERE action = 'delete_draft' AND target_id = ?",
+            (str(created["id"]),),
+        ).fetchone()
+        self.assertIsNotNone(row, "删除草稿应留审计")
 
 
 class TestCursorSemantics(SyncTestCase):
@@ -178,10 +195,11 @@ class TestCursorSemantics(SyncTestCase):
         这一点是本接口的**已知语义**（docstring 与 /sync/info 都写明了），
         所以测试也按这个契约来断言，而不是假设它会保留其它实体的位置。
         """
-        self.client.post(
-            "/api/v1/schedule",
-            json={"patient_no": "ZY001", "date": "2027-03-01", "period": "am"},
-            headers=self.h1,
+        # 造一条 patient 变更：患者主数据不由客户端推送，但服务端会写日志
+        # （例如管理员在后台改了患者），所以"日志里有多种实体"是常态。
+        sync_service.record_change(
+            self.conn, entity="patient", entity_id="ZY001", op="update",
+            revision=2, actor_user_id=int(self.admin["id"]), payload={"name": "患者甲"},
         )
         record = self.client.post("/api/v1/records", json=self.record_payload(), headers=self.h1).json()
 
@@ -194,12 +212,18 @@ class TestCursorSemantics(SyncTestCase):
         # 本次过滤拉取已经走到服务端最新，因此 has_more 为 false；
         # 这正是"过滤只适合全量同步"的原因：被跳过的实体不会再被这条游标覆盖到。
         self.assertEqual(only_records["cursor"], only_records["latest_cursor"])
+        # 过滤模式下被跳过的实体仍然"存在"，只是不会被返回
+        self.assertFalse(only_records["has_more"])
+        self.assertEqual(
+            [c["entity"] for c in only_records["changes"]], ["treatment_record"],
+            "过滤后不应混入其它实体",
+        )
 
         # 与之对比：不带过滤时两条变更都能拿到
         unfiltered = self.pull().json()
         self.assertEqual(len(unfiltered["changes"]), 2)
         self.assertEqual(
-            [c["entity"] for c in unfiltered["changes"]], ["appointment", "treatment_record"]
+            [c["entity"] for c in unfiltered["changes"]], ["patient", "treatment_record"]
         )
 
     def test_latest_cursor_reported(self) -> None:
@@ -289,14 +313,18 @@ class TestIdempotentPush(SyncTestCase):
         ).fetchone()["note"]
         self.assertEqual(note, "离线改过")
 
-    def test_appointment_push(self) -> None:
-        body = self.push(
+    def test_push_rejects_unknown_entity(self) -> None:
+        """排期下线后 `appointment` 不再是可推实体：必须明确报错而不是静默丢弃。
+
+        这是"删掉一个实体"最容易被忽略的后果 —— 老客户端仍会推排期，
+        服务端要么明确拒绝、要么会把数据写进不存在的表。
+        """
+        resp = self.push(
             [{"entity": "appointment", "client_uuid": "uuid-bbbb-0001", "op": "insert",
-              "payload": {"patient_no": "ZY001", "date": "2027-03-01", "period": "am",
-                          "therapist_id": int(self.t1["id"])}}]
-        ).json()
-        self.assertEqual(len(body["applied"]), 1)
-        self.assertEqual(body["applied"][0]["entity"], "appointment")
+              "payload": {"patient_no": "ZY001", "date": "2027-03-01", "period": "am"}}]
+        )
+        self.assert_error(resp, 422, "INVALID")
+        self.assertIn("treatment_record", resp.json()["details"]["allowed"])
 
 
 class TestConflictPolicy(SyncTestCase):
@@ -391,17 +419,24 @@ class TestConflictPolicy(SyncTestCase):
         )
         body = self.push(
             [
+                # 已提交 → 服务端优先，这一条会被判冲突
                 {"entity": "treatment_record", "client_uuid": "uuid-c000-0006", "op": "update",
                  "base_revision": pushed["applied"][0]["revision"],
                  "payload": self.record_payload(note="冲突条")},
-                {"entity": "appointment", "client_uuid": "uuid-c000-0007", "op": "insert",
-                 "payload": {"patient_no": "ZY001", "date": "2027-03-09", "period": "am",
-                             "therapist_id": int(self.t1["id"])}},
+                # 同批里的另一条（同一患者的另一条新草稿）应照常应用
+                {"entity": "treatment_record", "client_uuid": "uuid-c000-0007", "op": "insert",
+                 "payload": self.record_payload(patient_no="ZY001", note="同批正常条")},
             ]
         ).json()
         self.assertEqual(len(body["conflicts"]), 1)
         self.assertEqual(len(body["applied"]), 1, "另一条应正常应用")
-        self.assertEqual(body["applied"][0]["entity"], "appointment")
+        self.assertEqual(body["applied"][0]["entity"], "treatment_record")
+        self.assertEqual(body["applied"][0]["client_uuid"], "uuid-c000-0007")
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM treatment_record").fetchone()[0],
+            2,
+            "冲突条不得被写入，正常条必须落库",
+        )
 
     def test_resolve_conflict_helper_directly(self) -> None:
         self.assertIsNone(
@@ -435,26 +470,38 @@ class TestConflictPolicy(SyncTestCase):
         locked = treatment_model.lock_record(self.conn, int(record["id"]))
         self.assertEqual(locked["revision"], 4, "锁定应推进 revision")
 
-    def test_appointment_retry_without_base_revision_is_idempotent(self) -> None:
-        """排期不是"客户端优先"实体，但重试同一 client_uuid 仍须幂等。"""
+    def test_retry_after_submit_is_reported_but_never_duplicates(self) -> None:
+        """重试自己**已提交**的记录：不得产生重复数据，且必须回报冲突。
+
+        治疗记录是"客户端优先"实体，但那只在服务端**仍是草稿**时成立
+        （见 `test_same_client_uuid_twice_is_idempotent`）；一旦提交，
+        文书以服务端为准 —— 重试也必须走冲突路径，而不是静默覆盖。
+        """
         change = {
-            "entity": "appointment",
+            "entity": "treatment_record",
             "client_uuid": "uuid-j000-0001",
             "op": "insert",
-            "payload": {"patient_no": "ZY001", "date": "2027-03-01", "period": "am",
-                        "therapist_id": int(self.t1["id"])},
+            "payload": self.record_payload(),
         }
-        self.push([change])
-        second = self.push([change]).json()
-        self.assertEqual(second["conflicts"], [], f"排期重试不应冲突：{second}")
-        self.assertEqual(len(second["applied"]), 1)
-        count = self.conn.execute("SELECT COUNT(*) FROM appointment").fetchone()[0]
-        self.assertEqual(count, 1)
+        first = self.push([change]).json()
+        treatment_model.submit_record(
+            self.conn, int(first["applied"][0]["entity_id"]), user_id=int(self.t1["id"])
+        )
+
+        second = self.push([change]).json()  # 重试：客户端通常仍不带 base_revision
+        self.assertEqual(len(second["conflicts"]), 1, f"已提交应服务端优先：{second}")
+        self.assertEqual(second["conflicts"][0]["reason"], "missing_base_revision")
+        self.assertEqual(second["conflicts"][0]["server_status"], "submitted")
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM treatment_record").fetchone()[0],
+            1,
+            "重试不得产生重复数据",
+        )
 
 
 class TestPushValidation(SyncTestCase):
     def test_cannot_push_patient(self) -> None:
-        """一期只允许治疗记录与排期离线写；患者主数据由管理员在线维护。"""
+        """一期只允许治疗记录离线写；患者主数据由管理员在线维护。"""
         resp = self.push(
             [{"entity": "patient", "client_uuid": "uuid-d000-0001", "op": "insert",
               "payload": {"inpatient_no": "ZY999", "name": "不该离线建"}}]
@@ -472,8 +519,8 @@ class TestPushValidation(SyncTestCase):
 
     def test_batch_too_large_rejected(self) -> None:
         too_many = [
-            {"entity": "appointment", "client_uuid": f"uuid-e000-{i:04d}", "op": "insert",
-             "payload": {"patient_no": "ZY001", "date": "2027-03-01", "period": "am"}}
+            {"entity": "treatment_record", "client_uuid": f"uuid-e000-{i:04d}", "op": "insert",
+             "payload": self.record_payload()}
             for i in range(sync_service.MAX_PUSH_BATCH + 1)
         ]
         resp = self.push(too_many)
@@ -484,8 +531,8 @@ class TestPushValidation(SyncTestCase):
     def test_push_requires_auth(self) -> None:
         resp = self.client.post(
             "/api/v1/sync/push",
-            json={"changes": [{"entity": "appointment", "client_uuid": "uuid-f000-0001", "op": "insert",
-                               "payload": {"patient_no": "ZY001", "date": "2027-03-01", "period": "am"}}]},
+            json={"changes": [{"entity": "treatment_record", "client_uuid": "uuid-f000-0001",
+                               "op": "insert", "payload": self.record_payload()}]},
         )
         self.assert_error(resp, 401, "AUTH_REQUIRED")
 

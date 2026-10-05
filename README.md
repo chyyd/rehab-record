@@ -1,8 +1,12 @@
 # 康复科治疗过程记录系统
 
-治疗师床旁快速记录工具。**排期 → 治疗 → 记录 → 汇总打印**，选择为主、少打字、可离线、可追溯。
+治疗师床旁快速记录工具。**认领患者 → 治疗 → 记录 → 汇总打印**，选择为主、少打字、可离线、可追溯。
 
-- **范围**：治疗过程记录 + 轻量排期。**不含**收费、医保、患者签字、治疗组、绩效统计。
+- **范围**：治疗过程记录。**不含**排班/排期、收费、医保、患者签字、治疗组、绩效统计。
+  > **2026-10-05**：科室确认**排班不是本系统的职责**——"app功能过剩，违背方便记录的初衷"。
+  > 排期、休息块、请假三项功能已**整体下线**（后端 + 管理后台 + 安卓），
+  > `appointment`/`rest_block`/`leave_record` 三张表已删除；患者列表改按
+  > **"我最近一次已提交治疗"**排序。决策与代价见 [CHANGELOG.md](CHANGELOG.md)。
 - **技术栈**：后端 Python + SQLite + JSON；移动端 Android（Flutter）；管理后台 React + Vite + Ant Design。
 
 ## 文档导航
@@ -22,11 +26,14 @@
 
 - **时间戳**一律 UTC ISO8601 带毫秒：`strftime('%Y-%m-%dT%H:%M:%fZ','now')`。
   **禁止** `datetime('now','localtime')`——SQLite 无时区概念，该修饰符在 +08:00 下会写出快 8 小时的时间戳。
-- **日期/时刻**（排期、作息）用本地墙钟：日期 `YYYY-MM-DD`，时刻 `HH:MM`。
+- **日期/时刻**（记录日期、作息）用本地墙钟：日期 `YYYY-MM-DD`，时刻 `HH:MM`。
 - **半日制作息**（Q11 定稿）：上午 `06:00–11:30`、下午 `13:00–17:30`。
-  排期、休息、请假的时间语义统一由 `backend/app/core/worktime.py` 提供，**任何模块不得自己写时间字面量**。
-- **排期不变量**（S1 / Q1 / Q2）：治疗师半日 = 一台；患者半日 = 一名治疗师。
-- **请假无审批流**（Q6）：登记即生效；治疗师自己请，管理员可代录。
+  **排期已下线**，这套作息现在只决定"一条治疗记录属于哪个半日"（`session_period`）与临时指派的到期时点；
+  语义统一由 `backend/app/core/worktime.py` 提供，**任何模块不得自己写时间字面量**。
+- **患者列表排序**：归属分组优先（我的 → 未分配 → 其他），组内按**我最近一次已提交治疗**的日期**降序**；
+  只算 `submitted`（草稿与已锁定不算），从没治过的排最后（`v_patient_last_treated`）。
+- **归属解析**：唯一真源是 `v_patient_visibility` 视图 + `patient_model.covers_patient()`（原名 `can_schedule`）；
+  `temporary_assignment` 保留（它是归属数据，与请假无关）。
 - **枚举**在库层用 `CHECK` 约束兜底，业务层仍需校验（双重保护）。
 - **JSON 字段**用 `json_valid()` 兜底，防止写入非 JSON 导致读取期才爆炸。
 
@@ -36,18 +43,18 @@
 |---|---|---|
 | 阶段 0 | SQLite 初始化与迁移、作息定义、健康检查、CLI、**FastAPI 骨架 + 统一错误体** | **已完成** |
 | 阶段 1 | **认证（argon2 + JWT 轮换）、用户管理、患者与归属、可见归属解析** | **已完成** |
-| 阶段 2 | **排期（半日格子）、三条冲突规则、可排性查询、休息块、请假（登记即生效）** | **已完成** |
+| 阶段 2 | ~~排期（半日格子）、冲突规则、可排性查询、休息块、请假~~ | **已取消**（2026-10-05：排班不是本系统的职责；患者列表排序改按实际治疗，验收脚本已重写为 22 项） |
 | 阶段 3 | **字典与选项集解析、治疗记录状态机、参数带入、两层快照、患者反应** | **已完成** |
 | 阶段 4 | **离线幂等推送（client_uuid）、游标增量拉取、冲突分层（草稿客户端优先）** | **已完成** |
 | 阶段 5 | **三套中文 PDF 汇总打印、记录模板、审计日志查询、后台选项集维护** | **已完成** |
 | 模板种子 | **四大高频模板**（运动/生活/言语/吞咽，4 套科室模板 / 29 条明细，参数取自字典默认值） | **已完成**（D04 / T3.2 闭环） |
-| 文档 | `设计.md` 修订至 V1.2/V1.3（半日制排期、无审批流请假、Q11 作息、PDF 方案修订） | **已完成**（跨文档校验 156 项 0 失败） |
+| 文档 | `设计.md` 修订至 V1.2/V1.3（Q11 作息、PDF 方案修订；排期/请假章节已删除，新增患者列表排序语义） | **已完成**（跨文档校验 215 项 0 失败） |
 | 种子数据 | 字典 4/29/89 + 患者反应 27 条 + 全局选项集 47 套/208 项 + 模板 4 套，全部幂等导入 | **已完成** |
 | 中文 PDF | **reportlab + 内置 CID 字体 `STSong-Light`**，三套模板经 pypdf 反向文本校验 | **已完成**（D03 修订，Q10 版式） |
-| 测试 | **554 个测试全部通过、0 skip**；端到端 190 项 + **浏览器 UI 验收 66 项** | **已完成** |
-| 接口 | **87 个**（认证、用户、患者、排期、休息、请假、字典读写、选项集、记录、同步、汇总、打印、模板、审计、后台） | **已完成** |
-| 管理后台 Web | **React 19 + Vite 8 + Ant Design 6 + TS**，13 个模块全部实现，构建通过（`admin/`） | **已完成**（T5.4 前端） |
-| 安卓 App | Flutter 骨架、排期页、记录页、同步引擎（T1.6/T2.7/T2.8/T3.8/T4.4/T4.5） | 未开始 |
+| 测试 | **469 个测试全部通过、0 skip**；端到端 182 项 + **浏览器 UI 验收 60 项** | **已完成** |
+| 接口 | **70 个接口**（52 个路径：认证、用户、患者、字典读写、选项集、记录、同步、汇总、打印、模板、审计、后台） | **已完成**（排期/休息/请假 17 个操作已删除） |
+| 管理后台 Web | **React 19 + Vite 8 + Ant Design 6 + TS**，10 个页面全部实现，构建通过（`admin/`） | **已完成**（T5.4 前端；排期页与请假页已删除） |
+| 安卓 App | Flutter：**3 个页签**（患者 / 时间轴 / 我的）、记录页、汇总与 PDF 打印（三种去向）、同步与冲突处理（`app/`） | **已完成** |
 
 > **用哪个 Python**：必须用系统 Python 3.13
 > （`C:\Users\youda\AppData\Local\Programs\Python\Python313\python.exe`）。
@@ -91,7 +98,7 @@
 │   │   ├── models/          数据访问
 │   │   ├── schemas/         请求/响应模型
 │   │   ├── core/            配置、安全、错误、依赖
-│   │   └── db/migrations/   5 个 SQL 迁移（带 checksum 校验）
+│   │   └── db/migrations/   8 个 SQL 迁移（带 checksum 校验；007 排序视图、008 删除排期）
 │   ├── seed/                种子数据（字典/选项集/反应定义/模板，JSON + 导入器）
 │   ├── scripts/             端到端验收脚本（_ 前缀的是共用工具）
 │   ├── tests/               单元与集成测试
@@ -126,17 +133,19 @@ $env:KB_ADMIN_PASSWORD = 'Admin#2026pass'
 & $py -m app.cli periods   # 打印半日制作息与请假到期时点
 
 & $py -m app.main --reload # 启动服务端：http://127.0.0.1:8000/docs
-& $py -m unittest discover -s tests -t . -v      # 554 个测试
+& $py -m unittest discover -s tests -t . -v      # 469 个测试
 & $py scripts\verify_http.py                     # 阶段 0 HTTP 端到端
 & $py scripts\verify_stage1.py                   # 阶段 1 认证与患者
-& $py scripts\verify_stage2.py                   # 阶段 2 排期与请假
+& $py scripts\verify_stage2.py                   # 患者列表排序（原阶段 2 排期已取消）
 & $py scripts\verify_stage3.py                   # 阶段 3 字典与治疗记录
 & $py scripts\verify_stage4.py                   # 阶段 4 离线与同步
 & $py scripts\verify_stage5.py                   # 阶段 5 汇总打印、后台与模板种子
-& $py scripts\check_docs_consistency.py          # 跨文档一致性（156 项）
+& $py scripts\count_verify_checks.py             # 复核上面 6 个脚本的验收项数（182 项）
+& $py scripts\check_docs_consistency.py          # 跨文档一致性
 ```
 
-> **验收脚本可在同一个库上重复运行**（共 190 项检查）。清理统一走
+> **验收脚本可在同一个库上重复运行**（共 182 项检查；项数用 `scripts/count_verify_checks.py`
+> 复核，它会按"循环展开"数出运行时会执行的 `check()` 次数）。清理统一走
 > `scripts/_e2e.py` 的 `purge_*`，按外键顺序删除，不要在脚本里手写 `DELETE` ——
 > 早先就是因为在一次性干净库上验收，掩盖了"重跑必失败"的外键顺序问题。
 
@@ -153,7 +162,7 @@ npm run build          # 生产构建 → dist/
 **Vite 构建需要非受限环境**（Windows 下它会调用 `net use`，受限环境中报 `spawn EPERM`）；
 `tsc` 类型检查不受影响。
 
-**在真实浏览器里验收后台**（66 项检查，含登录、逐页导航与一次真实表单提交）：
+**在真实浏览器里验收后台**（60 项检查，含登录、逐页导航与一次真实表单提交）：
 
 ```powershell
 # 需要三样同时就绪：后端(8000)、Vite dev(5173)、Edge 带调试端口
@@ -165,7 +174,8 @@ cd backend; & $py scripts\verify_admin_ui.py
 Playwright）。这一步不是可选项 —— 类型检查与构建**测不出**并发下的 500、也测不出页面渲染问题：
 本项目的 SQLite 跨线程缺陷正是它抓到的。
 
-**当前不需要 pip、不需要 venv**：M0 骨架只用标准库。
+**依赖用系统 Python 3.13 已装好的那一套**（FastAPI / uvicorn / PyJWT / reportlab / pypdf 等，
+清单与版本见 [docs/setup.md](docs/setup.md) 第 0 节）；不需要 pip、不需要 venv。
 
 ## 仓库结构
 
@@ -174,11 +184,11 @@ Playwright）。这一步不是可选项 —— 类型检查与构建**测不出
 ├─ docs/          setup.md（环境）、sync-protocol.md（**离线同步协议**）、后续补 api.md / data-model.md
 ├─ backend/
 │  ├─ app/        core（配置/作息/健康）· db（存储/迁移）· cli.py · main.py
-│  │  └─ db/migrations/   001–006（表结构、触发器、可见归属视图、同步、模板 code、放开半日互斥）
+│  │  └─ db/migrations/   001–008（表结构、触发器、可见归属视图、同步、模板 code、放开半日互斥、排序视图、**删除排期**）
 │  ├─ seed/       四份种子（字典 4/29/89、反应 27、选项集 47/208、模板 4/29；幂等 upsert）
-│  ├─ scripts/    6 个验收脚本（http + 阶段 1–5）· check_docs_consistency.py · verify_admin_ui.py（CDP）
-│  └─ tests/      554 个测试（标准库 unittest）
-├─ app/           Flutter 客户端（待建）
-├─ admin/         管理后台 React 19 + Vite 8 + Ant Design 6（13 个模块已实现）
+│  ├─ scripts/    6 个验收脚本（http + 阶段 1–5）· count_verify_checks.py · check_docs_consistency.py · verify_admin_ui.py（CDP）
+│  └─ tests/      469 个测试（标准库 unittest）
+├─ app/           Flutter 客户端（3 个页签；`app/README.md`）
+├─ admin/         管理后台 React 19 + Vite 8 + Ant Design 6（10 个页面已实现）
 └─ deploy/        Docker Compose + Nginx（待建）
 ```

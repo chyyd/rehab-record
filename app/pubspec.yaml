@@ -50,13 +50,15 @@ dependencies:
   # ---- 令牌安全存储（refresh token 进 Android Keystore）----
   flutter_secure_storage: ^11.2.0
 
-  # ---- 打印：PDF 下载到本地后交给系统阅读器打开 ----
+  # ---- 打印与分享 ----
   # 必须自己带 Bearer 下载，不能把 URL 丢给浏览器（浏览器不会带我们的
   # Authorization 头，只会看到 401）。
   open_filex: ^4.7.0
-
-  # ---- 日历：table_calendar（半日格子自绘 Grid，仅日期维度用它）----
-  table_calendar: ^3.1.3
+  # 走 Android 的 ACTION_SEND 分享面板 —— 微信作为系统分享目标出现在里面，
+  # **不需要**接微信 SDK，也不需要任何原生代码。
+  share_plus: ^13.3.1
+  # 走 Android 系统打印服务（含无线打印）。
+  printing: ^5.15.1
 
 dev_dependencies:
   flutter_test:

@@ -1,7 +1,20 @@
-"""阶段 2 端到端验证：排期、休息与请假，跑真实 uvicorn + 真实 HTTP。
+"""阶段 2 端到端验证（**已重写**）：患者列表排序 —— "我最近一次已提交治疗"优先。
 
-流程：登录 → 建患者 → 排期 → 三条冲突 → 可排性查询 → 休息块 → 单日假临时释放
-      → 多日假正式排空 → 撤销回滚 → 复制排期 → 过期清理
+## 为什么整个脚本被重写了
+
+原阶段 2 验收的是**排期、休息块与请假**。2026-10-05 科室确认排班不是本系统的职责，
+这三项功能整体下线，原脚本的 25 项断言全部失去对象。简单删掉这个脚本会让
+**"患者列表怎么排序"这件事完全没有验收覆盖** —— 而那正是取代排期的核心行为：
+治疗师打开列表是为了**接着记今天做过的患者**，所以排序必须反映"我刚治过谁"。
+
+所以这个脚本改为验证新排序语义：
+
+1. 组内按"我最近一次**已提交**治疗"的日期**降序**（越近越前）；
+2. **草稿不算** —— 否则"写了一半没提交"会把患者顶到最前，而那条记录在汇总/时间轴
+   里还不存在，看起来像系统错乱；
+3. 从没被我治过的患者排在有记录的**后面**；
+4. 归属分组仍然优先于治疗时间：我的患者 → 未分配 → 其他；
+5. 换一个治疗师看，排序按**他自己的**治疗历史（不是全局最近）。
 
     cd backend
     python scripts/verify_stage2.py
@@ -28,8 +41,10 @@ HOST = "127.0.0.1"
 ADMIN_PW = "Admin#2026pass"
 THERAPIST_PW = "Ther#2026pass"
 
-D_MON = "2027-03-01"  # 周一
-D_TUE = "2027-03-02"
+# 用固定的过去日期，避免"今天"漂移导致断言不稳
+D_OLD = "2027-03-01"
+D_MID = "2027-03-05"
+D_NEW = "2027-03-09"
 
 failures: list[str] = []
 
@@ -70,6 +85,32 @@ def q(**params: object) -> str:
     return "?" + urllib.parse.urlencode(params)
 
 
+def order_of(payload: dict, only: tuple[str, ...] = ("S2A", "S2B", "S2C", "S2D")) -> list[str]:
+    """患者列表响应里**本次测试那几名患者**的相对顺序。
+
+    ★ 必须过滤：开发库里本来就有别的患者（S5A/S4A/…），它们会混在同一个列表里。
+    脚本要断言的是"相对顺序"，不是"列表里只有这四个"。
+    """
+    items = payload.get("items") if isinstance(payload, dict) else payload
+    return [str(i["inpatient_no"]) for i in (items or []) if str(i["inpatient_no"]) in only]
+
+
+def create_record(token: str, patient_no: str, day: str, *, status: str) -> tuple[int, object]:
+    """建一条治疗记录（带一个最小明细，走真实参数校验）。"""
+    return request(
+        "/api/v1/records",
+        "POST",
+        {
+            "patient_no": patient_no,
+            "record_date": day,
+            "session_period": "am",
+            "status": status,
+            "items": [{"main_item_id": 1, "sub_item_id": 1, "params": {"reps": 10}}],
+        },
+        token,
+    )
+
+
 def main() -> int:
     from app.core.config import get_settings
     from app.db import storage
@@ -100,14 +141,7 @@ def main() -> int:
                 )
                 ids[employee_no] = int(created["id"])
         # 清理上次运行遗留（保证可重复执行）
-        for no in ("S2A", "S2B"):
-            purge_patients(conn, [no])
-        for therapist_id in (ids["T001"], ids["T002"]):
-            conn.execute("DELETE FROM rest_block WHERE therapist_id = ?", (therapist_id,))
-            conn.execute("DELETE FROM leave_record WHERE therapist_id = ?", (therapist_id,))
-            conn.execute(
-                "UPDATE patient SET assigned_therapist_id = ? WHERE inpatient_no = 'S2A'", (ids["T001"],)
-            )
+        purge_patients(conn, ["S2A", "S2B", "S2C", "S2D"])
     finally:
         conn.close()
 
@@ -125,156 +159,128 @@ def main() -> int:
     print(f"uvicorn 已启动：{BASE}\n")
 
     try:
-        _, admin = request("/api/v1/auth/login", "POST", {"employee_no": "A001", "password": ADMIN_PW})
-        _, t1_login = request("/api/v1/auth/login", "POST", {"employee_no": "T001", "password": THERAPIST_PW})
-        _, t2_login = request("/api/v1/auth/login", "POST", {"employee_no": "T002", "password": THERAPIST_PW})
+        _, admin = request("/api/v1/auth/login", "POST",
+                           {"employee_no": "A001", "password": ADMIN_PW})
+        _, t1_login = request("/api/v1/auth/login", "POST",
+                              {"employee_no": "T001", "password": THERAPIST_PW})
+        _, t2_login = request("/api/v1/auth/login", "POST",
+                              {"employee_no": "T002", "password": THERAPIST_PW})
         at, h1, h2 = admin["access_token"], t1_login["access_token"], t2_login["access_token"]
 
-        # 建两名患者：S2A 归张三，S2B 未分配
+        # 四名患者：S2A/S2B 归张三，S2C 归李四，S2D 未分配
         request("/api/v1/patients", "POST",
-                {"inpatient_no": "S2A", "name": "阶段二患者甲", "assigned_therapist_id": ids["T001"]}, at)
-        request("/api/v1/patients", "POST", {"inpatient_no": "S2B", "name": "阶段二患者乙"}, at)
+                {"inpatient_no": "S2A", "name": "阶段二患者甲",
+                 "assigned_therapist_id": ids["T001"]}, at)
+        request("/api/v1/patients", "POST",
+                {"inpatient_no": "S2B", "name": "阶段二患者乙",
+                 "assigned_therapist_id": ids["T001"]}, at)
+        request("/api/v1/patients", "POST",
+                {"inpatient_no": "S2C", "name": "阶段二患者丙",
+                 "assigned_therapist_id": ids["T002"]}, at)
+        request("/api/v1/patients", "POST",
+                {"inpatient_no": "S2D", "name": "阶段二患者丁"}, at)
 
-        # 1) 半日边界
-        code, periods = request("/api/v1/schedule/periods", token=h1)
-        check("半日边界为 Q11 值",
-              code == 200 and periods["periods"]["am"]["start"] == "06:00"
-              and periods["periods"]["am"]["end"] == "11:30"
-              and periods["periods"]["pm"]["start"] == "13:00"
-              and periods["periods"]["pm"]["end"] == "17:30")
+        # ---------------------------------------------------------------- #
+        # 1) 排期相关接口已下线
+        # ---------------------------------------------------------------- #
+        for path in ("/api/v1/schedule", "/api/v1/rest-blocks", "/api/v1/leave"):
+            code, _ = request(path, token=h1)
+            check(f"已下线接口不再存在：{path}", code == 404, f"HTTP {code}")
 
-        # 2) 正常排期
-        code, appt = request("/api/v1/schedule", "POST",
-                             {"patient_no": "S2A", "date": D_MON, "period": "am"}, h1)
-        check("新建排期", code == 201 and appt["period"] == "am", str(appt)[:140])
-        check("排期返回患者/治疗师姓名", appt["patient_name"] == "阶段二患者甲" and appt["therapist_name"] == "张三",
-              str(appt)[:140])
+        # ---------------------------------------------------------------- #
+        # 2) 治疗历史 → 排序（用 scope=dept 全科列表，才能同时看到三种归属分组）
+        # ---------------------------------------------------------------- #
+        # 张三是 S2A / S2B 的归属人。给 S2B 记一条较早的、给 S2A 记一条较近的。
+        code, _ = create_record(h1, "S2B", D_OLD, status="submitted")
+        check("给 S2B 建已提交记录", code == 201, f"HTTP {code}")
+        code, _ = create_record(h1, "S2A", D_MID, status="submitted")
+        check("给 S2A 建已提交记录", code == 201, f"HTTP {code}")
+        # 未分配患者 S2D 也由张三记一条**最近**的
+        code, _ = create_record(h1, "S2D", D_NEW, status="submitted")
+        check("给未分配患者 S2D 建已提交记录", code == 201, f"HTTP {code}")
 
-        # 3) 半日格子不再互斥：同一治疗师同一半日可以有多台
-        code, again = request("/api/v1/schedule", "POST",
-                              {"patient_no": "S2B", "date": D_MON, "period": "am"}, h1)
-        check("同治疗师同半日可排第二台（Q2/S1 已放开）", code == 201, str(again)[:160])
+        code, dept = request(f"/api/v1/patients{q(scope='dept', page_size=200)}", token=h1)
+        check("取全科患者列表", code == 200, f"HTTP {code}")
+        order = order_of(dept)
 
-        # 4) 同一患者同一半日可以被另一名治疗师再排一台
-        code, other = request("/api/v1/schedule", "POST",
-                              {"patient_no": "S2B", "date": D_MON, "period": "am"}, h2)
-        check("同一患者同半日可被另一治疗师排期",
-              code == 201 and other.get("therapist_id") == ids["T002"], str(other)[:160])
+        check("组内按我最近一次已提交治疗降序（S2A 晚于 S2B → S2A 在前）",
+              len(order) >= 2 and order.index("S2A") < order.index("S2B"), str(order))
+        check("我的患者排在未分配之前（分组优先于治疗时间）",
+              "S2D" in order and order.index("S2A") < order.index("S2D"), str(order))
+        check("未分配的排在别人的患者之前",
+              "S2C" in order and order.index("S2D") < order.index("S2C"), str(order))
 
-        # 5) 可排性：格子仍然可排，但回传已有排期供展示
-        avail_path = "/api/v1/schedule/availability" + q(
-            **{"from": D_MON, "to": D_MON, "therapist_id": ids["T001"]}
-        )
-        code, slots = request(avail_path, token=h1)
-        check("可排性查询返回 2 个半日", code == 200 and len(slots) == 2, str(slots)[:140])
-        am_slot = slots[0]
-        check("已有排期不再让格子变灰", am_slot["available"] is True and am_slot["reasons"] == [],
-              str(am_slot)[:160])
-        check("可排性回传格子内已有排期", am_slot["appointment_count"] == 2, str(am_slot)[:200])
+        # ---------------------------------------------------------------- #
+        # 3) 草稿不算
+        # ---------------------------------------------------------------- #
+        # 给 S2B 补一条**日期更新但仍是草稿**的记录。如果草稿参与排序，
+        # S2B 会被顶到 S2A 前面；正确行为是 S2B 仍按它那条已提交的 D_OLD 排在后面。
+        code, _ = create_record(h1, "S2B", D_NEW, status="draft")
+        check("给 S2B 建草稿（日期更新但未提交）", code == 201, f"HTTP {code}")
 
-        # 6) 休息块
-        code, block = request("/api/v1/rest-blocks", "POST",
-                              {"scope": "date", "specific_date": D_TUE, "period": "am"}, h1)
-        check("新建休息块", code == 201, str(block)[:140])
-        code, err = request("/api/v1/schedule", "POST",
-                            {"patient_no": "S2A", "date": D_TUE, "period": "am"}, h1)
-        check("休息半日不可排 → 409",
-              code == 409 and any(c["rule"] == "rest_block" for c in err["details"]["conflicts"]),
-              str(err)[:160])
+        code, dept2 = request(f"/api/v1/patients{q(scope='dept', page_size=200)}", token=h1)
+        order2 = order_of(dept2)
+        check("草稿不参与排序（S2B 仍在 S2A 之后）",
+              order2.index("S2A") < order2.index("S2B"), str(order2))
 
-        # 7) 计划时间必须落在半日区间内
-        code, err = request("/api/v1/schedule", "POST",
-                            {"patient_no": "S2A", "date": "2027-03-05", "period": "am", "start_time": "14:00"}, h1)
-        check("计划时间越界 → 422", code == 422 and err["code"] == "INVALID", str(err)[:140])
+        # ---------------------------------------------------------------- #
+        # 4) 分组优先于治疗历史：张三给"别人的患者"记过，它仍在最后一组
+        # ---------------------------------------------------------------- #
+        # 全科白板下张三可以给 S2C（李四的患者）做记录（D10 已放开）。
+        # 但排序的**第一关键字是归属分组**，所以 S2C 仍排在最后 ——
+        # 否则"我偶尔替别人做了一次"会把它顶到我自己的患者前面，与直觉相反。
+        code, _ = create_record(h1, "S2C", D_NEW, status="submitted")
+        check("张三给别人的患者记一次（全科白板）", code == 201, f"HTTP {code}")
+        code, dept3 = request(f"/api/v1/patients{q(scope='dept', page_size=200)}", token=h1)
+        order3 = order_of(dept3)
+        my_group = [x for x in order3 if x in ("S2A", "S2B")]
+        other_group = [x for x in order3 if x == "S2C"]
+        check("别人的患者仍排在最后一组（分组优先于治疗历史）",
+              bool(other_group) and bool(my_group)
+              and max(order3.index(x) for x in my_group) < order3.index("S2C"),
+              str(order3))
 
-        # 8) 单日假：临时释放，原归属不变
-        code, leave = request("/api/v1/leave", "POST",
-                              {"leave_type": "half_day_am", "start_date": "2027-03-08", "reason": "门诊"}, h1)
-        check("登记单日假即生效", code == 201 and leave["status"] == "active" and leave["source"] == "therapist_self",
-              str(leave)[:160])
-        code, patient = request("/api/v1/patients/S2A", token=h1)
-        check("单日假不改原归属",
-              patient["assigned_therapist_id"] == ids["T001"] and patient["visibility_state"] == "temp_released",
-              str(patient)[:180])
-        check("临时释放后可见归属为空", patient["visible_therapist_id"] is None, str(patient)[:180])
+        # ---------------------------------------------------------------- #
+        # 5) 分页 + 可见性
+        # ---------------------------------------------------------------- #
+        code, page1 = request(f"/api/v1/patients{q(scope='dept', page=1, page_size=2)}", token=h1)
+        check("分页返回 page/page_size",
+              code == 200 and page1.get("page") == 1 and page1.get("page_size") == 2,
+              str(page1)[:160])
+        check("分页 items 不超过 page_size", len(page1.get("items") or []) <= 2)
+        check("分页带 total", isinstance(page1.get("total"), int), str(page1)[:120])
 
-        # 9) 请假半日治疗师本人不能排
-        code, err = request("/api/v1/schedule", "POST",
-                            {"patient_no": "S2A", "date": "2027-03-08", "period": "am"}, h1)
-        check("请假半日不能排 → 409",
-              code == 409 and any(c["rule"] == "on_leave" for c in err["details"]["conflicts"]),
-              str(err)[:160])
+        code, allp = request("/api/v1/patients?scope=all", token=h1)
+        check("治疗师不能用 scope=all（管理员专属）", code == 403, f"HTTP {code}")
 
-        # 10) 他人可排被临时释放的患者
-        code, other = request("/api/v1/schedule", "POST",
-                              {"patient_no": "S2A", "date": "2027-03-08", "period": "pm"}, h2)
-        check("他人可排被临时释放的患者", code == 201, str(other)[:140])
+        # ---------------------------------------------------------------- #
+        # 6) 同步通道只剩治疗记录
+        # ---------------------------------------------------------------- #
+        code, info = request("/api/v1/sync/info", token=h1)
+        check("同步信息可读", code == 200, f"HTTP {code}")
+        check("可推送实体只剩 treatment_record",
+              info.get("pushable_entities") == ["treatment_record"],
+              str(info.get("pushable_entities")))
+        check("可拉取实体不含已下线的 appointment",
+              "appointment" not in (info.get("pullable_entities") or []),
+              str(info.get("pullable_entities")))
+        check("冲突策略里不再有 appointment",
+              "appointment" not in (info.get("conflict_policy") or {}),
+              str(list((info.get("conflict_policy") or {}).keys())))
 
-        # 11) 请假生效查询
-        code, eff = request(f"/api/v1/leave/effective{q(date='2027-03-08', period='am')}", token=h1)
-        check("am 处于请假", code == 200 and eff["on_leave"] is True, str(eff)[:140])
-        code, eff = request(f"/api/v1/leave/effective{q(date='2027-03-08', period='pm')}", token=h1)
-        check("同日下午未请假", eff["on_leave"] is False)
-
-        # 12) 多日假：正式排空
-        code, multi = request("/api/v1/leave", "POST",
-                              {"leave_type": "multi_day", "start_date": "2027-04-01", "end_date": "2027-04-05"}, h1)
-        check("登记多日假", code == 201, str(multi)[:140])
-        code, patient = request("/api/v1/patients/S2A", token=h1)
-        check("多日假正式排空归属", patient["assigned_therapist_id"] is None, str(patient)[:180])
-
-        # 13) 撤销多日假：回收未认领的
-        code, cancelled = request(f"/api/v1/leave/{multi['id']}/cancel", "POST", {"cancel_reason": "计划变更"}, h1)
-        check("撤销多日假", code == 200 and cancelled["status"] == "cancelled", str(cancelled)[:160])
-        check("未认领患者被恢复", "S2A" in cancelled.get("restored", []), str(cancelled.get("restored")))
-
-        # 14) 撤销单日假后临时释放被关闭
-        code, c2 = request(f"/api/v1/leave/{leave['id']}/cancel", "POST", {}, h1)
-        check("撤销单日假", code == 200, str(c2)[:140])
-        code, patient = request("/api/v1/patients/S2A", token=h1)
-        check("撤销后归属恢复为原治疗师",
-              patient["visible_therapist_id"] == ids["T001"] and patient["visibility_state"] == "assigned",
-              str(patient)[:180])
-
-        # 15) 复制排期（跳过冲突格子）
-        code, copied = request("/api/v1/schedule/copy", "POST",
-                               {"mode": "yesterday", "target_date": D_TUE}, h1)
-        check("复制昨天返回结果", code == 200 and "created" in copied and "skipped" in copied, str(copied)[:200])
-
-        # 16) 权限：治疗师不能排别人的患者
-        code, err = request("/api/v1/schedule", "POST",
-                            {"patient_no": "S2A", "date": "2027-03-15", "period": "am",
-                             "therapist_id": ids["T002"]}, h1)
-        check("治疗师不能替他人排期 → 403", code == 403 and err["code"] == "SCHEDULE_OTHER_THERAPIST",
-              str(err)[:140])
-
-        # 17) 管理员代录请假
-        code, admin_leave = request("/api/v1/leave/admin", "POST",
-                                    {"leave_type": "full_day", "start_date": "2027-05-06",
-                                     "therapist_id": ids["T002"]}, at)
-        check("管理员代录请假 source=admin_entry",
-              code == 201 and admin_leave["source"] == "admin_entry"
-              and admin_leave["created_by_name"] == "科室管理员", str(admin_leave)[:200])
-
-        # 18) 取消排期释放格子
-        code, cancelled_appt = request(f"/api/v1/schedule/{appt['id']}", "DELETE", {}, h1)
-        check("取消排期", code == 200 and cancelled_appt["status"] == "cancelled", str(cancelled_appt)[:140])
-        code, again = request("/api/v1/schedule", "POST",
-                              {"patient_no": "S2B", "date": D_MON, "period": "am"}, h1)
-        check("取消后格子可复用", code == 201, str(again)[:140])
     finally:
         server.should_exit = True
         thread.join(timeout=10)
 
     print()
     if failures:
-        print(f"{len(failures)} 项失败：")
+        print(f"阶段 2 验收：{len(failures)} 项失败")
         for f in failures:
             print(f"  - {f}")
         return 1
-    print("阶段 2 端到端验证全部通过。")
+    print("阶段 2 验收：全部通过")
     return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    sys.exit(main())

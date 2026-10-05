@@ -22,6 +22,8 @@ PERIOD_PM = "pm"
 PERIOD_FULL = "full"
 
 APPOINTMENT_PERIODS: tuple[str, ...] = (PERIOD_AM, PERIOD_PM)
+# `full`（全天）现在是**临时指派**用的粒度（`temporary_assignment.period`）。
+# 名字保留是历史原因：2026-10-05 请假功能下线前它是请假粒度。
 LEAVE_PERIODS: tuple[str, ...] = (PERIOD_AM, PERIOD_PM, PERIOD_FULL)
 
 PERIOD_LABELS: dict[str, str] = {

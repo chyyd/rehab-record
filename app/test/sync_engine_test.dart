@@ -55,14 +55,14 @@ void main() {
 
     test('同一 client_uuid 重复入队是覆盖而不是新增（幂等键）', () async {
       await engine.enqueueInsert(
-        entity: 'appointment',
+        entity: 'treatment_record',
         clientUuid: 'uuid-dup',
-        payload: {'date': '2027-03-01'},
+        payload: {'record_date': '2027-03-01'},
       );
       await engine.enqueueInsert(
-        entity: 'appointment',
+        entity: 'treatment_record',
         clientUuid: 'uuid-dup',
-        payload: {'date': '2027-03-02'},
+        payload: {'record_date': '2027-03-02'},
       );
 
       final rows = await db.select(db.changeQueue).get();
@@ -105,10 +105,10 @@ void main() {
   });
 
   group('应用服务端变更（payload 是完整快照 → 幂等 upsert）', () {
-    test('排期 insert 落库', () async {
+    test('治疗记录 insert 落库', () async {
       await engine.applyChange({
         'id': 11,
-        'entity': 'appointment',
+        'entity': 'treatment_record',
         'entity_id': '11',
         'op': 'insert',
         'revision': 1,
@@ -116,24 +116,25 @@ void main() {
           'id': 11,
           'patient_no': 'ZY001',
           'therapist_id': 2,
-          'date': '2027-03-01',
-          'period': 'am',
-          'status': 'planned',
+          'record_date': '2027-03-01',
+          'session_period': 'am',
+          'duration_min': 30,
+          'status': 'draft',
           'revision': 1,
         },
       });
 
-      final row = await db.select(db.appointments).getSingle();
+      final row = await db.select(db.treatmentRecords).getSingle();
       expect(row.id, 11);
       expect(row.patientNo, 'ZY001');
-      expect(row.period, 'am');
+      expect(row.sessionPeriod, 'am');
       expect(row.revision, 1);
     });
 
     test('同一实体重复应用不产生重复行（弱网重放安全）', () async {
       final change = {
         'id': 12,
-        'entity': 'appointment',
+        'entity': 'treatment_record',
         'entity_id': '12',
         'op': 'insert',
         'revision': 1,
@@ -141,16 +142,17 @@ void main() {
           'id': 12,
           'patient_no': 'ZY002',
           'therapist_id': 3,
-          'date': '2027-03-01',
-          'period': 'pm',
-          'status': 'planned',
+          'record_date': '2027-03-01',
+          'session_period': 'pm',
+          'duration_min': 45,
+          'status': 'draft',
           'revision': 1,
         },
       };
       await engine.applyChange(change);
       await engine.applyChange({...change, 'revision': 2, 'payload': {...change['payload']! as Map, 'revision': 2}});
 
-      final rows = await db.select(db.appointments).get();
+      final rows = await db.select(db.treatmentRecords).get();
       expect(rows.length, 1);
       expect(rows.single.revision, 2, reason: '第二次应用应更新成新版本');
     });
@@ -215,27 +217,41 @@ void main() {
 
     test('delete 变更移除本地行', () async {
       await engine.applyChange({
-        'id': 41, 'entity': 'appointment', 'entity_id': '41', 'op': 'insert', 'revision': 1,
+        'id': 41, 'entity': 'treatment_record', 'entity_id': '41', 'op': 'insert', 'revision': 1,
         'payload': {
           'id': 41, 'patient_no': 'ZY009', 'therapist_id': 2,
-          'date': '2027-03-05', 'period': 'am', 'status': 'planned', 'revision': 1,
+          'record_date': '2027-03-05', 'session_period': 'am', 'status': 'draft', 'revision': 1,
         },
       });
-      expect((await db.select(db.appointments).get()).length, 1);
+      expect((await db.select(db.treatmentRecords).get()).length, 1);
 
       await engine.applyChange({
-        'id': 42, 'entity': 'appointment', 'entity_id': '41', 'op': 'delete', 'revision': 1,
+        'id': 42, 'entity': 'treatment_record', 'entity_id': '41', 'op': 'delete', 'revision': 1,
         'payload': null,
       });
-      expect(await db.select(db.appointments).get(), isEmpty);
+      expect(await db.select(db.treatmentRecords).get(), isEmpty);
     });
 
     test('payload 为 null 的非删除变更不崩', () async {
       await engine.applyChange({
-        'id': 51, 'entity': 'appointment', 'entity_id': '51', 'op': 'update', 'revision': 1,
+        'id': 51, 'entity': 'treatment_record', 'entity_id': '51', 'op': 'update', 'revision': 1,
         'payload': null,
       });
-      expect(await db.select(db.appointments).get(), isEmpty);
+      expect(await db.select(db.treatmentRecords).get(), isEmpty);
+    });
+
+    test('已下线的 appointment 变更不写库（assert 下会打印告警）', () async {
+      // 排期已整体下线（2026-10-05）。若服务端同步通道没删干净还有 appointment
+      // 流下来，本地**不能**写任何行，也不该抛异常中断整批变更的应用。
+      await engine.applyChange({
+        'id': 61, 'entity': 'appointment', 'entity_id': '61', 'op': 'insert', 'revision': 1,
+        'payload': {
+          'id': 61, 'patient_no': 'ZY009', 'therapist_id': 2,
+          'date': '2027-03-05', 'period': 'am', 'status': 'planned', 'revision': 1,
+        },
+      });
+      expect(await db.select(db.treatmentRecords).get(), isEmpty);
+      expect(await db.select(db.recordItems).get(), isEmpty);
     });
   });
 }

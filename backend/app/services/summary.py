@@ -19,6 +19,7 @@ import sqlite3
 from typing import Any
 
 from app.core import jsonutil
+from app.models import treatment as treatment_model
 from app.models.base import Invalid
 
 # 计入汇总的记录状态
@@ -94,9 +95,13 @@ def _fetch_rows(
         where.append(f"r.patient_no IN ({', '.join('?' for _ in patient_nos)})")
         params.extend(patient_nos)
 
+    # 「临时治疗」= 记录人不是该患者**当时**的归属治疗师。
+    # 归属人按 patient_assignment_history 回溯到记录创建时刻（见 temporary_expr）。
     sql = (
         "SELECT r.id AS record_id, r.record_date, r.session_period, r.seq_no, r.status,"
-        " r.duration_min, r.note, r.patient_response_json, r.is_temporary,"
+        " r.duration_min, r.note, r.patient_response_json,"
+        + treatment_model.temporary_expr("r")
+        + ","
         " r.patient_no, p.name AS patient_name, p.diagnosis,"
         " r.therapist_id, u.name AS therapist_name,"
         " ri.main_item_id, m.name AS main_item_name, m.sort AS main_sort,"

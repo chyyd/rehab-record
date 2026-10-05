@@ -25,7 +25,7 @@ class ConflictItem {
 
   final String clientUuid;
 
-  /// `treatment_record` / `appointment`。
+  /// `treatment_record`（2026-10-05 排期下线后，它是唯一可离线写的实体）。
   final String entity;
 
   /// `insert` / `update`。
@@ -61,7 +61,8 @@ class ConflictItem {
 
   String get entityLabel => switch (entity) {
         'treatment_record' => '治疗记录',
-        'appointment' => '排期',
+        // 排期已于 2026-10-05 下线；保留这条只为让**历史队列数据**仍显示得出来。
+        'appointment' => '排期（已下线）',
         _ => entity,
       };
 
@@ -76,9 +77,8 @@ class ConflictItem {
   String? get patientNo => payload['patient_no'] as String?;
 
   String? get recordDate => payload['record_date'] as String?;
-  String? get apptDate => payload['date'] as String?;
 
-  String get dateLabel => recordDate ?? apptDate ?? '—';
+  String get dateLabel => recordDate ?? '—';
 
   /// 明细条数（治疗记录才有）。
   int get itemCount {

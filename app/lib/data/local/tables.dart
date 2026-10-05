@@ -39,29 +39,6 @@ class Patients extends Table {
   Set<Column> get primaryKey => {inpatientNo};
 }
 
-/// 排期镜像表（可离线写）。
-class Appointments extends Table {
-  /// 服务端 `appointment.id`；本地新建时先用负数占位，推送成功后用返回值回写。
-  IntColumn get id => integer()();
-  TextColumn get patientNo => text()();
-  IntColumn get therapistId => integer()();
-  TextColumn get date => text()();
-  TextColumn get period => text()();
-  TextColumn get startTime => text().nullable()();
-  TextColumn get endTime => text().nullable()();
-  TextColumn get slotLabel => text().nullable()();
-  TextColumn get status => text().withDefault(const Constant('planned'))();
-  TextColumn get note => text().nullable()();
-  IntColumn get revision => integer().withDefault(const Constant(0))();
-  TextColumn get clientUuid => text().nullable()();
-
-  /// `local` / `pending` / `synced` / `conflict`（协议 §6）。
-  TextColumn get syncStatus => text().withDefault(const Constant('synced'))();
-
-  @override
-  Set<Column> get primaryKey => {id};
-}
-
 /// 治疗记录镜像表（可离线写）。
 class TreatmentRecords extends Table {
   IntColumn get id => integer()();
@@ -81,7 +58,6 @@ class TreatmentRecords extends Table {
   IntColumn get seqNo => integer().nullable()();
   IntColumn get editCount => integer().withDefault(const Constant(0))();
   IntColumn get revision => integer().withDefault(const Constant(0))();
-  IntColumn get appointmentId => integer().nullable()();
 
   /// 2026-10-03 起"全科白板"，实测这两个字段恒为 false/NULL（协议 §10）。
   /// 保留只为与服务端字段一一对应，**不要**再用它做 UI 判断。

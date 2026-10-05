@@ -12,11 +12,10 @@ from app.db import storage
 from tests.support import DbTestCase
 
 EXPECTED_TABLES = {
-    "appointment",
+    # 2026-10-05：`appointment` / `rest_block` / `leave_record` 随排期功能下线一并删除。
     "audit_log",
     "auth_session",
     "change_log",
-    "leave_record",
     "main_item",
     "option_item",
     "option_set",
@@ -26,7 +25,6 @@ EXPECTED_TABLES = {
     "record_template",
     "record_template_item",
     "response_def",
-    "rest_block",
     "schema_migrations",
     "sub_item",
     "sub_item_param_def",
@@ -36,7 +34,9 @@ EXPECTED_TABLES = {
 }
 
 EXPECTED_VIEWS = {
-    "v_patient_next_appointment",
+    # `v_patient_next_appointment` → `v_patient_last_treated`（迁移 007/008）：
+    # 患者列表排序依据从"下一个排期"换成"我最近一次已提交治疗"。
+    "v_patient_last_treated",
     "v_open_temporary_assignment",
     "v_patient_visibility",
 }
@@ -155,12 +155,21 @@ class TestTimestamps(DbTestCase):
         self.assertLess(delta, timedelta(minutes=5), f"时间戳基准错误，偏差 {delta}")
 
     def test_updated_at_trigger_uses_utc_with_millis(self) -> None:
-
-        appt_patient = self.add_patient("ZY001")
+        # 2026-10-05：原来拿 appointment 验这条，排期表已随功能下线删除；
+        # 改用 temporary_assignment（保留表，触发器同样只在状态变化时刷新 updated_at）。
+        self.add_patient("ZY001")
         therapist = self.add_user("T001")
-        appt_id = self.add_appointment(appt_patient, therapist)
-        self.conn.execute("UPDATE appointment SET note = 'x' WHERE id = ?", (appt_id,))
-        updated = self.conn.execute("SELECT updated_at FROM appointment WHERE id = ?", (appt_id,)).fetchone()[0]
+        cur = self.conn.execute(
+            "INSERT INTO temporary_assignment"
+            " (patient_no, original_therapist_id, date, period, status)"
+            " VALUES ('ZY001', ?, '2026-10-05', 'am', 'open')",
+            (therapist,),
+        )
+        temp_id = int(cur.lastrowid)
+        self.conn.execute("UPDATE temporary_assignment SET status = 'closed' WHERE id = ?", (temp_id,))
+        updated = self.conn.execute(
+            "SELECT updated_at FROM temporary_assignment WHERE id = ?", (temp_id,)
+        ).fetchone()[0]
         self.assertRegex(updated, r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$")
 
     def test_no_localtime_in_migration_sql(self) -> None:
@@ -184,10 +193,13 @@ class TestSqliteEnvironment(DbTestCase):
 
     def test_foreign_keys_are_enforced(self) -> None:
         self.migrate()
+        # 2026-10-05：原用 appointment 验外键，该表已删除；
+        # 改用 treatment_record（同样有 patient_no / therapist_id 两条外键）。
         with self.assertRaises(sqlite3.IntegrityError):
             self.conn.execute(
-                "INSERT INTO appointment (patient_no, therapist_id, date, period) VALUES (?, ?, ?, ?)",
-                ("NOT_EXIST", 999, "2026-10-05", "am"),
+                "INSERT INTO treatment_record (patient_no, therapist_id, record_date)"
+                " VALUES (?, ?, ?)",
+                ("NOT_EXIST", 999, "2026-10-05"),
             )
 
     def test_wal_mode_enabled(self) -> None:

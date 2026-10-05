@@ -10,12 +10,10 @@ import { Avatar, Dropdown, Layout, Menu, Typography } from 'antd'
 import {
   AppstoreOutlined,
   AuditOutlined,
-  CalendarOutlined,
   DashboardOutlined,
   DatabaseOutlined,
   FileTextOutlined,
   FormOutlined,
-  HeartOutlined,
   LogoutOutlined,
   PrinterOutlined,
   TeamOutlined,
@@ -35,14 +33,16 @@ export interface NavItem {
   adminOnly?: boolean
 }
 
-/** 侧边菜单项。key 即路由路径，与 `routes.tsx` 一一对应。 */
+/** 侧边菜单项。key 即路由路径，与 `routes.tsx` 一一对应。
+ *
+ * 2026-10-05：移除「全局排期」与「请假管理」—— 排期功能整体下线，
+ * 本系统只记录"已经做了什么"，不做排班。
+ */
 export const NAV_ITEMS: NavItem[] = [
   { key: '/', label: '总览', icon: <DashboardOutlined /> },
   { key: '/patients', label: '患者管理', icon: <TeamOutlined /> },
-  { key: '/schedule', label: '全局排期', icon: <CalendarOutlined /> },
   { key: '/records', label: '治疗记录', icon: <FileTextOutlined /> },
   { key: '/summary', label: '汇总与打印', icon: <PrinterOutlined /> },
-  { key: '/leave', label: '请假管理', icon: <HeartOutlined /> },
   { key: '/users', label: '用户管理', icon: <UserOutlined />, adminOnly: true },
   { key: '/dict', label: '字典管理', icon: <DatabaseOutlined />, adminOnly: true },
   { key: '/option-sets', label: '选项集管理', icon: <AppstoreOutlined />, adminOnly: true },

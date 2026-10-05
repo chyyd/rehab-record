@@ -381,29 +381,8 @@ def normalize_responses(
 
 
 # --------------------------------------------------------------------------- #
-# 由排期推导记录上下文
+# 半日推断
 # --------------------------------------------------------------------------- #
-def context_from_appointment(
-    conn: sqlite3.Connection, appointment_id: int, *, therapist_id: int
-) -> dict[str, Any]:
-    """从排期推导记录的日期、半日与临时标识（3.7 的"自动带入"）。"""
-    from app.models import appointment as appointment_model
-    from app.models import patient as patient_model
-
-    appt = appointment_model.get_appointment_or_raise(conn, appointment_id)
-    patient = patient_model.get_patient_or_raise(conn, str(appt["patient_no"]))
-    original = patient["assigned_therapist_id"]
-    is_temporary = original is not None and int(original) != therapist_id
-    return {
-        "patient_no": str(appt["patient_no"]),
-        "record_date": str(appt["date"]),
-        "session_period": str(appt["period"]),
-        "therapist_id": therapist_id,
-        "original_therapist_id": original,
-        "is_temporary": is_temporary,
-    }
-
-
 def infer_session_period(clock: str) -> str | None:
     """按当前时间推断所属半日（Q11 作息）。落在午休/作息外时返回 None，由调用方要求显式指定。"""
     from app.core.worktime import parse_hm
@@ -413,7 +392,6 @@ def infer_session_period(clock: str) -> str | None:
 
 __all__ = [
     "build_form",
-    "context_from_appointment",
     "infer_session_period",
     "normalize_responses",
     "resolve_params",

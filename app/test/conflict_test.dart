@@ -92,13 +92,13 @@ void main() {
     });
 
     test('applied 的条目出队并回写 revision', () async {
-      await seedPending(uuid: 'u2', entity: 'appointment', baseRevision: 1);
+      await seedPending(uuid: 'u2', entity: 'treatment_record', baseRevision: 1);
       final engineWithServer = SyncEngine(
         client: buildScriptedClient({
           kSyncPush: (
             200,
             pushResponse(applied: [
-              {'client_uuid': 'u2', 'entity': 'appointment', 'entity_id': 59, 'revision': 2},
+              {'client_uuid': 'u2', 'entity': 'treatment_record', 'entity_id': 59, 'revision': 2},
             ]),
           ),
         }),
@@ -110,13 +110,13 @@ void main() {
     });
 
     test('skipped 的条目也出队（避免死循环重试）', () async {
-      await seedPending(uuid: 'u3', entity: 'appointment');
+      await seedPending(uuid: 'u3', entity: 'treatment_record');
       final engineWithServer = SyncEngine(
         client: buildScriptedClient({
           kSyncPush: (
             200,
             pushResponse(skipped: [
-              {'client_uuid': 'u3', 'entity': 'appointment', 'reason': 'duplicate_in_batch'},
+              {'client_uuid': 'u3', 'entity': 'treatment_record', 'reason': 'duplicate_in_batch'},
             ]),
           ),
         }),
@@ -172,14 +172,14 @@ void main() {
     });
 
     test('discardMine：条目从队列移除', () async {
-      await seedPending(uuid: 'u6', entity: 'appointment', status: 'conflict');
+      await seedPending(uuid: 'u6', entity: 'treatment_record', status: 'conflict');
       await engine.discardMine('u6');
       expect(await db.select(db.changeQueue).get(), isEmpty);
     });
 
     test('discardMany：批量移除', () async {
-      await seedPending(uuid: 'a', entity: 'appointment', status: 'conflict');
-      await seedPending(uuid: 'b', entity: 'appointment', status: 'conflict');
+      await seedPending(uuid: 'a', entity: 'treatment_record', status: 'conflict');
+      await seedPending(uuid: 'b', entity: 'treatment_record', status: 'conflict');
       await seedPending(uuid: 'c', entity: 'treatment_record', status: 'pending');
 
       await engine.discardMany(['a', 'b']);
@@ -189,17 +189,17 @@ void main() {
     });
 
     test('conflictCount / conflicts 只取冲突条目', () async {
-      await seedPending(uuid: 'x', entity: 'appointment', status: 'conflict');
-      await seedPending(uuid: 'y', entity: 'appointment', status: 'pending');
-      await seedPending(uuid: 'z', entity: 'appointment', status: 'conflict');
+      await seedPending(uuid: 'x', entity: 'treatment_record', status: 'conflict');
+      await seedPending(uuid: 'y', entity: 'treatment_record', status: 'pending');
+      await seedPending(uuid: 'z', entity: 'treatment_record', status: 'conflict');
 
       expect(await engine.conflictCount(), 2);
       expect((await engine.conflicts()).map((r) => r.clientUuid), ['x', 'z']);
     });
 
     test('watchConflicts 是响应式的（裁决后界面自动少一条）', () async {
-      await seedPending(uuid: 'w1', entity: 'appointment', status: 'conflict');
-      await seedPending(uuid: 'w2', entity: 'appointment', status: 'conflict');
+      await seedPending(uuid: 'w1', entity: 'treatment_record', status: 'conflict');
+      await seedPending(uuid: 'w2', entity: 'treatment_record', status: 'conflict');
 
       final emissions = <int>[];
       final sub = engine.watchConflicts().listen((rows) => emissions.add(rows.length));
@@ -269,22 +269,22 @@ void main() {
       expect(label(null), contains('另一个版本'));
     });
 
-    test('排期冲突用 date 字段（不是 record_date）', () {
+    test('治疗记录冲突用 record_date 字段展示日期', () {
       final item = ConflictItem.fromRow(ChangeQueueData(
-        clientUuid: 'appt-1',
-        entity: 'appointment',
+        clientUuid: 'rec-1',
+        entity: 'treatment_record',
         op: 'insert',
         baseRevision: null,
-        payloadJson: '{"patient_no":"S2B","date":"2027-07-09","period":"pm"}',
+        payloadJson: '{"patient_no":"S2B","record_date":"2027-07-09","session_period":"pm"}',
         syncStatus: 'conflict',
         retryCount: 0,
         lastError: null,
         createdAt: '2027-07-08T00:00:00Z',
       ));
-      expect(item.entityLabel, '排期');
+      expect(item.entityLabel, '治疗记录');
       expect(item.opLabel, '新建');
       expect(item.dateLabel, '2027-07-09');
-      expect(item.itemCount, 0, reason: '排期没有明细项');
+      expect(item.itemCount, 0, reason: '这条载荷没带明细项');
     });
   });
 }

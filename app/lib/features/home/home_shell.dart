@@ -4,7 +4,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:rehab_app/features/auth/auth_controller.dart';
 import 'package:rehab_app/features/patients/patient_list_page.dart';
 import 'package:rehab_app/features/patients/patients_providers.dart';
-import 'package:rehab_app/features/schedule/schedule_page.dart';
 import 'package:rehab_app/features/settings/settings_page.dart';
 import 'package:rehab_app/features/sync/conflict_providers.dart';
 import 'package:rehab_app/features/sync/conflicts_page.dart';
@@ -24,7 +23,7 @@ class HomeShell extends ConsumerStatefulWidget {
 class _HomeShellState extends ConsumerState<HomeShell> {
   int _index = 0;
 
-  static const _titles = ['患者', '排期', '时间轴', '我的'];
+  static const _titles = ['患者', '时间轴', '我的'];
 
   @override
   Widget build(BuildContext context) {
@@ -72,7 +71,8 @@ class _HomeShellState extends ConsumerState<HomeShell> {
                     )
                   : const Icon(Icons.sync),
             ),
-          if (_index == 2) const TimelineSummaryButton(),
+          // 时间轴是第 2 个页签（下标 1）—— 排期页签下线后前移了一位。
+          if (_index == 1) const TimelineSummaryButton(),
           if (conflictCount > 0)
             Padding(
               padding: const EdgeInsets.only(right: 8),
@@ -104,7 +104,6 @@ class _HomeShellState extends ConsumerState<HomeShell> {
         index: _index,
         children: const [
           PatientListPage(),
-          SchedulePage(),
           TimelinePage(),
           SettingsPage(),
         ],
@@ -117,11 +116,6 @@ class _HomeShellState extends ConsumerState<HomeShell> {
             icon: Icon(Icons.people_outline),
             selectedIcon: Icon(Icons.people),
             label: '患者',
-          ),
-          const NavigationDestination(
-            icon: Icon(Icons.calendar_month_outlined),
-            selectedIcon: Icon(Icons.calendar_month),
-            label: '排期',
           ),
           const NavigationDestination(
             icon: Icon(Icons.timeline_outlined),

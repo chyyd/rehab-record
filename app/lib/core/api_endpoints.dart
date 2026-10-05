@@ -36,18 +36,6 @@ const String kSyncPush = '$kApiPrefix/sync/push';
 const String kSyncPull = '$kApiPrefix/sync/pull';
 
 // --------------------------------------------------------------------------- //
-// 排期 / 休息 / 请假
-// --------------------------------------------------------------------------- //
-const String kSchedule = '$kApiPrefix/schedule';
-const String kScheduleAvailability = '$kSchedule/availability';
-const String kSchedulePeriods = '$kSchedule/periods';
-const String kScheduleCopy = '$kSchedule/copy';
-const String kRestBlocks = '$kApiPrefix/rest-blocks';
-const String kLeave = '$kApiPrefix/leave';
-const String kLeaveEffective = '$kLeave/effective';
-const String kLeaveEnums = '$kLeave/enums';
-
-// --------------------------------------------------------------------------- //
 // 字典 / 选项集 / 反应定义 / 模板（只读缓存）
 // --------------------------------------------------------------------------- //
 const String kDictTree = '$kApiPrefix/dict/tree';

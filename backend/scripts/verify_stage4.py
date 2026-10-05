@@ -146,8 +146,8 @@ def main() -> int:
         # 1) 同步契约
         code, info = request("/api/v1/sync/info", token=h)
         check("同步契约可获取", code == 200, str(code))
-        check("只允许记录与排期离线写",
-              info["pushable_entities"] == ["treatment_record", "appointment"], str(info["pushable_entities"]))
+        check("只允许治疗记录离线写（排期已于 2026-10-05 下线）",
+              info["pushable_entities"] == ["treatment_record"], str(info["pushable_entities"]))
         check("冲突策略已声明",
               info["conflict_policy"]["treatment_record:draft"] == "client_wins"
               and info["conflict_policy"]["treatment_record:submitted"] == "server_wins",
@@ -158,7 +158,8 @@ def main() -> int:
         check("初始拉取为空", code == 200 and start["changes"] == [], str(start)[:140])
         base_cursor = start["cursor"]
 
-        # 3) 模拟断网期间攒下 5 条记录 + 1 条排期
+        # 3) 模拟断网期间攒下 5 条记录
+        #    （排期已于 2026-10-05 下线，不再往队列里塞 appointment）
         offline = [
             {
                 "entity": "treatment_record",
@@ -168,32 +169,19 @@ def main() -> int:
             }
             for index in range(5)
         ]
-        offline.append(
-            {
-                "entity": "appointment",
-                "client_uuid": "e2e-appt-0001",
-                "op": "insert",
-                "payload": {
-                    "patient_no": "S4A",
-                    "date": "2027-06-06",
-                    "period": "pm",
-                    "therapist_id": ids["T001"],
-                },
-            }
-        )
         code, pushed = request("/api/v1/sync/push", "POST", {"changes": offline}, h)
         check("离线批量推送全部应用",
-              code == 200 and len(pushed["applied"]) == 6, f"{code} {str(pushed)[:200]}")
+              code == 200 and len(pushed["applied"]) == 5, f"{code} {str(pushed)[:200]}")
         check("推送无冲突", pushed["conflicts"] == [], str(pushed["conflicts"])[:160])
         cursor_after_push = pushed["cursor"]
 
         # 4) 另一端按游标增量拉取
         code, pulled = request("/api/v1/sync/pull" + q(cursor=base_cursor), token=h)
-        check("增量拉取拿到全部 6 条变更",
-              code == 200 and len(pulled["changes"]) == 6, str(len(pulled.get("changes", []))))
+        check("增量拉取拿到全部 5 条变更",
+              code == 200 and len(pulled["changes"]) == 5, str(len(pulled.get("changes", []))))
         entities = [c["entity"] for c in pulled["changes"]]
-        check("变更含记录与排期",
-              entities.count("treatment_record") == 5 and entities.count("appointment") == 1, str(entities))
+        check("变更全部是治疗记录（排期已下线）",
+              entities.count("treatment_record") == 5 and "appointment" not in entities, str(entities))
         check("拉取游标与推送返回一致", pulled["cursor"] == cursor_after_push,
               f"{pulled['cursor']} vs {cursor_after_push}")
         check("记录变更带 items 快照",
@@ -212,11 +200,9 @@ def main() -> int:
         conn = storage.connect(settings)
         try:
             total = conn.execute("SELECT COUNT(*) FROM treatment_record WHERE patient_no = 'S4A'").fetchone()[0]
-            appts = conn.execute("SELECT COUNT(*) FROM appointment WHERE patient_no = 'S4A'").fetchone()[0]
         finally:
             conn.close()
         check("重推后记录数仍为 5（幂等）", total == 5, str(total))
-        check("重推后排期数仍为 1（幂等）", appts == 1, str(appts))
 
         # 7) 冲突：草稿 → 客户端优先
         conn = storage.connect(settings)
@@ -283,15 +269,16 @@ def main() -> int:
         check("已提交内容未被覆盖", note != "试图覆盖已提交", note)
 
         # 9) 一条冲突不影响整批
+        #    第二条用"新建一条记录"（不带基线 → 必然 applied），
+        #    排期已于 2026-10-05 下线，不能再拿它来当"正常那一条"。
         code, mixed = request(
             "/api/v1/sync/push", "POST",
             {"changes": [
                 {"entity": "treatment_record", "client_uuid": "e2e-rec-0000", "op": "update",
                  "base_revision": draft_rev,
                  "payload": record_payload("2027-06-01", "又一条冲突")},
-                {"entity": "appointment", "client_uuid": "e2e-appt-0002", "op": "insert",
-                 "payload": {"patient_no": "S4A", "date": "2027-06-07", "period": "am",
-                             "therapist_id": ids["T001"]}},
+                {"entity": "treatment_record", "client_uuid": "e2e-rec-mixed-0001", "op": "insert",
+                 "payload": record_payload("2027-06-07", "同批的另一条")},
             ]},
             h,
         )
@@ -318,8 +305,9 @@ def main() -> int:
 
         code, err = request(
             "/api/v1/sync/push", "POST",
-            {"changes": [{"entity": "appointment", "client_uuid": f"e2e-big-{i:04d}", "op": "insert",
-                          "payload": {"patient_no": "S4A", "date": "2027-06-09", "period": "am"}}
+            {"changes": [{"entity": "treatment_record", "client_uuid": f"e2e-big-{i:04d}",
+                          "op": "insert",
+                          "payload": record_payload("2027-06-09", f"超限第{i}条")}
                          for i in range(201)]},
             h,
         )

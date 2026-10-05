@@ -13,11 +13,11 @@ import 'package:rehab_app/data/remote/api_client.dart';
 import 'package:rehab_app/data/remote/record_dto.dart';
 import 'package:rehab_app/sync/sync_engine.dart';
 
-/// 治疗记录数据访问（离线优先）。
+/// 记录数据访问（离线优先）。
 ///
-/// 记录是**可离线写的第二类实体**（协议 §3.1：`treatment_record` 与 `appointment`），
-/// 且草稿的冲突策略是 `client_wins`（协议 §4.4）——治疗师在床旁刚写的东西
-/// 不该被服务端的旧版本盖掉。
+/// 记录是**可离线写的实体**（协议 §3.1）。2026-10-05 排期下线后，
+/// 它是**唯一**还能离线写的实体；草稿的冲突策略是 `client_wins`（协议 §4.4）
+/// ——治疗师在床旁刚写的东西不该被服务端的旧版本盖掉。
 // 见 api_client.dart 顶部说明：构造器刻意用「公开参数名 + 私有字段」。
 // 条件键（`if (x != null) 'k': x`）是构造可选 API 载荷最清楚的写法。
 // ignore_for_file: prefer_initializing_formals, use_null_aware_elements
@@ -136,7 +136,6 @@ class RecordRepository {
     required int therapistId,
     required String recordDate,
     required String? sessionPeriod,
-    required int? appointmentId,
     required int? durationMin,
     required String? note,
     required PatientResponseDraft response,
@@ -158,7 +157,6 @@ class RecordRepository {
             patientResponseJson:
                 Value(response.isEmpty ? null : jsonEncode(response.toJson())),
             status: Value(status),
-            appointmentId: Value(appointmentId),
             clientUuid: Value(uuid),
             syncStatus: const Value('pending'),
             pendingItemsJson: Value(jsonEncode(items.map((i) => i.toJson()).toList())),
@@ -169,7 +167,6 @@ class RecordRepository {
       'patient_no': patientNo,
       'record_date': recordDate,
       if (sessionPeriod != null) 'session_period': sessionPeriod,
-      if (appointmentId != null) 'appointment_id': appointmentId,
       if (durationMin != null) 'duration_min': durationMin,
       if (note != null && note.isNotEmpty) 'note': note,
       if (!response.isEmpty) 'patient_response': response.toJson(),

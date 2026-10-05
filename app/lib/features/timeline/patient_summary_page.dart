@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:open_filex/open_filex.dart';
 
 import 'package:rehab_app/core/api_endpoints.dart';
 import 'package:rehab_app/core/date_utils.dart';
 import 'package:rehab_app/core/worktime.dart';
 import 'package:rehab_app/data/remote/timeline_dto.dart';
+import 'package:rehab_app/features/timeline/pdf_export.dart';
 import 'package:rehab_app/features/timeline/timeline_providers.dart';
 
 /// 患者汇总：按天折叠的"这个患者每天做了什么"。
@@ -22,38 +22,22 @@ class PatientSummaryPage extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final async = ref.watch(patientDailySummaryProvider(inpatientNo));
-    final print = ref.watch(printControllerProvider);
     final theme = Theme.of(context);
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('患者汇总'),
         actions: [
-          IconButton(
-            tooltip: '打印 PDF',
-            icon: print.busy
-                ? const SizedBox(
-                    width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                : const Icon(Icons.print_outlined),
-            onPressed: print.busy
-                ? null
-                : () => ref.read(printControllerProvider.notifier).downloadAndOpen(
-                      path: kPrintSummaryPatient(inpatientNo),
-                      filenamePrefix: 'patient_$inpatientNo',
-                    ),
+          PdfExportButton(
+            path: kPrintSummaryPatient(inpatientNo),
+            filenamePrefix: 'patient_$inpatientNo',
+            jobName: '患者汇总 $inpatientNo',
           ),
         ],
-        bottom: print.message == null
-            ? null
-            : PreferredSize(
-                preferredSize: const Size.fromHeight(30),
-                child: _PrintBar(
-                  text: print.message!,
-                  isError: print.isError,
-                  path: print.path,
-                  onDismiss: () => ref.read(printControllerProvider.notifier).clear(),
-                ),
-              ),
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(30),
+          child: PrintResultBar(),
+        ),
       ),
       body: async.when(
         loading: () => const Center(child: CircularProgressIndicator()),
@@ -233,57 +217,6 @@ class _Metric extends StatelessWidget {
                   ?.copyWith(fontWeight: FontWeight.bold)),
           Text(label,
               style: TextStyle(fontSize: 11, color: theme.colorScheme.outline)),
-        ],
-      ),
-    );
-  }
-}
-
-class _PrintBar extends StatelessWidget {
-  const _PrintBar({
-    required this.text,
-    required this.isError,
-    required this.onDismiss,
-    this.path,
-  });
-
-  final String text;
-  final bool isError;
-  final VoidCallback onDismiss;
-  final String? path;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Container(
-      width: double.infinity,
-      color: isError ? scheme.errorContainer : scheme.secondaryContainer,
-      padding: const EdgeInsets.only(left: 12, right: 4),
-      child: Row(
-        children: [
-          Icon(isError ? Icons.warning_amber_outlined : Icons.picture_as_pdf_outlined,
-              size: 16),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(text,
-                style: const TextStyle(fontSize: 12),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis),
-          ),
-          // 文件名带时间戳，同一患者打两次不会互相覆盖。
-          if (path != null)
-            IconButton(
-              tooltip: '用系统阅读器打开',
-              icon: const Icon(Icons.open_in_new, size: 16),
-              visualDensity: VisualDensity.compact,
-              onPressed: () => OpenFilex.open(path!),
-            ),
-          IconButton(
-            icon: const Icon(Icons.close, size: 16),
-            onPressed: onDismiss,
-            tooltip: '关闭',
-            visualDensity: VisualDensity.compact,
-          ),
         ],
       ),
     );

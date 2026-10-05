@@ -17,10 +17,13 @@
 | 接口 | 作用 |
 |---|---|
 | `GET /api/v1/sync/info` | 能力探测：可推送/可拉取实体、批量上限、冲突策略说明 |
-| `POST /api/v1/sync/push` | **批量幂等推送**客户端本地变更（记录 + 排期） |
+| `POST /api/v1/sync/push` | **批量幂等推送**客户端本地变更（**一期只有治疗记录**） |
 | `GET /api/v1/sync/pull` | 按**游标**增量拉取服务端变更 |
 
 核心机制：**客户端生成 `client_uuid` 做幂等 + 整数 `revision` 做乐观锁 + `change_log.id` 做游标**。
+
+> **2026-10-05**：排期（`appointment`）随"排班不是本系统的职责"这一决策整体下线，
+> 同步通道**只剩治疗记录**。原 appointment 通道的 payload、冲突策略行与本地镜像表均已删除。
 
 ---
 
@@ -31,16 +34,17 @@
 ### 事实
 
 - `pullable_entities` 里**确实写着 `patient`**，但 `change_log` 表里**永远不会出现 `entity='patient'` 的行**。
-  实测：开发库 `change_log` 22 行 = `appointment` 3 + `treatment_record` 19，**`patient` 0 行**。
+  实测：开发库里 `change_log` 的实体只有 `treatment_record` 一种（排期下线后 `appointment` 的历史行
+  已由迁移 `008_drop_scheduling.sql` 清掉），**`patient` 0 行**。
 - 原因：`app/api/v1/patients.py` **完全不写 `change_log`**（只有 `write_audit`），
-  而 `change_log` 的写入点只有治疗记录（4 处）与排期（4 处）。
+  而 `change_log` 的写入点只有治疗记录（4 处）。
 
 ### 因此（客户端必须这样做）
 
 | 数据 | 获取方式 |
 |---|---|
 | **患者主数据** | **走 `GET /api/v1/patients` 分页拉取**（登录时 + 前台定期 + 下拉刷新），**不要**指望 pull |
-| 排期、治疗记录 | 走 `POST /sync/push` 与 `GET /sync/pull`（增量） |
+| 治疗记录 | 走 `POST /sync/push` 与 `GET /sync/pull`（增量） |
 | 字典 / 选项集 / 模板 / 患者反应定义 | 走各自只读接口，**整包 JSON 缓存**（见 §8） |
 
 ### 为什么不"补上"患者变更日志
@@ -57,7 +61,7 @@
 加"可见性维度"并重新评估。
 
 > 客户端实现建议：把"患者列表刷新"做成一个独立任务（如每 5 分钟或进入前台时），
-> 与同步引擎解耦；失败不影响记录/排期的同步。
+> 与同步引擎解耦；失败不影响治疗记录的同步。
 
 ---
 
@@ -66,11 +70,11 @@
 同步的数据范围由服务端按**当前登录人**决定，客户端不需要自己过滤，但必须理解语义：
 
 - **在院（`in_hospital`）+ 暂停（`paused`）** 的患者：**全科治疗师可见**，
-  其治疗记录与排期**可读可写**（写记录时只能以自己名义）。
+  其治疗记录**可读可写**（写记录时只能以自己名义）。
 - **已出院（`discharged`）**：默认**不可见**（`GET /patients` 与其记录/汇总都不可见）；
   管理员可用 `scope=all` 查看全表。
-- 归属（`assigned_therapist_id`）只影响**列表排序**（"我的患者优先"）与文书署名，
-  **不再是可见性闸门**。
+- 归属（`assigned_therapist_id`）只影响**列表排序**（"我的患者优先"，组内按我最近一次已提交治疗降序）
+  与文书署名，**不再是可见性闸门**。
 
 > 这意味着客户端**不能假设**"我在本地有的患者，下次一定还能看到"——
 > 患者可能已出院而从白板消失。本地库里对已不可见的患者做软标记，不要直接删除本地记录
@@ -83,25 +87,25 @@
 ### 3.1 可推送（离线可写）
 
 ```
-PUSHABLE_ENTITIES = ("treatment_record", "appointment")   # 仅此两类
-MAX_PUSH_BATCH   = 200                                    # 单次最多 200 条
+PUSHABLE_ENTITIES = ("treatment_record",)   # 一期只有治疗记录（排期已于 2026-10-05 下线）
+MAX_PUSH_BATCH   = 200                      # 单次最多 200 条
 ```
 
 推送其它实体（**包括 `patient`**）→ **422**，响应 `details.allowed` 给出允许值：
 
 ```json
-{"code":"INVALID","message":"该实体不在离线可写范围内（一期只允许治疗记录与排期）",
- "details":{"entity":"patient","allowed":["treatment_record","appointment"]}}
+{"code":"INVALID","message":"该实体不在离线可写范围内（一期只允许治疗记录）",
+ "details":{"entity":"patient","allowed":["treatment_record"]}}
 ```
 
 ### 3.2 可拉取
 
 ```
-PULLABLE_ENTITIES = ("patient", "appointment", "treatment_record")   # 注意 §1：patient 实际为空
-MAX_PULL_LIMIT    = 500                                              # 单次最多 500 条
+PULLABLE_ENTITIES = ("patient", "treatment_record")   # 注意 §1：patient 实际为空
+MAX_PULL_LIMIT    = 500                               # 单次最多 500 条
 ```
 
-`entities=` 参数只接受上述三个值，传其它值 → **422**。
+`entities=` 参数只接受上述两个值，传其它值 → **422**。
 
 ---
 
@@ -179,26 +183,9 @@ MAX_PULL_LIMIT    = 500                                              # 单次最
 - `therapist_id` 省略时默认取当前登录人；**传别人 → 403 `RECORD_OTHER_THERAPIST`**。
 - 更新时 `update_record` **只改传入的字段**；`status` **不能**通过 push 流转
   （提交/锁定走 `POST /records/{id}/submit` 与 `/lock`，见 §4.5）。
-
-**`appointment`**（`sync.py::_push_appointment`）：
-
-```json
-{
-  "patient_no": "ZY001",
-  "therapist_id": 2,
-  "date": "2027-03-01",
-  "period": "am",
-  "status": "planned",
-  "start_time": null,
-  "end_time": null,
-  "slot_label": null,
-  "note": null
-}
-```
-
-> **2026-10-03 起**：半日格子**不再互斥**，排期创建不会再因"治疗师半日已占""患者半日已占"返回 409。
-> 仅当命中**该治疗师的休息块**或**已生效请假**时返回 409。
-> `start_time`/`end_time` 是可选展示字段，**本系统不做时间合规校验**。
+- **没有 `appointment` 通道**：排期功能已于 2026-10-05 整体删除，`payload` 里也不需要
+  `appointment_id` / `is_temporary` / `original_therapist_id` 三个字段（记录表已删除这三列；
+  `is_temporary` 改由服务端**查询时推导**：记录人 ≠ 该患者在记录创建时刻的归属治疗师）。
 
 ### 4.4 冲突判定（服务端实现，客户端只需理解）
 
@@ -216,7 +203,7 @@ MAX_PULL_LIMIT    = 500                                              # 单次最
 | `base_revision` 与服务端 `revision` **相等** | 无冲突，直接应用 | — |
 | `treatment_record` 且服务端仍是 `draft` | **客户端优先** | `server_still_draft` |
 | `treatment_record` 且服务端已 `submitted`/`locked` | **服务端优先** | `server_status=submitted` / `=locked` |
-| 其它实体（`appointment`）且**是重试**且未给基线 | **客户端优先**（保证幂等） | `idempotent_retry` |
+| 其它实体、**是重试**且未给基线 | **客户端优先**（保证幂等） | `idempotent_retry` |
 | 其它实体、首次推送、未给基线 | **服务端优先** | `missing_base_revision` |
 | 其它实体、首次推送、给了过期基线 | **服务端优先** | `entity_prefers_server` |
 
@@ -224,8 +211,8 @@ MAX_PULL_LIMIT    = 500                                              # 单次最
 客户端重推自己创建的变更时**不要**带 `base_revision`——服务端识别为"重试"后按客户端优先处理。
 若带上过期基线，反而会被判成冲突（`entity_prefers_server`），弱网下每次重试都失败。
 
-> 只有 `treatment_record` 有"客户端优先"窗口（且仅限 `draft`）。
-> `appointment` 与字典类实体一律"服务端优先"。
+> 表里"其它实体"那三行现在是**理论分支**：一期唯一可推送的实体 `treatment_record` 本身就有
+> "客户端优先"窗口，`CLIENT_WINS_ENTITIES` 里也只有它。
 
 ### 4.5 不能通过 push 完成的动作
 
@@ -237,11 +224,10 @@ MAX_PULL_LIMIT    = 500                                              # 单次最
 | 锁定记录（管理员） | `POST /api/v1/records/{id}/lock` |
 | 删除草稿 | `DELETE /api/v1/records/{id}` —— **只能删自己的草稿** |
 | 认领 / 放弃 / 分配患者归属 | `POST /api/v1/patients/claim` / `{no}/release` / `{no}/assign` |
-| 登记 / 撤销请假 | `POST /api/v1/leave` / `{id}/cancel` |
-| 休息块增删改 | `POST/PUT/DELETE /api/v1/rest-blocks` |
 | 治疗师本人密码 | `PUT /api/v1/auth/password` |
 
 > 离线时这些入口应**置灰并提示"需联网"**，而不是排进队列（一期不做患者离线写）。
+> ~~登记/撤销请假、休息块增删改~~ 的接口**已随排期功能删除**（2026-10-05）。
 
 ---
 
@@ -253,7 +239,7 @@ MAX_PULL_LIMIT    = 500                                              # 单次最
 |---|---|---|
 | `cursor` | `0` | 上次返回的 `cursor`；`0` 表示从头（首次全量） |
 | `limit` | `500` | 1–500；超过 500 会被**钳制**到 500（查询参数由 FastAPI 校验） |
-| `entities` | 空 | 逗号分隔，仅接受三个可拉取实体；**只用于首次全量同步**，见 §5.3 |
+| `entities` | 空 | 逗号分隔，仅接受两个可拉取实体；**只用于首次全量同步**，见 §5.3 |
 
 ### 5.2 响应
 
@@ -281,7 +267,7 @@ MAX_PULL_LIMIT    = 500                                              # 单次最
 因此它**只适合首次全量同步**（客户端从空库开始，不关心其它实体的历史）：
 
 ```
-首次全量： pull(cursor=0, entities="treatment_record,appointment", limit=500) × N 轮
+首次全量： pull(cursor=0, entities="treatment_record", limit=500) × N 轮
           直到 has_more=false；终点用 latest_cursor
 之后增量： pull(cursor=本地游标, limit=500)   ← 不带 entities，在客户端按 entity 筛选
 ```
@@ -293,8 +279,8 @@ MAX_PULL_LIMIT    = 500                                              # 单次最
 - `treatment_record` 的 payload 带上 `items`（**含两层快照**：
   `sub_item_name_snapshot` 与 `params_snapshot_json`），
   代码注释明确写了"客户端据此在本地完整重建这条记录"。
-- `appointment` 的 payload 是排期字段快照。
 - `op='delete'` 的 payload 可能为 `null` —— 客户端按 `entity` + `entity_id` 删除本地行。
+- **不再有 `appointment` 的 payload**（排期通道已随功能删除）。
 
 因此客户端可以安全地做 **`INSERT ... ON CONFLICT DO UPDATE`（upsert）**，**幂等应用**。
 
@@ -331,11 +317,11 @@ local ──(入队)──> pending ──(push applied)──> synced
 
 ## 7. 客户端本地库（Drift）设计
 
-### 7.1 分工（2026-10-03 定稿）
+### 7.1 分工（2026-10-03 定稿，2026-10-05 修订）
 
 | 数据 | 本地形态 | 理由 |
 |---|---|---|
-| `patient` / `appointment` / `treatment_record`（含 items） | **镜像表** | 要支持查询、按游标增量 upsert、离线读写 |
+| `patient` / `treatment_record`（含 items） | **镜像表** | 要支持查询、按游标增量 upsert、离线读写 |
 | 字典树（主/子项目/参数定义） | **整包 JSON 缓存**（`ref_cache`） | 只读；89 个参数定义建成表换不来查询收益，反而多一套迁移 |
 | 选项集解析结果（按 `code`） | 整包 JSON 缓存 | 同上；解析规则在服务端（个人→科室→全局→内置） |
 | 患者反应定义 / 记录模板 | 整包 JSON 缓存 | 同上 |
@@ -349,13 +335,9 @@ local ──(入队)──> pending ──(push applied)──> synced
 patient(inpatient_no PK, name, diagnosis, admin_note, assigned_therapist_id,
         visible_therapist_id, visibility_state, status, revision, fetched_at)
 
-appointment(id PK, patient_no, therapist_id, date, period, start_time, end_time,
-            slot_label, status, note, revision, client_uuid, sync_status)
-
 treatment_record(id PK, patient_no, therapist_id, record_date, session_period,
                  duration_min, note, patient_response_json, status, seq_no,
-                 edit_count, revision, appointment_id, is_temporary,
-                 original_therapist_id, client_uuid, sync_status)
+                 edit_count, revision, client_uuid, sync_status)
 
 record_item(id PK, record_id FK, main_item_id, sub_item_id,
             sub_item_name_snapshot, params_json, params_snapshot_json, sort)
@@ -369,11 +351,15 @@ ref_cache(key PK, payload, fetched_at, etag)
 
 **要点**：
 
-1. **主键用服务端 id**（`treatment_record.id`、`appointment.id`），
+1. **主键用服务端 id**（`treatment_record.id`），
    本地新建时先用临时负数 id 或本地 UUID，服务端确认后回写真实 id。
-2. `client_uuid` 建唯一索引（服务端也有 `ux_record_client_uuid` / `ux_appt_client_uuid` 对应）。
+2. `client_uuid` 建唯一索引（服务端也有 `ux_record_client_uuid` 对应）。
 3. **不要**在本地复制 `change_log`；只存 `last_cursor`。
 4. 已不可见的患者（出院）**软标记**，不要级联删除本地记录（§2）。
+5. **不要**再建 `appointments` 镜像表：排期功能已删除，本地库 schemaVersion 也由 2 升到 3
+   （删除整张表 + 删除 `treatment_records.appointment_id` 列）。
+6. `is_temporary` / `original_therapist_id` **不再是本地列**（服务端记录表已删这两列，
+   `is_temporary` 由服务端查询时推导，需要时随记录一起拉取）。
 
 ---
 
@@ -385,7 +371,7 @@ ref_cache(key PK, payload, fetched_at, etag)
 3. 拉参考数据（整包 JSON 缓存）：
    GET /dict/tree · GET /response-defs/grouped · GET /templates · GET /option-sets
 4. 首次全量同步（按实体过滤，直到 has_more=false）：
-   GET /sync/pull?cursor=0&entities=treatment_record,appointment&limit=500 × N
+   GET /sync/pull?cursor=0&entities=treatment_record&limit=500 × N
 5. 拉患者列表（分页，直到取完）：
    GET /patients?scope=dept&page=N&page_size=…        ← 注意 §1：患者不走 pull
 6. 记录 last_cursor = 步骤 4 的 latest_cursor
@@ -407,24 +393,38 @@ access token 只放内存。自签 CA 用 Dart 层 `SecurityContext` 注入，**
 | 批量 >200 / 空批次 | 422 | `INVALID` | 拆批重推 |
 | 给自己的患者之外的治疗师写记录 | 403 | `RECORD_OTHER_THERAPIST` | 只能以自己名义写 |
 | 记录已锁定 | 403 | `RECORD_LOCKED` | 提示"已锁定，需管理员" |
-| 排期命中休息块 / 请假 | 409 | `CONFLICT` | 读 `details.conflicts[].rule`（`rest_block` / `on_leave`） |
 | 患者不可见（已出院） | 403 | `PATIENT_NOT_VISIBLE` | 刷新患者列表，提示可能已出院 |
+
+> ~~排期命中休息块 / 请假 → 409~~ 这一类错误**已随排期功能删除**（2026-10-05），不会再有。
 
 ---
 
-## 10. 与 2026-10-03 变更的关系（给后来者）
+## 10. 与历史变更的关系（给后来者）
+
+### 2026-10-05：排期下线
+
+科室确认**排班不是本系统的职责**（只记录"每天做了哪些治疗、每次治疗干了什么"）。
+本次变更**删除**了：
+
+1. **删除 `appointment` / `rest_block` / `leave_record` 三张表**与全部排期、休息、请假接口；
+2. **删除 `appointment` 同步通道**：`PUSHABLE_ENTITIES` 由 `("treatment_record", "appointment")`
+   减为 `("treatment_record",)`，`PULLABLE_ENTITIES` 删除 `appointment`，
+   冲突策略里的 appointment 行、payload 形状与本地镜像表一并删除；
+3. **删除 `treatment_record` 的三个存储列**：`appointment_id`、`is_temporary`、`original_therapist_id`
+   （`is_temporary` 改为**服务端查询时推导**：记录人 ≠ 该患者在**记录创建时刻**的归属治疗师）。
+
+**未变**：幂等（`client_uuid`）、游标（`change_log.id`）、冲突分层、批量上限、`base_revision` 语义、
+"患者不走 pull"（§1）。
+
+### 2026-10-03：全科白板
 
 本次"全科白板 + 半日格子不互斥"的变更**改变了**：
 
 1. **可见性**：治疗师能看到的患者从"我的/未分配/临时"扩展到"科室在院+暂停"；
-2. **排期冲突**：从三条减为两条（只剩休息块与请假），
-   `availability` 响应不再有"因已占用而不可排"，改为回传格子内已有排期；
+2. ~~**排期冲突**：从三条减为两条~~（**已随排期删除**）；
 3. **`scope` 取值**：新增 `dept`（治疗师默认），`visible` 保留为同义兼容值，`all` 仍仅管理员；
-4. **`is_temporary` / `original_therapist_id`**：语义已消失（全科都能写），
-   字段保留但新写入恒为 `false`/`NULL`。客户端**不要**再依赖它做 UI 判断。
-
-**未变**：幂等（`client_uuid`）、游标（`change_log.id`）、冲突分层、
-离线可写范围（记录 + 排期）、批量上限、`base_revision` 语义。
+4. ~~**`is_temporary` / `original_therapist_id`**：字段保留但新写入恒为 `false`/`NULL`~~
+   —— **2026-10-05 已直接删除这两列**，不要再依赖它们。
 
 ---
 

@@ -129,9 +129,8 @@ def create_record(
 ) -> dict[str, Any]:
     """创建记录。
 
-    自动带入（3.7）：传 `appointment_id` 时从排期取日期与半日，并据此判断
-    是否为"临时治疗"（记录人 ≠ 患者归属人）；未传则要求显式给 `record_date`，
-    日期缺失时用当天。
+    日期与半日由调用方显式给出（未给日期则用当天）；不再有"从排期自动带入"
+    这条路 —— 排期功能已于 2026-10-05 整体下线，本系统只记录**已经做了什么**。
     """
     from datetime import date as _date
 
@@ -141,18 +140,11 @@ def create_record(
     if payload.therapist_id is not None:
         user_model.get_by_id_or_raise(conn, payload.therapist_id)
 
-    context: dict[str, Any] = {}
-    if payload.appointment_id is not None:
-        context = records_service.context_from_appointment(
-            conn, payload.appointment_id, therapist_id=therapist_id
-        )
-    patient_no = payload.patient_no or context.get("patient_no")
-    if not patient_no:
-        raise NotFoundError("PATIENT_REQUIRED", "必须提供 patient_no 或 appointment_id")
+    patient_no = payload.patient_no
     _require_patient_visible(conn, user, str(patient_no))
 
-    record_date = payload.record_date or context.get("record_date") or _date.today().isoformat()
-    session_period = payload.session_period or context.get("session_period")
+    record_date = payload.record_date or _date.today().isoformat()
+    session_period = payload.session_period
 
     # 明细：校验子项目归属与参数，并生成快照
     items = _prepare_items(
@@ -172,14 +164,11 @@ def create_record(
         therapist_id=therapist_id,
         record_date=record_date,
         session_period=session_period,
-        appointment_id=payload.appointment_id,
         duration_min=payload.duration_min,
         patient_response=patient_response,
         note=payload.note,
         status=payload.status,
         items=items,
-        original_therapist_id=context.get("original_therapist_id"),
-        is_temporary=bool(context.get("is_temporary", False)),
     )
     write_audit(conn, user_id=int(user["id"]), action="create", target_type="treatment_record",
                 target_id=str(record["id"]), after={"status": record["status"]})
@@ -335,9 +324,26 @@ def delete_draft(
 ):
     from fastapi import Response
 
+    from app.services import sync as sync_service
+
     treatment_model.delete_draft(conn, record_id, user_id=int(user["id"]))
     write_audit(conn, user_id=int(user["id"]), action="delete_draft", target_type="treatment_record",
                 target_id=str(record_id))
+    # ★ 必须写变更日志（op="delete"），否则**删除事件传不到客户端**：
+    # 已经通过 `/sync/pull` 拉到过这条草稿的离线端会永久保留一条幻影记录
+    #（记录在服务端已经不存在，却没有任何变更告诉它删掉）。
+    # 这是 `change_log` 里唯一的 delete 来源 —— 治疗记录是唯一可离线写的实体，
+    # 而只有草稿允许删除。
+    sync_service.record_change(
+        conn,
+        entity="treatment_record",
+        entity_id=record_id,
+        op="delete",
+        # 删除没有"新版本"；用 0 表示终止态，客户端按 op 处理即可。
+        revision=0,
+        actor_user_id=int(user["id"]),
+        payload=None,
+    )
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 

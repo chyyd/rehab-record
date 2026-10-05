@@ -41,7 +41,6 @@ class RecordEditorState {
     this.patientNo = '',
     this.recordDate = '',
     this.sessionPeriod,
-    this.appointmentId,
     this.existingId,
     this.durationMin,
     this.note = '',
@@ -63,7 +62,6 @@ class RecordEditorState {
   final String patientNo;
   final String recordDate;
   final String? sessionPeriod;
-  final int? appointmentId;
 
   /// 本地草稿 id（继续编辑时非空）。
   final int? existingId;
@@ -95,7 +93,6 @@ class RecordEditorState {
     String? patientNo,
     String? recordDate,
     Object? sessionPeriod = _sentinel,
-    Object? appointmentId = _sentinel,
     Object? existingId = _sentinel,
     Object? durationMin = _sentinel,
     String? note,
@@ -116,8 +113,6 @@ class RecordEditorState {
       recordDate: recordDate ?? this.recordDate,
       sessionPeriod:
           sessionPeriod == _sentinel ? this.sessionPeriod : sessionPeriod as String?,
-      appointmentId:
-          appointmentId == _sentinel ? this.appointmentId : appointmentId as int?,
       existingId: existingId == _sentinel ? this.existingId : existingId as int?,
       durationMin: durationMin == _sentinel ? this.durationMin : durationMin as int?,
       note: note ?? this.note,
@@ -144,14 +139,12 @@ class RecordEditorArgs {
     required this.patientNo,
     this.recordDate,
     this.sessionPeriod,
-    this.appointmentId,
     this.existingId,
   });
 
   final String patientNo;
   final String? recordDate;
   final String? sessionPeriod;
-  final int? appointmentId;
 
   /// 继续编辑某条本地草稿。
   final int? existingId;
@@ -162,8 +155,7 @@ class RecordEditorArgs {
       other.patientNo == patientNo &&
       other.existingId == existingId &&
       other.recordDate == recordDate &&
-      other.sessionPeriod == sessionPeriod &&
-      other.appointmentId == appointmentId;
+      other.sessionPeriod == sessionPeriod;
 }
 
 /// 记录编辑器。
@@ -189,7 +181,6 @@ class RecordEditorController extends Notifier<RecordEditorState> {
       patientNo: args.patientNo,
       recordDate: args.recordDate ?? formatDate(DateTime.now()),
       sessionPeriod: args.sessionPeriod,
-      appointmentId: args.appointmentId,
       existingId: args.existingId,
       loading: true,
     );
@@ -423,7 +414,6 @@ class RecordEditorController extends Notifier<RecordEditorState> {
         therapistId: user.id,
         recordDate: state.recordDate,
         sessionPeriod: state.sessionPeriod,
-        appointmentId: state.appointmentId,
         durationMin: state.durationMin,
         note: state.note,
         response: state.response,

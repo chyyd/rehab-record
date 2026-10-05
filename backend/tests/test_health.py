@@ -32,7 +32,9 @@ class TestHealthWithFreshDatabase(DbTestCase):
         self.assertEqual(db["foreign_key_violations"], 0)
         self.assertEqual(db["pending_migrations"], [])
         self.assertEqual(db["problems"], [])
-        self.assertGreaterEqual(db["table_count"], 20)
+        # 2026-10-05：排期下线删掉 appointment / rest_block / leave_record 三张表，
+        # 20 → 18。这里只做"迁移确实建了东西"的下界断言，不锁死具体数量。
+        self.assertGreaterEqual(db["table_count"], 18)
 
     def test_health_exposes_q11_worktime(self) -> None:
         """前端排期页据此渲染半日边界，避免前端硬编码时间。"""

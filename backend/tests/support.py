@@ -127,19 +127,5 @@ class DbTestCase(unittest.TestCase):
         )
         return inpatient_no
 
-    def add_appointment(
-        self,
-        patient_no: str,
-        therapist_id: int,
-        date: str = "2026-10-05",
-        period: str = "am",
-        status: str = "planned",
-    ) -> int:
-        cur = self.conn.execute(
-            "INSERT INTO appointment (patient_no, therapist_id, date, period, status) VALUES (?, ?, ?, ?, ?)",
-            (patient_no, therapist_id, date, period, status),
-        )
-        return int(cur.lastrowid)
-
 
 __all__ = ["BACKEND_ROOT", "DbTestCase", "Settings", "WorkTimeConfig", "storage"]

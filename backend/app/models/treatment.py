@@ -34,8 +34,13 @@ STATUSES = (STATUS_DRAFT, STATUS_SUBMITTED, STATUS_LOCKED)
 EDITABLE_BY_OWNER = (STATUS_DRAFT, STATUS_SUBMITTED)
 PERIODS = ("am", "pm")
 
+# 查询列。
+# 2026-10-05：`appointment_id` 与 `is_temporary` 两个存储列随排期功能下线一并删除。
+# `appointment_id` 彻底没有意义（排期没了）；`is_temporary` 改为**查询时推导**，
+# 因为它是"记录人 ≠ 该患者**当时**的归属人"这个事实的函数，不该单独存一份
+# （存了就会与事实不一致）。推导 SQL 见 `temporary_expr()`。
 RECORD_COLUMNS = (
-    "id, appointment_id, patient_no, therapist_id, original_therapist_id, is_temporary,"
+    "id, patient_no, therapist_id,"
     " record_date, session_period, seq_no, duration_min, patient_response_json, note,"
     " status, edit_count, locked_at, created_at, submitted_at, updated_at, revision"
 )
@@ -45,21 +50,56 @@ ITEM_COLUMNS = (
 )
 
 
+def temporary_expr(alias: str = "") -> str:
+    """生成「是否临时治疗」的 SQL 表达式（`AS is_temporary`）。
+
+    语义：**记录人不是该患者在当时（记录创建时刻）的归属治疗师**。
+
+    为什么要在查询时重建而不能"看当前归属"：治疗师会换、患者会转手，
+    用当前归属去判断历史记录，等于"回头把旧账按今天的归属重算" ——
+    那些本来正常的记录会突然变成"临时"，已经计过的统计也会变。
+    `patient_assignment_history` 每次归属变更都留了痕（谁→谁、何时），
+    所以"当时是谁"是可以准确回溯的。
+
+    `original_therapist_id` 这个存储列已被删除：它只在"从排期进入"那条路径上
+    被赋值，排期下线后永远不会再写入（历史数据里也恒为 NULL）。
+    留一个永远不写的列比删掉它更危险 —— 后来的人会以为它有值。
+
+    归零安全：拿不到历史（该患者从未有过归属变更记录，或历史早于记录时间）
+    时视为**非临时**，与"患者当时无人负责"的事实一致（谁做都算正常）。
+    """
+    p = f"{alias}." if alias else ""
+    return (
+        " CASE WHEN ("
+        "   SELECT h.to_therapist_id FROM patient_assignment_history h"
+        f"   WHERE h.patient_no = {p}patient_no"
+        f"     AND h.created_at <= {p}created_at"
+        "   ORDER BY h.created_at DESC, h.id DESC LIMIT 1"
+        f" ) IS NOT NULL AND ("
+        "   SELECT h.to_therapist_id FROM patient_assignment_history h"
+        f"   WHERE h.patient_no = {p}patient_no"
+        f"     AND h.created_at <= {p}created_at"
+        "   ORDER BY h.created_at DESC, h.id DESC LIMIT 1"
+        f" ) <> {p}therapist_id"
+        " THEN 1 ELSE 0 END AS is_temporary"
+    )
+
+
 # --------------------------------------------------------------------------- #
 # 查询
 # --------------------------------------------------------------------------- #
 def get_record(conn: sqlite3.Connection, record_id: int) -> dict[str, Any] | None:
     """取单条记录，附带患者姓名与治疗师姓名、以及明细行。"""
     row = conn.execute(
-        "SELECT r.id, r.appointment_id, r.patient_no, r.therapist_id, r.original_therapist_id,"
-        " r.is_temporary, r.record_date, r.session_period, r.seq_no, r.duration_min,"
+        "SELECT r.id, r.patient_no, r.therapist_id,"
+        f"{temporary_expr('r')},"
+        " r.record_date, r.session_period, r.seq_no, r.duration_min,"
         " r.patient_response_json, r.note, r.status, r.edit_count, r.locked_at, r.created_at,"
         " r.submitted_at, r.updated_at, r.revision,"
-        " p.name AS patient_name, u.name AS therapist_name, o.name AS original_therapist_name"
+        " p.name AS patient_name, u.name AS therapist_name"
         " FROM treatment_record r"
         " JOIN patient p ON p.inpatient_no = r.patient_no"
         " JOIN user u ON u.id = r.therapist_id"
-        " LEFT JOIN user o ON o.id = r.original_therapist_id"
         " WHERE r.id = ?",
         (record_id,),
     ).fetchone()
@@ -136,8 +176,9 @@ def list_records(
     )
     total = int(conn.execute(f"SELECT COUNT(*) {base}", params).fetchone()[0])
     rows = conn.execute(
-        "SELECT r.id, r.appointment_id, r.patient_no, r.therapist_id, r.original_therapist_id,"
-        " r.is_temporary, r.record_date, r.session_period, r.seq_no, r.duration_min,"
+        "SELECT r.id, r.patient_no, r.therapist_id,"
+        f"{temporary_expr('r')},"
+        " r.record_date, r.session_period, r.seq_no, r.duration_min,"
         " r.note, r.status, r.edit_count, r.locked_at, r.created_at, r.submitted_at, r.revision,"
         " p.name AS patient_name, u.name AS therapist_name,"
         " (SELECT COUNT(*) FROM record_item ri WHERE ri.record_id = r.id) AS item_count"
@@ -205,14 +246,11 @@ def create_record(
     therapist_id: int,
     record_date: str,
     session_period: str | None = None,
-    appointment_id: int | None = None,
     duration_min: int | None = None,
     patient_response: Any = None,
     note: str | None = None,
     status: str = STATUS_DRAFT,
     items: list[dict[str, Any]] | None = None,
-    original_therapist_id: int | None = None,
-    is_temporary: bool = False,
 ) -> dict[str, Any]:
     if status not in STATUSES:
         raise Invalid(f"记录状态非法：{status}", details={"status": status})
@@ -235,12 +273,12 @@ def create_record(
 
     cur = conn.execute(
         "INSERT INTO treatment_record"
-        " (appointment_id, patient_no, therapist_id, original_therapist_id, is_temporary,"
+        " (patient_no, therapist_id,"
         "  record_date, session_period, seq_no, duration_min, patient_response_json, note,"
         "  status, submitted_at)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
-            appointment_id, patient_no, therapist_id, original_therapist_id, 1 if is_temporary else 0,
+            patient_no, therapist_id,
             record_date, session_period, seq_no, duration_min,
             jsonutil.dumps(patient_response), note, status, submitted_at,
         ),

@@ -137,10 +137,14 @@ def visibility_from(scope: Scope, user_id: int) -> tuple[str, list[Any]]:
     raise Conflict(f"未知的数据范围：{scope}", details={"scope": scope})
 
 
-def can_schedule(conn: sqlite3.Connection, patient_no: str, therapist_id: int) -> bool:
-    """治疗师能否给该患者排期（Q3：只能排"我的 / 未分配 / 临时认领"的患者）。
+def covers_patient(conn: sqlite3.Connection, patient_no: str, therapist_id: int) -> bool:
+    """该治疗师**当前是否有权开展/记录**这个患者的治疗（归属语义）。
 
-    注意用的是**可见归属**：单日假临时释放期间，原归属者反而不能排、临时认领者可以排。
+    注意用的是**可见归属**：单日假临时释放期间，原归属者反而不能动、临时认领者可以动。
+
+    > 原名 `can_schedule`。2026-10-05 排期功能整体下线后改名 ——
+    > 它从来表达的就不是"能不能排期"，而是"这个患者现在归谁"。
+    > 名字里留着 schedule 会让后来的人以为它跟排期有关而不敢动。
     """
     row = conn.execute(
         "SELECT visible_therapist_id FROM v_patient_visibility WHERE inpatient_no = ?", (patient_no,)
@@ -214,13 +218,27 @@ def list_patients(
     joins = (
         "FROM patient p"
         " JOIN v_patient_visibility v ON v.inpatient_no = p.inpatient_no"
-        " LEFT JOIN v_patient_next_appointment n ON n.patient_no = p.inpatient_no"
+        " LEFT JOIN v_patient_last_treated l"
+        "   ON l.patient_no = p.inpatient_no AND l.therapist_id = ?"
     )
-    total = int(conn.execute(f"SELECT COUNT(*) {joins} {where_sql}", params).fetchone()[0])
+    # JOIN 里带了一个占位参数（我的 user_id），要排在其他参数之前。
+    join_params: list[Any] = [user_id if user_id is not None else -1]
+    total = int(
+        conn.execute(
+            f"SELECT COUNT(*) FROM patient p"
+            f" JOIN v_patient_visibility v ON v.inpatient_no = p.inpatient_no"
+            f" {where_sql}",
+            params,
+        ).fetchone()[0]
+    )
 
-    # 排序（设计.md 3.4.3 "我的患者优先"）：
+    # 排序（设计.md 3.4.3 "我的患者优先"，2026-10-05 起改用实际治疗排序）：
     #   组 0 = 可见归属是我；组 1 = 无人负责；组 2 = 其他治疗师
-    #   组内按最近一次有效排期的日期与半日升序（无排期排最后）
+    #   组内按"我最近一次已提交治疗这个患者的日期"**降序**（越近越靠前），
+    #   从没被我治过的排最后（COALESCE 到极小日期）。
+    #
+    #   为什么是"最近治疗的"而不是"下一个排期的"：本系统不做排班，
+    #   治疗师打开列表是为了**接着记今天做过的患者**，所以"我刚治过谁"才是正确依据。
     order_params: list[Any] = []
     if user_id is None:
         order_sql = "ORDER BY p.inpatient_no"
@@ -228,14 +246,15 @@ def list_patients(
         order_sql = (
             "ORDER BY CASE WHEN v.visible_therapist_id = ? THEN 0"
             " WHEN v.visible_therapist_id IS NULL THEN 1 ELSE 2 END,"
-            " COALESCE(n.next_date, '9999-12-31'), COALESCE(n.next_period_rank, 9), p.inpatient_no"
+            " COALESCE(l.last_date, '0000-01-01') DESC,"
+            " COALESCE(l.last_period_rank, 9), p.inpatient_no"
         )
         order_params.append(user_id)
 
     rows = conn.execute(
         f"SELECT {_PATIENT_COLUMNS}, {_VISIBILITY_COLUMNS} {joins} {where_sql}"
         f" {order_sql} LIMIT ? OFFSET ?",
-        (*params, *order_params, limit, offset),
+        (*join_params, *params, *order_params, limit, offset),
     ).fetchall()
     return [dict(r) for r in rows], total
 
@@ -416,7 +435,7 @@ __all__ = [
     "VISIBILITY_VIEW_SQL",
     "assign_patient",
     "assignment_history",
-    "can_schedule",
+    "covers_patient",
     "claim_patient",
     "create_patient",
     "get_patient",

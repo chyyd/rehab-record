@@ -414,6 +414,49 @@
   - **验收**：实测 `start → stop → start` 与连续 `start` 多轮，确认端口能干净释放、进程不堆积；并用 headless Edge 走通"打开登录页 → 用脚本生成的密码登录 → 进入总览页"，无异常、无 console 错误。
 
 ### 决策
+- **【业务决策】2026-10-05：取消排期功能（排期 + 休息块 + 请假整体下线）**
+  - **用户的原始理由（决定的唯一依据）**："**app功能过剩，违背方便记录的初衷**"。
+    展开说：科室确认**排班不是本系统的职责** ——
+    「本系统只记录每天做了哪些治疗、每次治疗干了什么；排班在纸质/口头流程里就能解决，
+    不该变成治疗师的录入负担。」
+  - **删除范围（后端 + 管理后台 + 安卓，一次删干净）**：
+
+    | 层 | 删除内容 |
+    |---|---|
+    | 数据库 | `appointment`（排期）、`rest_block`（休息块）、`leave_record`（请假）三张表；视图 `v_patient_next_appointment`；`treatment_record` 的 `appointment_id` / `is_temporary` / `original_therapist_id` 三列（迁移 `007_patient_last_treated.sql`、`008_drop_scheduling.sql`） |
+    | 后端 | `api/v1/schedule.py`、`api/v1/leave.py`、`models/appointment.py`、`models/rest_block.py`、`models/leave.py`、`schemas/schedule.py`、`tests/test_schedule_and_leave.py`、`tests/test_schedule_constraints.py`、`tests/test_leave_and_response.py`；**接口由 87 个操作（65 路径）减到 70 个（52 路径）** |
+    | 管理后台 | `pages/SchedulePage.tsx`、`pages/LeavePage.tsx` 与对应菜单/路由（页面由 12 个减到 10 个） |
+    | 安卓 | `features/schedule/`、`schedule_dto.dart`、`schedule_repository.dart`；Drift 的 `Appointments` 表与 `TreatmentRecords.appointmentId` 列，**schemaVersion 2 → 3**；页签由 4 个减为 3 个（患者 / 时间轴 / 我的）；PDF 导出改为**发送给微信 / 系统打印 / 打开**三种去向 |
+    | 保留 | `temporary_assignment`（**它是归属解析，与请假无关**，`v_patient_visibility` 依赖它）与 `v_open_temporary_assignment`；`patient_model.can_schedule` **改名为 `covers_patient`**（行为不变，原名误导后来者以为它与排期有关） |
+
+  - **核心功能替代：患者列表排序改为"我最近一次已提交治疗"**。
+    旧：我的患者优先 → 未分配 → 其他，组内按**下一个排期日期升序**；
+    新：同样的归属分组，组内按**我最近一次已提交治疗的日期降序**（从没治过的排最后）。
+    **只算 `status='submitted'`** —— 草稿不算（"写了一半没提交"不该把患者顶到最前，那条记录在汇总/时间轴里
+    还不存在）、`locked` 也不算（记录已归档封存，不代表"我最近在治他"）。
+    依据由视图 `v_patient_last_treated` 动态计算（`patient_no, therapist_id, last_date, last_period_rank`），
+    **不在患者表冗余存储**。理由：治疗师打开列表是为了**接着记今天做过的患者**，
+    "我刚治过谁"才是正确依据；本系统既然不做排班，"下一个排期"这个依据本身就消失了。
+  - **代价（已实际发生，不是估计）**：
+
+    | 项 | 变更前 | 变更后 | 说明 |
+    |---|---|---|---|
+    | 后端测试 | 554 | **469**（实测 `unittest discover`，0 skip） | 排期/请假/冲突测试整体删除，并入新的 `tests/test_temporary_and_record_rules.py` |
+    | 端到端验收项数 | 190 | **182** | `verify_stage2.py` 由"排期与请假（29 项）"**重写**为"患者列表排序（22 项）"；`verify_stage4.py` 去掉 1 条排期幂等断言（29 → 28） |
+    | 浏览器 UI 验收 | 66 | **60** | 逐页导航的 11 个页面减到 9 个，每页 3 条断言 |
+    | 开发阶段 | 阶段 2（排期、休息与请假，第 3–4 周）已交付 | **阶段 2 作废** | `开发计划.md` 中 T2.1–T2.7 逐条标注取消原因，仅 T2.8（内置自签 CA）保留；阶段 2 的 6 条 DoD 全部失效 |
+
+  - **影响面**：数据模型（三张表 + 一个视图 + 三列）、接口（-17 个操作）、后端服务与路由、
+    管理后台路由与菜单、安卓本地库 schema（2 → 3，**需要客户端迁移**）、
+    `设计.md`（1.1–1.5、2.2、2.3、3.3、3.4、3.5、3.7、3.9、4.1–4.3、5.1–5.5、6.1、6.2、7、9）、
+    `开发计划.md`（1.2、2.2 的 S1/M07/M08/M09/M15、2.3 D10、2.4、3、4.2–4.6、5 阶段 2、6、7、8.1、9）、
+    `docs/sync-protocol.md`（§0–§11 全篇）、`README.md`、`docs/setup.md`、`app/README.md`。
+  - **不破坏兼容的地方**：`temporary_assignment` 表与 `v_open_temporary_assignment` 视图保留；
+    归属解析语义（`assigned` / `temp_released` / `temp_claimed`）不变；
+    `session_period`（`am`/`pm`）与 Q11 作息保留 —— 它们现在只表示"这条记录属于哪个半日"。
+  - **留下的现状缺口（未擅自补）**：请假删除后，`temporary_assignment` **没有任何登记入口**
+    （旧实现里由"单日请假"自动产生），接口层也不再暴露 `/patients/{no}/temp-release`、`/temp-claim`
+    （这两个接口从未实现过）；`v_patient_visibility` 与读时兜底照旧工作。需要临时接管时目前只能由管理员直接维护数据。
 - **【业务规则变更】2026-10-03：改为"全科白板"，放弃 Q2、放开 S1（治疗师半日可排多台）**
   - **科室原话（决定的依据）**：
     1. "一个上午里不同治疗师可能会给同一个患者做多次相同或不同名目的治疗，一次治疗最多 1 小时"；
@@ -679,6 +722,40 @@
 - 无。
 
 ### 文档
+- **排期下线后的文档与一致性脚本同步（2026-10-05）** —— 排期功能删掉后，
+  `scripts/check_docs_consistency.py` 里有 20 多处**硬编码的旧事实**（表清单、视图名、半日不变量、
+  `PUSHABLE_ENTITIES`、"3.4.4 半日格子视图"等）必然失效。本次不是把断言删空，
+  而是**逐条换成新实现的等价断言**，让它继续当"文档与代码一致"的守门人：
+
+  | 旧断言 | 新断言 |
+  |---|---|
+  | 表清单里有 `appointment` / `rest_block` / `leave_record` | 迁移 008 必须删掉这三张表，且**不删** `temporary_assignment`；再按"001 建表 − 008 删表"算有效表集合复核 |
+  | 视图 `v_patient_next_appointment` | 视图 `v_patient_last_treated`（007 建、008 重建），且必须只统计 `submitted`、按 `(patient_no, therapist_id)` 分组 |
+  | `treatment_record` 的 `is_temporary` / `appointment_id` 列 | 三列在 008 重建的表定义与 `treatment.py::RECORD_COLUMNS` 里都不存在；`is_temporary` 由 `temporary_expr()` 查询时推导 |
+  | "设计.md 两条半日不变量" | 这两条不得再作为现行规则出现（连同 3.4.4 半日格子、`ux_appt_*`、`/schedule` 等：凡是已删概念，**只允许出现在"已删除/已下线"的说明行里**） |
+  | 同步：`PUSHABLE_ENTITIES = ("treatment_record", "appointment")` | `("treatment_record",)`，并核对 `PULLABLE_ENTITIES`、`sync-protocol.md` 里的同一份清单 |
+  | —— | **新增**患者列表排序语义断言：`patient.py` 必须 JOIN `v_patient_last_treated` 且按 `COALESCE(l.last_date,'0000-01-01') DESC` 排序；`设计.md` 必须写明"我最近一次已提交治疗"与"草稿不算" |
+  | —— | **新增**接口数与验收项数对账：脚本直接数路由注册（70 操作 / 52 路径）与 `count_verify_checks.py` 的 AST 计数（182 项），与 `README.md` / `docs/setup.md` / `开发计划.md` 里的数字逐个核对 |
+  | —— | **新增**已删/新增文件的存在性断言（后端 9 个、安卓 4 个已删文件；`temporary_assignment.py` 与 007/008 两个迁移必须存在） |
+  | —— | **新增**安卓端断言：Drift `schemaVersion => 3`、删表删列语句、页签 3 个、PDF 三种去向 |
+
+  - **`count_verify_checks.py`（新增脚本）**：用 AST 数每个验收脚本"运行时会执行的 `check()` 次数"
+    （字面量循环会展开）。它算出的 14 / 25 / 22 / 35 / 28 / 58 与文档逐个对齐，
+    所以文档里的项数从此可复核、不再靠人工数。
+  - 脚本规模：一致性检查由 156 项扩到 **215 项**（新增患者列表排序语义、接口数对账、
+    已删/新增文件存在性、安卓端 schemaVersion 与页签、管理后台模块清单等断言）。
+  - 文档改动：`README.md`（进度表、接口 87→70、测试 554→469、端到端 190→182、浏览器 66→60、
+    迁移 001–008、仓库结构）、`docs/setup.md`（状态行 + 逐脚本项数 + 可选依赖用途）、
+    `开发计划.md`（V0.5/V0.6 修订记录、阶段 2 作废、S1/M07/M08 作废、M09/M15 重写、R2/R6/R7/R8/R9 与 Q 表改写）、
+    `设计.md`（删排期/休息/请假章节，新增 3.4.2 排序语义与 3.5 归属解析）、
+    `docs/sync-protocol.md`（去掉 appointment 通道）、`app/README.md`（页签 3 个、PDF 三种去向、
+    Drift schemaVersion 3）、**`admin/README.md`（删掉「全局排期」「请假管理」两个模块，10 个页面与路由表对齐）**。
+  - 数字来源（实测，不是估算）：`unittest discover` → **469 passed / 0 skip**；
+    `count_verify_checks.py` → 14/25/22/35/28/58（合计 **182**）；
+    路由注册 → **70 个操作 / 52 个路径**；`verify_admin_ui.py` 由 66 项减 **6** 项（删掉 2 个页面 × 3 条断言）= **60 项**；
+    `check_docs_consistency.py` 自报 **215 项 0 失败**（其中一项就是拿 README 里的这个数字与自身比对，写错会直接失败）。
+  - 影响面：**仅文档与校验脚本**。无代码、无模型、无接口、无迁移改动。
+
 - **修正文档中已漂移的测试与验收数量口径（2026-10-03）** —— 在新克隆的干净工作区按 `README.md` / `docs/setup.md` 完整重跑一遍后，发现同一批数字在多处并存且互相矛盾，读者无法判断该信哪个。
   - `README.md`：进度表由「538 个测试 + 浏览器 UI 验收 55 项」改为 **543 个测试 + 66 项**；"在真实浏览器里验收后台"一节的 55 项改为 **66 项**；末尾"仓库结构"块里阶段 0 遗留的「88 个测试」「migrations 只列 001/002」「seed 待阶段 3 补全」「admin 待建」一并按现状改正。
   - `docs/setup.md`：状态行由阶段 0 的「M0 骨架…127 个测试」更新为 **阶段 0–5 已交付（543 个测试、端到端 183 项、跨文档一致性 156 项、浏览器 UI 66 项）**；"跑测试"一节补全 6 个验收脚本并逐条标注实际项数（14/23/29/34/29/54），跨文档一致性由 103 项改为 **156 项**；第 0 节把 `argon2-cffi` / `APScheduler` 从"尚未安装"改为**可选依赖（本机已装 25.1.0 / 3.11.3）**；第 5 节"后续（阶段 1+）…可以直接开工"改为**阶段 0–5 均已交付、剩余只有安卓 App**。
@@ -761,8 +838,8 @@
 **这不是根治** —— 正确做法是补齐 `option_seed.json` 的变体或按子项目解析选项集
 （与 TODO-08 同一件事）。
 
-**为什么没在这轮直接改**：改种子会牵动既有数据与 190 项验收断言，属于独立任务，
-不该混在 App 功能提交里。
+**为什么没在这轮直接改**：改种子会牵动既有数据与验收断言（当时 190 项，排期下线后 182 项），
+属于独立任务，不该混在 App 功能提交里。
 
 #### TODO-09：PDF 生成模板（推迟项，不是缺陷登记）
 

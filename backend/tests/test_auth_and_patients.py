@@ -8,7 +8,8 @@
 2. 用户管理权限（管理员专属、不许消灭最后一个管理员）
 3. 患者数据级权限（D10：治疗师只能看自己/未分配/临时相关）
 4. 归属变更（认领 / 放弃 / 管理员指定 / 归属历史）
-5. 归属解析可见归属（单日假临时释放与临时认领）
+5. 归属解析可见归属（临时释放与临时认领）
+6. 患者列表排序（"我最近一次已提交治疗"降序，不再是下一个排期）
 """
 
 from __future__ import annotations
@@ -412,12 +413,109 @@ class TestPatientVisibility(ApiTestCase):
         headers = self.login_headers("A001")
         self.assert_error(self.client.get("/api/v1/patients/NOPE", headers=headers), 404, "PATIENT_NOT_FOUND")
 
-    def test_patient_list_puts_mine_first(self) -> None:
-        """设计.md 3.4.3：我的患者优先。"""
-        headers = self.login_headers("T001")
-        items = self.client.get("/api/v1/patients", headers=headers).json()["items"]
-        self.assertEqual(items[0]["inpatient_no"], "ZY001", "我的患者应排在最前")
-        self.assertEqual(items[1]["inpatient_no"], "ZY003", "其次应是未分配")
+
+class TestPatientListOrdering(ApiTestCase):
+    """设计.md 3.4.3：患者列表排序。
+
+    2026-10-05 起排序依据从"下一个排期"换成"我最近一次已提交治疗"
+    （视图 `v_patient_last_treated`）：
+
+        组 0 = 可见归属是我 → 组 1 = 无人负责 → 组 2 = 其他治疗师；
+        组内按我最近一次**已提交**治疗的日期降序，从没治过的排最后（再按住院号）。
+
+    所以这些用例一律用**治疗记录**构造顺序 —— 排期已经不存在了，
+    而"我刚治过谁"才是治疗师打开列表时真正关心的。
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.migrate()
+        self.t1 = self.make_user("T001", "张三")
+        self.t2 = self.make_user("T002", "李四")
+        self.make_admin("A001")
+        self.h1 = self.login_headers("T001")
+        self.h2 = self.login_headers("T002")
+        self.ha = self.login_headers("A001")
+        # ZY001 我的 / ZY002 别人的 / ZY003 未分配 —— 三者都还没被我治过
+        patient_model.create_patient(
+            self.conn, inpatient_no="ZY001", name="我的患者", assigned_therapist_id=int(self.t1["id"])
+        )
+        patient_model.create_patient(
+            self.conn, inpatient_no="ZY002", name="别人的患者", assigned_therapist_id=int(self.t2["id"])
+        )
+        patient_model.create_patient(self.conn, inpatient_no="ZY003", name="未分配患者")
+
+    def _add_patient(self, inpatient_no: str, name: str, therapist_id: int | None) -> None:
+        patient_model.create_patient(
+            self.conn, inpatient_no=inpatient_no, name=name, assigned_therapist_id=therapist_id
+        )
+
+    def _record(
+        self,
+        patient_no: str,
+        record_date: str,
+        headers: dict,
+        *,
+        status: str = "submitted",
+        period: str = "am",
+    ) -> dict:
+        """写一条记录：只有 `submitted` 会进 `v_patient_last_treated`。"""
+        resp = self.client.post(
+            "/api/v1/records",
+            json={
+                "patient_no": patient_no,
+                "record_date": record_date,
+                "session_period": period,
+                "status": status,
+            },
+            headers=headers,
+        )
+        self.assertEqual(resp.status_code, 201, resp.text)
+        return resp.json()
+
+    def _order(self, headers: dict | None = None) -> list[str]:
+        resp = self.client.get("/api/v1/patients", headers=headers or self.h1)
+        self.assertEqual(resp.status_code, 200, resp.text)
+        return [item["inpatient_no"] for item in resp.json()["items"]]
+
+    def test_groups_are_mine_then_unassigned_then_others(self) -> None:
+        """谁都没治过时，顺序完全由归属分组决定。"""
+        self.assertEqual(self._order(), ["ZY001", "ZY003", "ZY002"])
+
+    def test_within_group_most_recently_treated_first(self) -> None:
+        """组内按"我最近一次已提交治疗"降序 —— 而不是按排期日期。"""
+        self._add_patient("ZY004", "我的另一个患者", int(self.t1["id"]))
+        self._record("ZY001", "2027-03-01", self.h1)
+        self._record("ZY004", "2027-03-05", self.h1)  # 更近 → 更靠前
+        # 别人的患者即便我刚治过（且日期最新），也仍归"其他"组，排最后
+        self._record("ZY002", "2027-03-09", self.h1)
+        self.assertEqual(self._order(), ["ZY004", "ZY001", "ZY003", "ZY002"])
+
+    def test_same_day_orders_am_before_pm(self) -> None:
+        """同一天时按半日：上午在下午之前（视图取当天最早的半日）。"""
+        self._add_patient("ZY004", "我的另一个患者", int(self.t1["id"]))
+        self._record("ZY001", "2027-03-01", self.h1, period="pm")
+        self._record("ZY004", "2027-03-01", self.h1, period="am")
+        self.assertEqual(self._order(), ["ZY004", "ZY001", "ZY003", "ZY002"])
+
+    def test_draft_and_locked_records_do_not_count_as_treatment(self) -> None:
+        """口径（迁移 007 明确写定）：只算 `submitted`。
+
+        - 草稿是"写了一半还没提交"，在汇总/时间轴里都还不存在，不该把患者顶到最前；
+        - 已锁定代表这条记录已被归档封存，不代表"我最近在治他"。
+        """
+        self._add_patient("ZY005", "只有草稿的患者", int(self.t1["id"]))
+        self._add_patient("ZY006", "记录已锁定的患者", int(self.t1["id"]))
+        self._record("ZY001", "2027-03-01", self.h1)
+        self._record("ZY005", "2027-12-01", self.h1, status="draft")
+
+        locked = self._record("ZY006", "2027-12-02", self.h1)
+        resp = self.client.post(f"/api/v1/records/{locked['id']}/lock", headers=self.ha)
+        self.assertEqual(resp.status_code, 200, resp.text)
+
+        # ZY005 / ZY006 的日期都远晚于 ZY001，但都不算"治疗过" → 排在 ZY001 之后
+        self.assertEqual(self._order()[:3], ["ZY001", "ZY005", "ZY006"])
+        self.assertEqual(self._order()[3:], ["ZY003", "ZY002"])
 
 
 class TestPatientWritePermissions(ApiTestCase):
@@ -669,10 +767,19 @@ class TestClaimAndAssignment(ApiTestCase):
 
 
 class TestVisibleTherapistResolution(ApiTestCase):
-    """M09 / 3.5.5：单日假临时释放与临时认领期间的归属解析。
+    """M09 / 3.5.5：临时释放与临时认领期间的归属解析。
 
     这是本系统最关键的一条业务规则，用模型层直接验证（不经过 HTTP）。
+
+    2026-10-05 请假功能下线后，临时指派不再由"单日假"自动产生（详见
+    `app/models/temporary_assignment.py`），但它仍是**归属解析**的依据：
+    `v_patient_visibility` 依赖它算 `visible_therapist_id`。
     """
+
+    # 临时指派的日期取**远未来**：`v_patient_visibility` 读时会比对
+    # `expires_at > now`，若把日期硬编码成"写测试那天"，上午假的到期时点
+    # （本地 11:30）一过，这些用例就会整体失败 —— 那是测试自身的时间依赖。
+    TEMP_DAY = date(2099, 1, 5)
 
     def setUp(self) -> None:
         super().setUp()
@@ -688,12 +795,15 @@ class TestVisibleTherapistResolution(ApiTestCase):
     def _open_temp(self, temporary_therapist_id: int | None, period: str = "am") -> int:
         # 必须用与模型一致的 UTC+毫秒格式（core.clock.period_expiry）；
         # 写成 '2026-10-05 11:30:00' 会因为 ' ' < 'T' 而被判定成"已过期"
-        expires = period_expiry(date(2026, 10, 5), period, WorkTimeConfig())
+        expires = period_expiry(self.TEMP_DAY, period, WorkTimeConfig())
         cur = self.conn.execute(
             "INSERT INTO temporary_assignment"
             " (patient_no, original_therapist_id, temporary_therapist_id, date, period, expires_at)"
-            " VALUES (?, ?, ?, '2026-10-05', ?, ?)",
-            (self.patient_no, self.original["id"], temporary_therapist_id, period, expires),
+            " VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                self.patient_no, self.original["id"], temporary_therapist_id,
+                self.TEMP_DAY.isoformat(), period, expires,
+            ),
         )
         return int(cur.lastrowid)
 
@@ -743,29 +853,29 @@ class TestVisibleTherapistResolution(ApiTestCase):
             patient_model.claim_patient(self.conn, self.patient_no, int(self.cover["id"]))
         self.assertEqual(ctx.exception.details.get("hint"), "temp-claim")
 
-    def test_scheduling_permission_follows_visible_therapist(self) -> None:
-        """Q3：排期权限看**可见归属**，不看原归属。"""
-        # 正常情况：原归属者可以排
-        self.assertTrue(patient_model.can_schedule(self.conn, self.patient_no, int(self.original["id"])))
+    def test_coverage_permission_follows_visible_therapist(self) -> None:
+        """Q3：归属判定（`covers_patient`，原名 `can_schedule`）看**可见归属**，不看原归属。"""
+        # 正常情况：原归属者可以动这个患者
+        self.assertTrue(patient_model.covers_patient(self.conn, self.patient_no, int(self.original["id"])))
 
-        # 临时释放后：可见归属变成 NULL（未分配），因此**任何人都可排**——
-        # 这正是"临时释放"的意义：原归属者休假，患者不能被"锁死"在一个不在岗的人名下。
+        # 临时释放后：可见归属变成 NULL（未分配），因此**任何人都可以**动这个患者——
+        # 这正是临时释放的意义：原归属者不在岗时，患者不能被"锁死"在他名下。
         self._open_temp(None)
         self.assertIsNone(
             patient_model.get_patient_or_raise(self.conn, self.patient_no)["visible_therapist_id"]
         )
-        self.assertTrue(patient_model.can_schedule(self.conn, self.patient_no, int(self.original["id"])))
-        self.assertTrue(patient_model.can_schedule(self.conn, self.patient_no, int(self.cover["id"])))
+        self.assertTrue(patient_model.covers_patient(self.conn, self.patient_no, int(self.original["id"])))
+        self.assertTrue(patient_model.covers_patient(self.conn, self.patient_no, int(self.cover["id"])))
 
-        # 被临时认领后：只有认领者能排，原归属者与其他人都不能
+        # 被临时认领后：只有认领者能动这个患者，原归属者与其他人都不能
         self.conn.execute(
             "UPDATE temporary_assignment SET temporary_therapist_id = ? WHERE patient_no = ?",
             (self.cover["id"], self.patient_no),
         )
-        self.assertFalse(patient_model.can_schedule(self.conn, self.patient_no, int(self.original["id"])))
-        self.assertTrue(patient_model.can_schedule(self.conn, self.patient_no, int(self.cover["id"])))
+        self.assertFalse(patient_model.covers_patient(self.conn, self.patient_no, int(self.original["id"])))
+        self.assertTrue(patient_model.covers_patient(self.conn, self.patient_no, int(self.cover["id"])))
         third = self.make_user("T003", "王五")
-        self.assertFalse(patient_model.can_schedule(self.conn, self.patient_no, int(third["id"])))
+        self.assertFalse(patient_model.covers_patient(self.conn, self.patient_no, int(third["id"])))
 
     def test_temp_related_patients_appear_in_temp_scope(self) -> None:
         """原归属者与临时认领者都能在 scope=temp 里看到该患者。"""
@@ -779,7 +889,11 @@ class TestVisibleTherapistResolution(ApiTestCase):
             self.assertIn(self.patient_no, numbers, f"{employee_no} 应看到与自己相关的临时指派")
 
     def test_multi_day_release_clears_assignment(self) -> None:
-        """多日假：正式排空，且写归属历史。"""
+        """批量排空：把该治疗师名下患者正式清空，且写归属历史。
+
+        这个模型函数原名来自"多日假"（请假功能已下线），但排空本身仍是
+        管理员会用到的归属操作，故保留并继续验证。
+        """
         # 该患者由 setUp 以「带归属」方式创建，因此先清掉建表时的 admin_assign 记录，
         # 让本用例只关注 multi_day_release 这一次变更
         self.conn.execute(

@@ -19,7 +19,6 @@ part 'app_database.g.dart';
 @DriftDatabase(
   tables: [
     Patients,
-    Appointments,
     TreatmentRecords,
     RecordItems,
     ChangeQueue,
@@ -34,7 +33,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 2;
+  int get schemaVersion => 3;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -46,6 +45,17 @@ class AppDatabase extends _$AppDatabase {
           //（本地新建的草稿没有服务端 id，走不了 record_items 表）。
           if (from < 2) {
             await m.addColumn(treatmentRecords, treatmentRecords.pendingItemsJson);
+          }
+          // v3：排期功能整体下线（2026-10-05），本地镜像表随之删除；
+          // 记录表里那个只为"从排期进入"存在的 appointment_id 一并去掉。
+          //
+          // 注意 `appointments` 必须用 `deleteTable('appointments')` 按**表名**删：
+          // 该表已从 `@DriftDatabase(tables:)` 里移除，Drift 不再认识它，
+          // 拿不到 GeneratedTable，只能按 SQL 名删。不删就会留下一张孤儿表
+          //（schema 里还在、代码里没人用），后来的人会以为它有用。
+          if (from < 3) {
+            await m.deleteTable('appointments');
+            await m.dropColumn(treatmentRecords, 'appointment_id');
           }
         },
         beforeOpen: (details) async {

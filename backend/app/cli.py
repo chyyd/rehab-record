@@ -20,7 +20,7 @@ from app.core.config import get_settings
 from app.core.health import collect_health
 from app.core.worktime import day_period_bounds, period_end_datetime, period_label
 from app.db import storage
-from app.models import leave as leave_model
+from app.models import temporary_assignment as temp_assignment_model
 from app.models import user as user_model
 from seed.dictionary import seed_dictionary
 from seed.options import seed_options
@@ -106,7 +106,7 @@ def cmd_close_expired(args: argparse.Namespace) -> int:
         return 1
     conn = storage.connect(cfg)
     try:
-        closed = leave_model.close_expired_temporary_assignments(conn)
+        closed = temp_assignment_model.close_expired_temporary_assignments(conn)
     finally:
         conn.close()
     print(f"已关闭 {closed} 条过期的临时指派。")
@@ -124,7 +124,7 @@ def cmd_periods(args: argparse.Namespace) -> int:
     print("半日制作息（Q11 定稿）：")
     for period, bounds in day_period_bounds(cfg.worktime).items():
         print(f"  {period}（{bounds['label']}）：{bounds['start']} – {bounds['end']}")
-    print("\n请假到期恢复时点（M09，取所属半日区间的结束时刻）：")
+    print("\n半日区间结束时刻（临时指派到期时点，M09）：")
     today = date.today()
     for period in ("am", "pm", "full"):
         expires_at = period_end_datetime(today, period, cfg.worktime)

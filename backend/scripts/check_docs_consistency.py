@@ -1,22 +1,94 @@
-"""跨文档一致性校验（可重复运行）。检查设计.md / CHANGELOG.md / README.md 与代码实现是否一致。"""
+"""跨文档一致性校验（可重复运行）。检查设计.md / CHANGELOG.md / README.md 与代码实现是否一致。
+
+## 2026-10-05：排期功能整体下线，本脚本的断言逐条换了对象
+
+科室确认**排班不是本系统的职责**（理由与代价见 `CHANGELOG.md` 的决策条目），
+因此 `appointment` / `rest_block` / `leave_record` 三张表、`v_patient_next_appointment`
+视图、`is_temporary` 等存储列与全部排期接口一并删除，患者列表排序从
+"下一个排期"改为"我最近一次已提交治疗"。
+
+本脚本**没有把断言删空，而是逐条换成新实现的等价断言**：
+
+| 旧断言 | 新断言 |
+|---|---|
+| 表清单里有 `appointment` / `rest_block` / `leave_record` | 008 必须删掉这三张表，且**不删** `temporary_assignment` |
+| 视图 `v_patient_next_appointment` | 视图 `v_patient_last_treated`（只统计 `submitted`） |
+| `treatment_record` 的 `is_temporary` / `appointment_id` 列 | 三列已删；`is_temporary` 改为查询时推导 |
+| "设计.md 两条半日不变量" | 这两条不变量在文档里**不得再作为现行规则**出现 |
+| 接口数 / 待办数字 | 直接数路由注册与验收脚本，与文档里的数字对账 |
+
+`DEPRECATED_TOKENS` 是"已下线功能"的守门人：这些词**只允许**出现在
+"已删除 / 已下线 / 曾如此"这类说明行里，不允许作为现行设计再次出现。
+`temporary_assignment` **不在**这些词里 —— 它是归属解析的一部分，没有被删。
+"""
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]  # backend/scripts/ -> 仓库根
+SCRIPTS_DIR = Path(__file__).resolve().parent
+ROOT = SCRIPTS_DIR.parents[1]  # backend/scripts/ -> 仓库根
+sys.path.insert(0, str(SCRIPTS_DIR))  # 复用验收项数复核工具
+
 DESIGN = (ROOT / "设计.md").read_text(encoding="utf-8")
 CHANGELOG = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
 README = (ROOT / "README.md").read_text(encoding="utf-8")
+PLAN = (ROOT / "开发计划.md").read_text(encoding="utf-8")
+SETUP = (ROOT / "docs" / "setup.md").read_text(encoding="utf-8")
+SYNC_DOC = (ROOT / "docs" / "sync-protocol.md").read_text(encoding="utf-8")
+APP_README = (ROOT / "app" / "README.md").read_text(encoding="utf-8")
+
 MIG001 = (ROOT / "backend/app/db/migrations/001_initial_schema.sql").read_text(encoding="utf-8")
 MIG002 = (ROOT / "backend/app/db/migrations/002_triggers.sql").read_text(encoding="utf-8")
 MIG004 = (ROOT / "backend/app/db/migrations/004_sync_support.sql").read_text(encoding="utf-8")
+MIG005 = (ROOT / "backend/app/db/migrations/005_template_code.sql").read_text(encoding="utf-8")
+MIG006 = (ROOT / "backend/app/db/migrations/006_open_scheduling.sql").read_text(encoding="utf-8")
+MIG007 = (ROOT / "backend/app/db/migrations/007_patient_last_treated.sql").read_text(encoding="utf-8")
+MIG008 = (ROOT / "backend/app/db/migrations/008_drop_scheduling.sql").read_text(encoding="utf-8")
+
 CONFIG = (ROOT / "backend/app/core/config.py").read_text(encoding="utf-8")
+SYNC_PY = (ROOT / "backend/app/services/sync.py").read_text(encoding="utf-8")
+SUMMARY_PY = (ROOT / "backend/app/services/summary.py").read_text(encoding="utf-8")
+PDF_PY = (ROOT / "backend/app/services/pdf.py").read_text(encoding="utf-8")
+TREATMENT_PY = (ROOT / "backend/app/models/treatment.py").read_text(encoding="utf-8")
+PATIENT_PY = (ROOT / "backend/app/models/patient.py").read_text(encoding="utf-8")
+
+APP_DB = (ROOT / "app/lib/data/local/app_database.dart").read_text(encoding="utf-8")
+APP_TABLES = (ROOT / "app/lib/data/local/tables.dart").read_text(encoding="utf-8")
+APP_HOME = (ROOT / "app/lib/features/home/home_shell.dart").read_text(encoding="utf-8")
+APP_PDF = (ROOT / "app/lib/features/timeline/pdf_export.dart").read_text(encoding="utf-8")
+
+ADMIN_README = (ROOT / "admin" / "README.md").read_text(encoding="utf-8")
+ADMIN_ROUTES = (ROOT / "admin" / "src" / "routes.tsx").read_text(encoding="utf-8")
+ADMIN_MODULE_ROUTES = (
+    "/patients",
+    "/records",
+    "/summary",
+    "/users",
+    "/dict",
+    "/option-sets",
+    "/response-defs",
+    "/templates",
+    "/audit-logs",
+)
 
 failures: list[str] = []
 total = 0
+
+# 已下线功能的标识词；只允许出现在"已删除/已下线/曾如此"这类说明行里
+DEPRECATED_TOKENS = (
+    "appointment",
+    "rest_block",
+    "leave_record",
+    "v_patient_next_appointment",
+    "/schedule",
+    "/rest-blocks",
+    "/leave",
+)
+DEPRECATED_MARKERS = ("下线", "删除", "移除", "废止", "取消", "曾", "不做", "已不", "不再", "不排")
 
 
 def check(name: str, ok: bool) -> None:
@@ -26,23 +98,75 @@ def check(name: str, ok: bool) -> None:
         failures.append(name)
 
 
+def deprecated_lines(text: str, tokens: tuple[str, ...] = DEPRECATED_TOKENS) -> list[str]:
+    """找出把已下线功能当作**现行设计**写下的行（说明性提及不算）。"""
+    return [
+        line.strip()
+        for line in text.splitlines()
+        if any(t in line for t in tokens) and not any(m in line for m in DEPRECATED_MARKERS)
+    ]
+
+
+# --------------------------------------------------------------------------- #
+# 1. 迁移、表与视图
+# --------------------------------------------------------------------------- #
 tables = set(re.findall(r"CREATE TABLE (\w+)", MIG001))
 for t in [
-    "user", "auth_session", "patient", "patient_assignment_history", "appointment", "rest_block",
-    "leave_record", "temporary_assignment", "main_item", "sub_item", "sub_item_param_def",
+    "user", "auth_session", "patient", "patient_assignment_history",
+    "temporary_assignment", "main_item", "sub_item", "sub_item_param_def",
     "option_set", "option_item", "response_def", "record_template", "record_template_item",
     "treatment_record", "record_item", "audit_log", "change_log",
 ]:
     check(f"表 {t}", t in tables)
 
-for v in ["v_patient_next_appointment", "v_open_temporary_assignment"]:
-    check(f"视图 {v}", v in MIG001 and v in DESIGN)
+# 008 是"排期下线"的唯一落点：三张表都要删，temporary_assignment 必须留下
+for t in ("appointment", "rest_block", "leave_record"):
+    check(f"008 删除表 {t}", f"DROP TABLE IF EXISTS {t};" in MIG008)
+check("008 不删 temporary_assignment（归属解析，与请假无关）",
+      "DROP TABLE IF EXISTS temporary_assignment" not in MIG008)
+_dropped = set(re.findall(r"DROP TABLE IF EXISTS (\w+)", MIG008))
+_effective_tables = tables - _dropped
+check("有效表集合里没有排期/休息块/请假",
+      not (_effective_tables & {"appointment", "rest_block", "leave_record"}))
+check("有效表集合里仍有 temporary_assignment", "temporary_assignment" in _effective_tables)
+check("008 清掉 appointment 的历史同步游标",
+      "DELETE FROM change_log WHERE entity = 'appointment'" in MIG008)
+check("006 已删除 ux_appt_therapist_slot（治疗师半日唯一，S1 放开）",
+      "DROP INDEX IF EXISTS ux_appt_therapist_slot" in MIG006)
+check("006 已删除 ux_appt_patient_slot（患者半日唯一，放弃 Q2）",
+      "DROP INDEX IF EXISTS ux_appt_patient_slot" in MIG006)
+check("唯一索引 ux_temp_assign_open 仍在（临时指派与排期无关）",
+      "ux_temp_assign_open" in MIG001)
+
+# treatment_record 去掉三个已无语义的列（008 重建表；代码侧也要核对）
+_new_record_table = MIG008.split("CREATE TABLE treatment_record_new", 1)[-1].split(");", 1)[0]
+for column in ("appointment_id", "is_temporary", "original_therapist_id"):
+    check(f"008 重建 treatment_record 时不再有 {column}", column not in _new_record_table)
+_record_columns = TREATMENT_PY.split("RECORD_COLUMNS = (", 1)[-1].split(")", 1)[0]
+check("treatment.py 的 RECORD_COLUMNS 不含 appointment_id",
+      "appointment_id" not in _record_columns)
+check("is_temporary 改为查询时推导（temporary_expr）",
+      "def temporary_expr(" in TREATMENT_PY and "AS is_temporary" in TREATMENT_PY)
+check("查询里真的用上了 temporary_expr", TREATMENT_PY.count("temporary_expr(") >= 3)
+check("设计.md 写明 is_temporary 按“记录创建时刻”的归属推导",
+      "记录创建时刻" in DESIGN and "is_temporary" in DESIGN)
+
+# 视图：旧的排期视图必须消失，新的"我最近一次已提交治疗"必须在文档与迁移里同时出现
+check("视图 v_patient_last_treated（007 新建）",
+      "CREATE VIEW v_patient_last_treated" in MIG007 and "v_patient_last_treated" in DESIGN)
+check("007 的 v_patient_last_treated 只统计 submitted",
+      "WHERE r.status = 'submitted'" in MIG007)
+check("007 按 (patient_no, therapist_id) 分组",
+      "GROUP BY r.patient_no, r.therapist_id" in MIG007)
+check("008 重建视图时与 007 定义一致（同样只统计 submitted）",
+      "WHERE r.status = 'submitted'" in MIG008)
+check("视图 v_open_temporary_assignment",
+      "CREATE VIEW v_open_temporary_assignment" in MIG001
+      and "v_open_temporary_assignment" in DESIGN)
 
 for label, values in {
     "patient.status": ["in_hospital", "discharged", "paused"],
     "period": ["'am'", "'pm'"],
-    "leave_type": ["half_day_am", "half_day_pm", "full_day", "multi_day"],
-    "source": ["therapist_self", "admin_entry"],
     "temp status": ["'open'", "'closed'", "'converted'"],
     "record status": ["'draft'", "'submitted'", "'locked'"],
     "scope": ["'global'", "'dept'", "'personal'"],
@@ -53,23 +177,65 @@ for label, values in {
         check(f"迁移枚举 {label}={v}", v in MIG001)
         check(f"设计.md 枚举 {label}={v}", v.strip("'") in DESIGN)
 
-for name in ("ux_appt_therapist_slot", "ux_appt_patient_slot"):
-    check(f"唯一索引 {name}", name in MIG001)
-check("设计.md 两条不变量", "治疗师半日" in DESIGN and "患者半日" in DESIGN)
+# --------------------------------------------------------------------------- #
+# 2. 患者列表排序（本次功能变更的核心）
+# --------------------------------------------------------------------------- #
+check("patient.py 患者列表 JOIN 了 v_patient_last_treated",
+      "LEFT JOIN v_patient_last_treated" in PATIENT_PY)
+check("patient.py 组内按我最近一次治疗日期降序",
+      "COALESCE(l.last_date, '0000-01-01') DESC" in PATIENT_PY)
+check("patient.py 保留归属分组（我的 → 未分配 → 其他）",
+      "WHEN v.visible_therapist_id = ? THEN 0" in PATIENT_PY
+      and "WHEN v.visible_therapist_id IS NULL THEN 1 ELSE 2 END" in PATIENT_PY)
+check("排序只算已提交（视图 WHERE status = 'submitted'）",
+      "status = 'submitted'" in MIG007 and "status = 'submitted'" not in PATIENT_PY)
+check("设计.md 写明组内排序依据", "我最近一次已提交治疗" in DESIGN)
+check("设计.md 写明草稿不参与排序", "草稿不算" in DESIGN)
+check("设计.md 不再把按排期排序的旧视图当现行视图",
+      not [line for line in DESIGN.splitlines()
+           if "v_patient_next_appointment" in line
+           and not any(m in line for m in DEPRECATED_MARKERS)])
+check("归属判定函数已由 can_schedule 改名为 covers_patient",
+      "def covers_patient(" in PATIENT_PY and "def can_schedule(" not in PATIENT_PY)
+check("设计.md 不再把 can_schedule 当现行函数名",
+      not [line for line in DESIGN.splitlines()
+           if "can_schedule" in line
+           and not any(m in line for m in ("原名", "改名", "曾", "下线", "删除"))])
+check("设计.md 不再把两条半日不变量当现行规则",
+      not [line for line in DESIGN.splitlines()
+           if ("治疗师半日" in line or "患者半日" in line)
+           and not any(m in line for m in DEPRECATED_MARKERS)])
+check("设计.md 不再把排期相关概念当现行设计",
+      not deprecated_lines(DESIGN))
+check("开发计划.md 不再把排期接口/表当现行设计",
+      not deprecated_lines(PLAN))
+check("sync-protocol.md 不再把 appointment 当同步通道",
+      not deprecated_lines(SYNC_DOC, ("appointment", "/rest-blocks", "/leave")))
 
-# 阶段 4：离线同步支撑
-for table in ("patient", "appointment", "treatment_record"):
+# --------------------------------------------------------------------------- #
+# 3. 阶段 4：离线同步支撑
+# --------------------------------------------------------------------------- #
+for table in ("patient", "treatment_record"):
     check(f"同步：{table} 有 client_uuid", f"ALTER TABLE {table} ADD COLUMN client_uuid" in MIG004)
 check("同步：client_uuid 有唯一索引", "ux_record_client_uuid" in MIG004)
 check("同步：唯一索引带 WHERE client_uuid IS NOT NULL", "WHERE client_uuid IS NOT NULL" in MIG004)
-SYNC_PY = (ROOT / "backend/app/services/sync.py").read_text(encoding="utf-8")
-check("同步：允许离线写的实体与设计一致", 'PUSHABLE_ENTITIES = ("treatment_record", "appointment")' in SYNC_PY)
-check("同步：冲突策略含草稿客户端优先", 'CLIENT_WINS_ENTITIES = ("treatment_record",)' in SYNC_PY)
+check("同步：允许离线写的实体只剩治疗记录",
+      'PUSHABLE_ENTITIES = ("treatment_record",)' in SYNC_PY)
+check("同步：可拉取实体为 patient + treatment_record",
+      'PULLABLE_ENTITIES = ("patient", "treatment_record")' in SYNC_PY)
+check("同步：冲突策略含草稿客户端优先",
+      'CLIENT_WINS_ENTITIES = ("treatment_record",)' in SYNC_PY)
+check("sync-protocol.md 与代码一致（可推送实体）",
+      'PUSHABLE_ENTITIES = ("treatment_record",)' in SYNC_DOC)
+check("sync-protocol.md 与代码一致（可拉取实体）",
+      'PULLABLE_ENTITIES = ("patient", "treatment_record")' in SYNC_DOC)
 check("设计.md 提到游标为 change_log", "change_log" in DESIGN)
+check("设计.md 写明一期离线可写只有治疗记录",
+      "治疗记录" in DESIGN and "允许离线写的实体" in DESIGN)
 
-# 阶段 5：打印、汇总与后台
-PDF_PY = (ROOT / "backend/app/services/pdf.py").read_text(encoding="utf-8")
-SUMMARY_PY = (ROOT / "backend/app/services/summary.py").read_text(encoding="utf-8")
+# --------------------------------------------------------------------------- #
+# 4. 阶段 5：打印、汇总与后台
+# --------------------------------------------------------------------------- #
 check("打印：使用内置 CID 中文字体", "UnicodeCIDFont" in PDF_PY and "STSong-Light" in PDF_PY)
 check("设计.md 的 PDF 方案与实现一致", "STSong-Light" in DESIGN and "reportlab" in DESIGN)
 check("设计.md 已标注 WeasyPrint 被推翻", "WeasyPrint" in DESIGN and "推翻" in DESIGN)
@@ -87,6 +253,7 @@ check(
     ),
 )
 check("设计.md Q10 明确不做签名栏", "签名栏" in DESIGN and "**无**" in DESIGN)
+# 已核对 summary.py 的真实取值：只统计已提交与已锁定（草稿是"还没写完"，不该计入）
 check("汇总：只统计已提交与已锁定", 'COUNTED_STATUSES = ("submitted", "locked")' in SUMMARY_PY)
 check("设计.md 三种汇总口径都在", all(k in DESIGN for k in ("按日期汇总", "按患者每日汇总", "单个患者汇总打印")))
 for endpoint in (
@@ -99,11 +266,42 @@ for endpoint in (
 ):
     check(f"设计.md 列出接口 {endpoint}", endpoint in DESIGN)
 
-# 阶段 5 补种：四大高频模板（D04 / T3.2）
-import json as _json  # noqa: E402
+# 接口总数：直接数注册的路由（README 的"接口"按"方法+路径"的操作数计）
+sys.path.insert(0, str(ROOT / "backend"))
+try:
+    from app.api.v1 import api_router as _api_router  # noqa: E402
 
-DICT_SEED = _json.loads((ROOT / "backend/seed/dict_seed.json").read_text(encoding="utf-8"))
-MIG005 = (ROOT / "backend/app/db/migrations/005_template_code.sql").read_text(encoding="utf-8")
+    _operations = [r for r in _api_router.routes if getattr(r, "methods", None)]
+    _paths = {r.path for r in _operations}
+    check(
+        f"README 接口数与路由注册数一致（{len(_operations)} 个操作 / {len(_paths)} 个路径）",
+        f"{len(_operations)} 个接口" in README,
+    )
+except Exception as exc:  # pragma: no cover - 只在环境缺依赖时触发
+    check(f"接口数可核对（导入 app.api.v1 失败，请用系统 Python 3.13 运行）：{exc!r}", False)
+
+# --------------------------------------------------------------------------- #
+# 5. 验收项数：文档里的数字必须与脚本里的 check() 条数对得上
+# --------------------------------------------------------------------------- #
+import count_verify_checks  # noqa: E402
+
+_counts = count_verify_checks.count_all()
+_doc_counts = {name: int(n) for name, n in re.findall(r"(verify_\w+\.py).*?（(\d+) 项）", SETUP)}
+check("setup.md 逐个列出 6 个验收脚本的项数",
+      set(_doc_counts) == set(_counts))
+for name, count in sorted(_counts.items()):
+    check(f"setup.md 的 {name} 项数与脚本一致（{count} 项）", _doc_counts.get(name) == count)
+check("setup.md 的端到端项数等于各脚本之和",
+      f"端到端 {sum(_counts.values())} 项" in SETUP)
+check("README 与 setup.md 的端到端项数一致",
+      f"端到端 {sum(_counts.values())} 项" in README)
+check("开发计划.md 的端到端项数与脚本一致",
+      f"{sum(_counts.values())} 项端到端检查" in PLAN)
+
+# --------------------------------------------------------------------------- #
+# 6. 阶段 5 补种：四大高频模板（D04 / T3.2）
+# --------------------------------------------------------------------------- #
+DICT_SEED = json.loads((ROOT / "backend/seed/dict_seed.json").read_text(encoding="utf-8"))
 TPL_SEED_PY = (ROOT / "backend/seed/templates.py").read_text(encoding="utf-8")
 
 seeded_main_codes = [m["code"] for m in DICT_SEED["main_items"]]
@@ -147,40 +345,72 @@ for value in ["06:00", "11:30", "13:00", "17:30"]:
 check("README 作息", "06:00" in README)
 check("CHANGELOG 作息", "06:00" in CHANGELOG)
 
+# --------------------------------------------------------------------------- #
+# 7. 文档版本、CHANGELOG 与"已删掉的排期工作"的留痕
+# --------------------------------------------------------------------------- #
 check("设计.md 头部 V1.2", "**版本**：V1.2" in DESIGN)
 check("设计.md 结尾 V1.2", "**文档版本**：V1.2" in DESIGN)
 check("设计.md 无 V1.1 头部", "**版本**：V1.1" not in DESIGN)
 check("设计.md 无中文状态枚举残留", "在院、出院、暂停治疗" not in DESIGN)
-# "拖拽改时间" 只允许出现在"我们不做"与"V1.1 曾如此"两类说明里，
-# 不允许作为 3.4 的功能项被承诺。
-_drag_ok = [
-    line for line in DESIGN.splitlines()
-    if "拖拽改时间" in line and ("不做" in line or "V1.1" in line)
-]
-_drag_all = [line for line in DESIGN.splitlines() if "拖拽改时间" in line]
-check("设计.md 拖拽改时间仅作否定/历史说明", len(_drag_ok) == len(_drag_all) and bool(_drag_all))
-check("设计.md 3.4.4 为半日格子视图", "半日格子视图" in DESIGN)
+check("设计.md 说明了排期为何下线（排班不是本系统的职责）",
+      "排班不是本系统的职责" in DESIGN)
 
 check("README 声明 V1.2", "V1.2" in README or "V1.3" in README)
 check("README 引用 app.cli", "app.cli" in README)
 _changelog_headings = [line for line in CHANGELOG.splitlines() if line.startswith("### ")]
 check("CHANGELOG 段落唯一", len(_changelog_headings) == len(set(_changelog_headings)))
 check("CHANGELOG 无过期待办声明", "尚未执行" not in CHANGELOG)
+check("CHANGELOG 已登记「取消排期功能」决策", "取消排期功能" in CHANGELOG)
+check("CHANGELOG 记录了用户的原始理由", "app功能过剩" in CHANGELOG)
+check("CHANGELOG 记录了删除范围（后端 + 管理后台 + 安卓）",
+      all(k in CHANGELOG for k in ("管理后台", "安卓")))
+check("CHANGELOG 记录了代价（验收项数下降 + 阶段 2 作废）",
+      "验收项数" in CHANGELOG and "阶段 2 作废" in CHANGELOG)
 
-# PDF 方案必须已改写为 reportlab（V1.3 修订），不得再以 WeasyPrint 为落地方案
-check("D03 已定为 reportlab", "reportlab" in DESIGN and "STSong-Light" in DESIGN)
-check("开发计划 D03 已修订", "STSong-Light" in (ROOT / "开发计划.md").read_text(encoding="utf-8"))
-_wp_lines = [
-    line for line in DESIGN.splitlines()
-    if "WeasyPrint" in line and ("定" in line or "选" in line or "必须" in line)
-    and "推翻" not in line and "不必" not in line
-]
-check("设计.md 不再把 WeasyPrint 定为方案", not _wp_lines)
+# --------------------------------------------------------------------------- #
+# 8. 安卓端（页签 3 个、PDF 三种去向、没有排期）
+# --------------------------------------------------------------------------- #
+check("Drift schemaVersion 已升到 3", "schemaVersion => 3" in APP_DB)
+check("Drift 迁移删掉 appointments 表", "deleteTable('appointments')" in APP_DB)
+check("Drift 迁移去掉 treatment_records.appointment_id",
+      "dropColumn(treatmentRecords, 'appointment_id')" in APP_DB)
+check("Drift 不再定义 Appointments 表", "class Appointments" not in APP_TABLES)
+check("App 页签为 3 个（患者 / 时间轴 / 我的）",
+      APP_HOME.count("NavigationDestination(") == 3
+      and all(k in APP_HOME for k in ("'患者'", "'时间轴'", "'我的'")))
+check("PDF 导出为三种去向（发送给微信 / 系统打印 / 打开）",
+      all(k in APP_PDF for k in ("'share'", "'print'", "'open'")))
+check("app/README.md 写明页签 3 个", "页签" in APP_README and "3 个" in APP_README)
+check("app/README.md 写明 PDF 三种去向",
+      all(k in APP_README for k in ("发送给微信", "系统打印", "打开")))
+check("app/README.md 不再描述排期页/排期表",
+      not [line for line in APP_README.splitlines()
+           if any(t in line for t in ("排期", "schedule", "appointment"))
+           and not any(m in line for m in DEPRECATED_MARKERS)])
 
-# 环境认知：必须写明用系统 Python 3.13，避免复现"探错解释器"的误判
-SETUP = (ROOT / "docs" / "setup.md").read_text(encoding="utf-8")
+# --------------------------------------------------------------------------- #
+# 8b. 管理后台：文档的模块清单与路由表必须一致（排期页/请假页已删除）
+# --------------------------------------------------------------------------- #
+for route in ADMIN_MODULE_ROUTES:
+    check(f"admin 路由表有 {route}", f'path="{route.lstrip("/")}"' in ADMIN_ROUTES)
+    check(f"admin/README.md 列出模块 {route}", f"`{route}`" in ADMIN_README)
+check("admin/README.md 不再把 /schedule、/leave 当现行模块",
+      not deprecated_lines(ADMIN_README, ("/schedule", "/leave")))
+check("admin/README.md 写明排期/请假页已删除",
+      "下线" in ADMIN_README or "删除" in ADMIN_README)
+
+# --------------------------------------------------------------------------- #
+# 9. 环境认知：必须写明用系统 Python 3.13，避免复现"探错解释器"的误判
+# --------------------------------------------------------------------------- #
 check("setup.md 写明系统 Python 3.13", "Python313" in SETUP)
 check("setup.md 警告不要用 dsh Python", "dsh-primary-runtime" in SETUP)
+
+# --------------------------------------------------------------------------- #
+# 10. 本脚本自报的项数也要和文档对得上（放在最后，因为要用最终 total）
+# --------------------------------------------------------------------------- #
+_expected_total = total + 1  # 下面这次 check 本身也计入
+check(f"README 记录的跨文档校验项数与本脚本一致（{_expected_total} 项）",
+      f"跨文档校验 {_expected_total} 项" in README)
 
 if failures:
     print(f"检查 {total} 项，{len(failures)} 项失败：")

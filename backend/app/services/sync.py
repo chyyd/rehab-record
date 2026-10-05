@@ -29,9 +29,10 @@ from app.core import jsonutil
 from app.models.base import Invalid
 
 # 允许客户端推送的实体（一期范围）
-PUSHABLE_ENTITIES = ("treatment_record", "appointment")
-# 允许拉取的实体（字典类只读缓存也在这里）
-PULLABLE_ENTITIES = ("patient", "appointment", "treatment_record")
+# 2026-10-05：排期（appointment）随功能下线一并移除；现在只剩治疗记录可离线写。
+PUSHABLE_ENTITIES = ("treatment_record",)
+# 允许拉取的实体
+PULLABLE_ENTITIES = ("patient", "treatment_record")
 
 # 冲突策略：客户端优先 / 服务端优先
 CLIENT_WINS_ENTITIES = ("treatment_record",)  # 仅当服务端仍是 draft 时客户端优先
@@ -149,7 +150,6 @@ def find_by_client_uuid(conn: sqlite3.Connection, entity: str, client_uuid: str)
 def _table_for(entity: str) -> str:
     mapping = {
         "patient": "patient",
-        "appointment": "appointment",
         "treatment_record": "treatment_record",
     }
     table = mapping.get(entity)
@@ -273,7 +273,7 @@ def apply_push(
             raise Invalid("每条变更都必须带 entity 与 client_uuid", details={"change": change})
         if entity not in PUSHABLE_ENTITIES:
             raise Invalid(
-                "该实体不在离线可写范围内（一期只允许治疗记录与排期）",
+                "该实体不在离线可写范围内（只有治疗记录可离线写）",
                 details={"entity": entity, "allowed": list(PUSHABLE_ENTITIES)},
             )
         op = str(change.get("op") or "update")
@@ -302,74 +302,6 @@ def apply_push(
         "conflicts": conflicts,
         "cursor": current_cursor(conn),
     }
-
-
-def _push_appointment(conn: sqlite3.Connection, *, user: dict[str, Any], change: dict[str, Any]) -> dict[str, Any]:
-    from app.models import appointment as appointment_model
-
-    client_uuid = str(change["client_uuid"])
-    existing = find_by_client_uuid(conn, "appointment", client_uuid)
-    payload = change.get("payload") or {}
-
-    if existing is None:
-        # 新增：走正常创建路径（会跑三条冲突检测与唯一索引）
-        created = appointment_model.create_appointment(
-            conn,
-            patient_no=str(payload["patient_no"]),
-            therapist_id=int(payload.get("therapist_id") or user["id"]),
-            day=str(payload["date"]),
-            period=str(payload["period"]),
-            start_time=payload.get("start_time"),
-            end_time=payload.get("end_time"),
-            slot_label=payload.get("slot_label"),
-            note=payload.get("note"),
-            status=str(payload.get("status") or "planned"),
-        )
-        conn.execute("UPDATE appointment SET client_uuid = ? WHERE id = ?", (client_uuid, created["id"]))
-        revision = int(created["revision"])
-        record_change(
-            conn, entity="appointment", entity_id=created["id"], op="insert",
-            revision=revision, actor_user_id=int(user["id"]), payload=payload,
-        )
-        return {"outcome": "applied", "client_uuid": client_uuid, "entity": "appointment",
-                "entity_id": created["id"], "op": "insert", "revision": revision}
-
-    appointment_id = int(existing["id"])
-    decision = resolve_conflict(
-        conn,
-        entity="appointment",
-        entity_id=appointment_id,
-        base_revision=change.get("base_revision"),
-        is_retry=True,  # 能走到这里说明同 client_uuid 已存在，即重试
-    )
-    if decision and decision["resolution"] == "server_wins":
-        return {
-            "outcome": "conflict",
-            "client_uuid": client_uuid,
-            "entity": "appointment",
-            "entity_id": appointment_id,
-            "server_revision": decision["server_revision"],
-            "reason": decision["reason"],
-        }
-
-    updated = appointment_model.update_appointment(
-        conn,
-        appointment_id,
-        patient_no=payload.get("patient_no"),
-        day=payload.get("date"),
-        period=payload.get("period"),
-        status=payload.get("status"),
-        start_time=payload.get("start_time"),
-        end_time=payload.get("end_time"),
-        note=payload.get("note"),
-    )
-    revision = int(updated["revision"])
-    record_change(
-        conn, entity="appointment", entity_id=appointment_id, op="update",
-        revision=revision, actor_user_id=int(user["id"]), payload=payload,
-    )
-    return {"outcome": "applied", "client_uuid": client_uuid, "entity": "appointment",
-            "entity_id": appointment_id, "op": "update", "revision": revision}
 
 
 def _push_treatment_record(
@@ -447,7 +379,6 @@ def _push_treatment_record(
 
 
 _HANDLERS = {
-    "appointment": _push_appointment,
     "treatment_record": _push_treatment_record,
 }
 

@@ -363,12 +363,8 @@ class SyncEngine {
   /// 推送成功后的本地回写：把服务端 id / revision 写回镜像表，并出队。
   Future<void> _applySuccess(PushResultItem item) async {
     final revision = item.revision;
-    if (item.entity == 'appointment') {
-      await _db.customStatement(
-        'UPDATE appointments SET revision = ?, sync_status = ? WHERE client_uuid = ?',
-        <Object?>[revision ?? 0, 'synced', item.clientUuid],
-      );
-    } else if (item.entity == 'treatment_record') {
+    // 2026-10-05：`appointment` 实体随排期功能下线，现在只剩治疗记录可离线写。
+    if (item.entity == 'treatment_record') {
       await _db.customStatement(
         'UPDATE treatment_records SET revision = ?, sync_status = ? WHERE client_uuid = ?',
         <Object?>[revision ?? 0, 'synced', item.clientUuid],
@@ -435,7 +431,8 @@ class SyncEngine {
           'cursor': cursor,
           'limit': maxPullLimit,
           // 患者永远为空，不必带；带上也无害，但语义上容易让人误以为它走同步。
-          'entities': 'treatment_record,appointment',
+          // 2026-10-05：`appointment` 已在服务端下线，不再出现在同步通道里。
+          'entities': 'treatment_record',
         },
       ) as Map<String, dynamic>;
 
@@ -467,12 +464,6 @@ class SyncEngine {
     if (entity == null || entityId == null) return;
 
     switch (entity) {
-      case 'appointment':
-        if (op == 'delete') {
-          await (_db.delete(_db.appointments)..where((t) => t.id.equals(int.parse(entityId)))).go();
-        } else if (payload is Map) {
-          await _upsertAppointment(Map<String, dynamic>.from(payload));
-        }
       case 'treatment_record':
         if (op == 'delete') {
           await (_db.delete(_db.treatmentRecords)
@@ -488,26 +479,15 @@ class SyncEngine {
           print('[sync] 收到 patient 变更：服务端已开始记录？请更新协议 §1');
           return true;
         }());
+      case 'appointment':
+        // 2026-10-05：排期已整体下线。这里**刻意不做静默忽略** ——
+        // 若还有 appointment 变更流下来，说明服务端没删干净，要立刻发现。
+        assert(() {
+          // ignore: avoid_print
+          print('[sync] 收到已下线的 appointment 变更：服务端同步通道可能没删干净');
+          return true;
+        }());
     }
-  }
-
-  Future<void> _upsertAppointment(Map<String, dynamic> json) async {
-    final id = (json['id'] as num).toInt();
-    await _db.into(_db.appointments).insertOnConflictUpdate(
-          AppointmentsCompanion.insert(
-            id: Value(id),
-            patientNo: json['patient_no'] as String,
-            therapistId: (json['therapist_id'] as num).toInt(),
-            date: json['date'] as String,
-            period: json['period'] as String,
-            startTime: Value(json['start_time'] as String?),
-            endTime: Value(json['end_time'] as String?),
-            slotLabel: Value(json['slot_label'] as String?),
-            status: Value(json['status'] as String? ?? 'planned'),
-            note: Value(json['note'] as String?),
-            revision: Value((json['revision'] as num?)?.toInt() ?? 0),
-          ),
-        );
   }
 
   Future<void> _upsertRecord(Map<String, dynamic> json) async {
@@ -528,9 +508,6 @@ class SyncEngine {
             seqNo: Value((json['seq_no'] as num?)?.toInt()),
             editCount: Value((json['edit_count'] as num?)?.toInt() ?? 0),
             revision: Value((json['revision'] as num?)?.toInt() ?? 0),
-            appointmentId: Value((json['appointment_id'] as num?)?.toInt()),
-            isTemporary: Value(json['is_temporary'] == true),
-            originalTherapistId: Value((json['original_therapist_id'] as num?)?.toInt()),
           ),
         );
 

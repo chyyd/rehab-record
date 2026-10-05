@@ -13,6 +13,7 @@ from __future__ import annotations
 import unittest
 
 from app.models import dictionary as dictionary_model
+from app.models import patient as patient_model
 from app.models import treatment as treatment_model
 from app.models.base import Invalid
 from app.services import options as options_service
@@ -40,8 +41,6 @@ class SeededApiTestCase(ApiTestCase):
         self.t1 = self.make_user("T001", "张三")
         self.t2 = self.make_user("T002", "李四")
         self.admin = self.make_admin("A001")
-
-        from app.models import patient as patient_model
 
         self.p1 = patient_model.create_patient(
             self.conn, inpatient_no="ZY001", name="患者甲", assigned_therapist_id=int(self.t1["id"])
@@ -726,8 +725,6 @@ class TestRecordPermissions(SeededApiTestCase):
 
     def test_discharged_patient_records_hidden(self) -> None:
         """已出院患者默认不在白板上，其记录也不可见（管理员仍可见）。"""
-        from app.models import patient as patient_model
-
         self._create_for_patient("ZY002", self.h2)
         patient_model.update_patient(
             self.conn, "ZY002", status=patient_model.STATUS_DISCHARGED
@@ -744,62 +741,90 @@ class TestRecordPermissions(SeededApiTestCase):
         self.assert_error(resp, 404, "INVALID_SCOPE")
 
 
-class TestRecordFromAppointment(SeededApiTestCase):
-    def test_appointment_context_is_brought_in(self) -> None:
-        from app.models import appointment as appointment_model
+class TestTemporaryTreatmentFlag(SeededApiTestCase):
+    """3.7：`is_temporary` = "记录人 ≠ 该患者在**记录创建时刻**的归属治疗师"。
 
-        appt = appointment_model.create_appointment(
-            self.conn, patient_no="ZY001", therapist_id=int(self.t1["id"]), day="2027-03-05", period="pm"
-        )
-        resp = self.client.post(
-            "/api/v1/records",
-            json={
-                "patient_no": "ZY001", "appointment_id": int(appt["id"]),
-                "items": [{"main_item_id": self.main_item_id("motor_function"),
-                           "sub_item_id": self.sub_item_id("motor_function_01"), "params": {"side": "左"}}],
-            },
-            headers=self.h1,
-        )
+    2026-10-05 排期下线后它不再是存储列，而是查询时按 `patient_assignment_history`
+    回溯推导（`app/models/treatment.py::temporary_expr`）。这组用例钉住推导结果 ——
+    它是"临时治疗"统计和时间轴 `scope=temp` 的唯一数据源。
+    """
+
+    def _create(self, headers: dict, patient_no: str = "ZY001", **overrides) -> dict:
+        payload = {
+            "patient_no": patient_no,
+            "record_date": "2027-03-01",
+            "session_period": "am",
+            "items": [
+                {
+                    "main_item_id": self.main_item_id("motor_function"),
+                    "sub_item_id": self.sub_item_id("motor_function_01"),
+                    "params": {"side": "左"},
+                }
+            ],
+        }
+        payload.update(overrides)
+        resp = self.client.post("/api/v1/records", json=payload, headers=headers)
         self.assertEqual(resp.status_code, 201, resp.text)
-        body = resp.json()
-        self.assertEqual(body["record_date"], "2027-03-05", "日期应从排期带入")
-        self.assertEqual(body["session_period"], "pm", "半日应从排期带入")
-        self.assertEqual(body["appointment_id"], int(appt["id"]))
+        return resp.json()
 
-    def test_temp_treatment_flagged_when_therapist_differs(self) -> None:
-        """临时认领时记录要标 is_temporary 并保留原归属（3.7）。"""
-        from app.models import appointment as appointment_model
+    def test_owner_recording_is_not_temporary(self) -> None:
+        body = self._create(self.h1)
+        self.assertEqual(body["is_temporary"], 0, "归属人自己做的治疗不是临时治疗")
 
-        # 让李四临时认领张三的患者：先单日假临时释放
-        from app.models import leave as leave_model
-        from app.models import patient as patient_model
-
-        leave_model.create_leave(
-            self.conn, therapist_id=int(self.t1["id"]), leave_type="half_day_am",
-            start_date="2027-03-08", end_date="2027-03-08", operator_user_id=int(self.t1["id"]),
-        )
-        self.conn.execute(
-            "UPDATE temporary_assignment SET temporary_therapist_id = ? WHERE patient_no = 'ZY001'",
-            (int(self.t2["id"]),),
-        )
-        appt = appointment_model.create_appointment(
-            self.conn, patient_no="ZY001", therapist_id=int(self.t2["id"]), day="2027-03-08", period="pm"
-        )
-        resp = self.client.post(
-            "/api/v1/records",
-            json={
-                "patient_no": "ZY001", "appointment_id": int(appt["id"]),
-                "items": [{"main_item_id": self.main_item_id("motor_function"),
-                           "sub_item_id": self.sub_item_id("motor_function_01"), "params": {"side": "左"}}],
-            },
-            headers=self.h2,
-        )
-        self.assertEqual(resp.status_code, 201, resp.text)
-        body = resp.json()
-        self.assertEqual(body["is_temporary"], 1)
-        self.assertEqual(body["original_therapist_id"], int(self.t1["id"]), "应保留原归属治疗师")
+    def test_other_therapist_recording_is_temporary(self) -> None:
+        """白板下谁都能记，但"替别人做的"要被标出来（临时治疗）。"""
+        body = self._create(self.h2)
+        self.assertEqual(body["is_temporary"], 1, "非归属人做的治疗应标为临时")
+        # 原归属不因"别人替做了一次"而改变
         patient = patient_model.get_patient_or_raise(self.conn, "ZY001")
         self.assertEqual(patient["assigned_therapist_id"], int(self.t1["id"]), "原归属仍不变")
+
+    def test_no_assignment_history_is_not_temporary(self) -> None:
+        """归零安全：该患者当时就没有归属人时，谁做都算正常。"""
+        patient_model.create_patient(self.conn, inpatient_no="ZY003", name="未分配患者")
+        body = self._create(self.h2, patient_no="ZY003")
+        self.assertEqual(body["is_temporary"], 0)
+
+    def test_transfer_after_recording_does_not_retroactively_flag(self) -> None:
+        """归属变更**不得**把旧记录追溯成"临时治疗" —— 这是推导式存在的全部理由。
+
+        若按"当前归属"判断，患者一转手，之前所有正常记录都会突然变成临时，
+        已经计过的统计也会跟着变。`patient_assignment_history` 让"当时是谁"可回溯。
+
+        时间戳是毫秒精度，所以"记录 → 转手 → 再记录"之间要跨过毫秒边界；
+        每个 HTTP 往返本身已经跨了，这里再显式 sleep 一小段，让先后关系稳定。
+        """
+        import time
+
+        record = self._create(self.h1)  # 张三，当时的归属人
+        self.assertEqual(record["is_temporary"], 0)
+
+        time.sleep(0.02)  # 确保转手时间戳严格晚于上一条记录的 created_at
+        self.conn.execute(
+            "UPDATE patient SET assigned_therapist_id = ? WHERE inpatient_no = 'ZY001'",
+            (int(self.t2["id"]),),
+        )
+        self.conn.execute(
+            "INSERT INTO patient_assignment_history"
+            " (patient_no, from_therapist_id, to_therapist_id, change_type)"
+            " VALUES ('ZY001', ?, ?, 'admin_assign')",
+            (int(self.t1["id"]), int(self.t2["id"])),
+        )
+
+        refreshed = self.client.get(f"/api/v1/records/{record['id']}", headers=self.ha).json()
+        self.assertEqual(refreshed["is_temporary"], 0, "归属变更不得追溯改写历史记录的性质")
+
+        time.sleep(0.02)  # 确保"补记"的 created_at 严格晚于转手
+        after_transfer = self._create(self.h1, record_date="2027-04-01")
+        self.assertEqual(after_transfer["is_temporary"], 1, "转手后张三再记就属于临时治疗")
+
+    def test_temporary_flag_is_derived_not_stored(self) -> None:
+        """三个随排期下线的存储列不得回来（推导值存一份就会与事实不一致）。"""
+        columns = {
+            row["name"] for row in self.conn.execute("PRAGMA table_info(treatment_record)")
+        }
+        for gone in ("is_temporary", "appointment_id", "original_therapist_id"):
+            self.assertNotIn(gone, columns, f"{gone} 已随排期功能下线删除，不应重新出现")
 
 
 class TestTimeline(SeededApiTestCase):

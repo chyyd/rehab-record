@@ -38,19 +38,21 @@ const ACTION_LABEL: Record<string, string> = {
   change_password: '修改密码',
   revoke_sessions: '踢下线',
   record_modified_after_submit: '提交后修改',
-  copy_schedule: '复制排期',
   upsert: '维护',
   disable: '停用',
   delete_draft: '删除草稿',
 };
 
+/** 审计目标类型的中文名。
+ *
+ * 2026-10-05：`appointment` / `leave_record` / `rest_block` 随排期功能下线删除。
+ * 注意**历史审计日志里可能仍有这些 target_type**（审计是只追加的，不随功能删除），
+ * 所以下面的兜底逻辑必须保留 —— 否则旧日志会显示成空白。
+ */
 const TARGET_LABEL: Record<string, string> = {
   user: '用户',
   patient: '患者',
-  appointment: '排期',
   treatment_record: '治疗记录',
-  leave_record: '请假',
-  rest_block: '休息块',
   option_set: '选项集',
   record_template: '模板',
   main_item: '主项目',
