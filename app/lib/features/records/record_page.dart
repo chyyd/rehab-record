@@ -51,7 +51,22 @@ class _RecordPageState extends ConsumerState<RecordPage> {
     // 出院办完就回患者页（那边会刷新状态）。
     ref.listen(recordEditorProvider, (previous, next) {
       if (next.discharged && previous?.discharged != true && mounted) {
-        Navigator.of(context).pop(true);
+        // 返回值是**给患者页显示的一句话**（记录页自己的消息条会随页面消失）。
+        Navigator.of(context).pop('已提交出院，患者进入「待出院」');
+        return;
+      }
+      // ★ 用户 2026-10-05：「记录完成后，没有返回患者页」。
+      //
+      // 提交成功后自动 `pop`，并把提示语交给患者页显示。
+      // 只认 `submit`（存草稿不返回，见 `savedSubmitted` 的注释）。
+      if (next.savedSubmitted &&
+          previous?.savedSubmitted != true &&
+          !next.discharged &&
+          mounted) {
+        final label = next.form?.kindLabel;
+        Navigator.of(context).pop(
+          label == null || label.isEmpty ? '已提交' : '已提交：$label',
+        );
       }
     });
 

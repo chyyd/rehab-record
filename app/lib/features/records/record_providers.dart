@@ -60,6 +60,7 @@ class RecordEditorState {
     this.message,
     this.dirty = false,
     this.discharged = false,
+    this.savedSubmitted = false,
   });
 
   /// 当前编辑目标（`null` = 还没打开过）。
@@ -97,6 +98,17 @@ class RecordEditorState {
   /// 出院是否已经提交成功（页面据此返回并提示）。
   final bool discharged;
 
+  /// 这一次**提交**（不是存草稿）已经成功落到服务端。
+  ///
+  /// 用户 2026-10-05：「记录完成后，没有返回患者页」。
+  /// 页面监听这个信号 → 自动 `pop(true)` 回患者页，并把提示语交给患者页显示
+  /// （记录页自己的消息条会随页面一起消失，看不到）。
+  ///
+  /// 与 [discharged] 分开：出院要走额外的 `/discharge` 接口，两者是不同的事件。
+  /// 也**只有 `submit` 才置位** —— 存草稿是"先记一半、还要接着写"，
+  /// 这时候把页面弹走会打断治疗师。
+  final bool savedSubmitted;
+
   RecordEditorState copyWith({
     RecordEditorArgs? args,
     String? patientNo,
@@ -115,6 +127,7 @@ class RecordEditorState {
     Object? message = _sentinel,
     bool? dirty,
     bool? discharged,
+    bool? savedSubmitted,
   }) {
     return RecordEditorState(
       args: args ?? this.args,
@@ -137,6 +150,7 @@ class RecordEditorState {
       message: message == _sentinel ? this.message : message as String?,
       dirty: dirty ?? this.dirty,
       discharged: discharged ?? this.discharged,
+      savedSubmitted: savedSubmitted ?? this.savedSubmitted,
     );
   }
 }
@@ -492,6 +506,9 @@ class RecordEditorController extends Notifier<RecordEditorState> {
       dirty: false,
       message: submit ? '已提交' : '草稿已保存（本地）',
       error: null,
+      // 提交成功 → 页面据此自动返回患者页（用户：「记录完成后，没有返回患者页」）。
+      // 存草稿**不**置位：那是"先记一半、还要接着写"，把页面弹走会打断治疗师。
+      savedSubmitted: submit,
     );
 
     // 出院小结提交后要**显式**调一次出院接口（用户："选择出院必须出院小结"）。
@@ -500,17 +517,13 @@ class RecordEditorController extends Notifier<RecordEditorState> {
       return;
     }
 
-    // ★ 刚刚补完评估文书（首评/复评）→ **自动切到当天的日常记录**。
+    // 说明：这里原先有一条「刚补完评估文书 → 自动切到当天的日常记录」。
+    // 2026-10-05 按用户要求**删除** —— 他明确说「记录完成后，没有返回患者页」，
+    // 即每次提交都该回到患者页（返回后接着记同一类，再点一下那个大类就行）；
+    // 那个自动切换与"返回患者页"直接冲突。
     //
-    // 用户的原话是「先弹评估文书」，服务端也确实是这么实现的：补完那份文书后
-    // 再取一次表单，`kind` 就变成日常记录了。这里顺手替治疗师取一次，
-    // 省掉"退出 → 回患者页 → 再点大类"三步（本次改造就是为了少点几下）。
-    if (submit && form.pendingDocument != null) {
-      await retry();
-      state = state.copyWith(
-        message: '${form.kindLabel}已提交，现在记当天的日常治疗记录',
-      );
-    }
+    // 以后若想再省掉这一下，正确做法是**问一次**
+    //（"还要继续记这个大类吗？"），而不是默默把表单换成另一种形态。
   }
 
   /// 办理出院（`POST /patients/{no}/discharge`）。

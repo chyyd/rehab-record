@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:rehab_app/core/date_utils.dart';
 import 'package:rehab_app/core/disciplines.dart';
+import 'package:rehab_app/core/route_observer.dart';
 import 'package:rehab_app/data/local/app_database.dart' as local;
 import 'package:rehab_app/data/repo/record_repository.dart';
 import 'package:rehab_app/features/patients/patients_providers.dart';
@@ -25,13 +26,50 @@ import 'package:rehab_app/features/timeline/patient_summary_page.dart';
 /// 用户原话：「在 app 记录治疗的**左侧对称位置**添加出院按钮，
 /// 所有治疗师都可以有出院的权限，点击后就是出院小结」。
 /// 所以它就在四个大类按钮**左边**，同一条横带上，任何治疗师都可见可用。
-class PatientDetailPage extends ConsumerWidget {
+class PatientDetailPage extends ConsumerStatefulWidget {
   const PatientDetailPage({super.key, required this.inpatientNo});
 
   final String inpatientNo;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<PatientDetailPage> createState() => _PatientDetailPageState();
+}
+
+class _PatientDetailPageState extends ConsumerState<PatientDetailPage>
+    with RouteAware {
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // 订阅路由变化：从记录页 / 汇总页 pop 回来时收到 `didPopNext()`。
+    //
+    // 用 `didChangeDependencies` 而不是 `initState`：订阅要拿 `ModalRoute.of`，
+    // 而在 `initState` 里 `context` 还不能用。
+    final route = ModalRoute.of(context);
+    if (route is PageRoute) appRouteObserver.subscribe(this, route);
+  }
+
+  @override
+  void dispose() {
+    appRouteObserver.unsubscribe(this);
+    super.dispose();
+  }
+
+  /// 又回到本页 → 全量刷一次患者。
+  ///
+  /// 用户 2026-10-05：「每次返回患者页自动刷新」。这一页最需要它：
+  /// 停在详情页时患者可能被置为**待出院**，此时该页仍显示"在院"、
+  /// 甚至允许继续点大类（点进去会被服务端 409 拦）。
+  @override
+  void didPopNext() {
+    if (!mounted) return;
+    // 走全量刷新（而不是只 invalidate 本地 provider）：状态变了的是**服务端**，
+    // 只重读本地库拿到的还是旧状态。
+    ref.read(patientSyncControllerProvider.notifier).refresh();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final inpatientNo = widget.inpatientNo;
     final patient = ref.watch(patientDetailProvider(inpatientNo));
     final theme = Theme.of(context);
 
@@ -215,22 +253,34 @@ class PatientDetailPage extends ConsumerWidget {
         _ => status,
       };
 
-  /// 继续编辑一条本地草稿。
+  /// 打开一条既有记录继续编辑（用户：「在原始记录上进行修改」）。
   void _openExisting(BuildContext context, local.TreatmentRecord row) {
-    Navigator.of(context).push(
-      MaterialPageRoute<bool>(
-        builder: (_) => RecordPage(
-          args: RecordEditorArgs(
-            patientNo: inpatientNo,
-            discipline: row.discipline,
-            existingId: row.id,
-            recordDate: row.recordDate,
-            kind: row.kind == 'daily' ? null : row.kind,
-          ),
-        ),
+    pushRecordEditor(
+      context,
+      RecordEditorArgs(
+        patientNo: widget.inpatientNo,
+        discipline: row.discipline,
+        existingId: row.id,
+        recordDate: row.recordDate,
+        kind: row.kind == 'daily' ? null : row.kind,
       ),
     );
   }
+}
+
+/// 打开记录页并提示它的返回消息（三处入口共用）。
+///
+/// 做成顶层函数而不是成员：出院按钮与四大类按钮各自是**独立的小 widget**，
+/// 它们不该为了弹个提示而把整个患者页的 State 传下来。
+Future<void> pushRecordEditor(BuildContext context, RecordEditorArgs args) async {
+  final messenger = ScaffoldMessenger.of(context);
+  final message = await Navigator.of(context).push<String>(
+    MaterialPageRoute<String>(builder: (_) => RecordPage(args: args)),
+  );
+  if (message == null || message.isEmpty) return;
+  messenger
+    ..hideCurrentSnackBar()
+    ..showSnackBar(SnackBar(content: Text(message)));
 }
 
 /// 出院按钮：与四个大类按钮同一条横带，在**左侧**。
@@ -326,16 +376,15 @@ class _DischargeButton extends ConsumerWidget {
       );
     if (picked == null || !context.mounted) return;
 
-    await Navigator.of(context).push<bool>(
-      MaterialPageRoute<bool>(
-        builder: (_) => RecordPage(
-          args: RecordEditorArgs(
-            patientNo: patientNo,
-            discipline: picked!.key,
-            kind: 'discharge',
-            recordDate: formatDate(DateTime.now()),
-          ),
-        ),
+    await pushRecordEditor(
+      context,
+      RecordEditorArgs(
+        patientNo: patientNo,
+        // `picked` 在上面已经做过 null 判空并提前 return，这里不需要 `!`
+        //（编译器会提示 unnecessary_non_null_assertion）。
+        discipline: picked.key,
+        kind: 'discharge',
+        recordDate: formatDate(DateTime.now()),
       ),
     );
   }
@@ -440,15 +489,12 @@ class _DisciplineButton extends ConsumerWidget {
   }
 
   Future<void> _open(BuildContext context, WidgetRef ref) async {
-    await Navigator.of(context).push<bool>(
-      MaterialPageRoute<bool>(
-        builder: (_) => RecordPage(
-          args: RecordEditorArgs(
-            patientNo: patientNo,
-            discipline: summary.key,
-            recordDate: formatDate(DateTime.now()),
-          ),
-        ),
+    await pushRecordEditor(
+      context,
+      RecordEditorArgs(
+        patientNo: patientNo,
+        discipline: summary.key,
+        recordDate: formatDate(DateTime.now()),
       ),
     );
     // 记完之后次数/复评倒计时会变，重新取一次摘要。

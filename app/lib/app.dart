@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:rehab_app/core/providers.dart';
+import 'package:rehab_app/core/route_observer.dart';
 import 'package:rehab_app/features/auth/auth_controller.dart';
 import 'package:rehab_app/features/auth/login_page.dart';
 import 'package:rehab_app/features/home/home_shell.dart';
@@ -24,6 +25,9 @@ class RehabApp extends ConsumerWidget {
       title: '康复科治疗记录',
       debugShowCheckedModeBanner: false,
       theme: _buildTheme(),
+      // 让页面能在"从子页返回、我又可见"时刷新（用户：「每次返回患者页自动刷新」）。
+      // 见 `core/route_observer.dart` 里为什么 `initState` 不够。
+      navigatorObservers: [appRouteObserver],
       home: const _BootstrapGate(),
     );
   }

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:rehab_app/core/route_observer.dart';
 import 'package:rehab_app/data/repo/patient_repository.dart';
 import 'package:rehab_app/features/auth/auth_controller.dart';
 import 'package:rehab_app/features/patients/patient_detail_page.dart';
@@ -10,11 +11,50 @@ import 'package:rehab_app/features/patients/patients_providers.dart';
 ///
 /// 排序由服务端语义搬到了本地：**我的 → 未分配 → 其他**（设计与排序都基于
 /// `assigned_therapist_id`；2026-10-03 起归属只影响排序，不再是可见性闸门）。
-class PatientListPage extends ConsumerWidget {
+class PatientListPage extends ConsumerStatefulWidget {
   const PatientListPage({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<PatientListPage> createState() => _PatientListPageState();
+}
+
+class _PatientListPageState extends ConsumerState<PatientListPage> with RouteAware {
+  @override
+  void initState() {
+    super.initState();
+    // 第一次进来也刷一次：患者状态是**服务端**的，本地镜像可能已经过时
+    //（别人把他置了待出院 / 患者已出院）。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) ref.read(patientSyncControllerProvider.notifier).refresh();
+    });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final route = ModalRoute.of(context);
+    if (route is PageRoute) appRouteObserver.subscribe(this, route);
+  }
+
+  @override
+  void dispose() {
+    appRouteObserver.unsubscribe(this);
+    super.dispose();
+  }
+
+  /// 从患者详情（或它下面的记录页）返回 → 再刷一次。
+  ///
+  /// 用户 2026-10-05：「每次返回患者页自动刷新」。典型场景是刚在详情里
+  /// 点了「出院」把患者置为待出院 —— 退回列表后他必须**立刻消失**，
+  /// 否则治疗师会以为还能继续记。
+  @override
+  void didPopNext() {
+    if (!mounted) return;
+    ref.read(patientSyncControllerProvider.notifier).refresh();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final patients = ref.watch(filteredPatientListProvider);
     final filter = ref.watch(patientFilterProvider);
     final user = ref.watch(currentUserProvider);
