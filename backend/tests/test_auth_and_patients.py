@@ -11,6 +11,7 @@
 5. 归属解析（2026-10-05 起归属只有两层：可见归属直接等于原归属；
    临时释放/临时认领与 `scope=temp` 已随临时指派删除）
 6. 患者列表排序（"我最近一次已提交治疗"降序，不再是下一个排期）
+7. 归属治疗师**姓名**（2026-10-05 加：客户端不能拿原始 id 当归属显示）
 """
 
 from __future__ import annotations
@@ -930,6 +931,66 @@ class TestVisibleTherapistResolution(ApiTestCase):
             ).fetchall()
         ]
         self.assertEqual(types, ["multi_day_release"])
+
+
+class TestAssignedTherapistName(ApiTestCase):
+    """`PatientOut.assigned_therapist_name`（2026-10-05 加）。
+
+    客户端「归属」栏此前只能拿到 `assigned_therapist_id`，于是显示成「治疗师 #2」——
+    对治疗师毫无意义（他不知道 2 是谁）。服务端因此在 `get_patient()` 与
+    `list_patients()` 的 SELECT 里各加了一个相关子查询，把姓名一并下发。
+
+    这里钉住三个必须**同时**成立的可观察行为：详情有姓名、未分配为 null、
+    列表每一项也有。前两条容易想到，第三条才是这套用例存在的理由 ——
+    两个 SELECT 是各写一遍的，只改一处就会出现"白板列表与详情页显示不一致"
+    这种只在一半界面上暴露的 bug。
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.migrate()
+        self.t1 = self.make_user("T001", "张三")
+        self.make_admin("A001")
+        patient_model.create_patient(
+            self.conn, inpatient_no="ZY001", name="有归属的患者",
+            assigned_therapist_id=int(self.t1["id"]),
+        )
+        patient_model.create_patient(self.conn, inpatient_no="ZY002", name="未分配的患者")
+
+    def _detail(self, inpatient_no: str) -> dict:
+        """走真实接口取详情（治疗师身份 —— 床边用 App 的是治疗师，不是管理员）。"""
+        resp = self.client.get(
+            f"/api/v1/patients/{inpatient_no}", headers=self.login_headers("T001")
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        return resp.json()
+
+    def test_detail_carries_therapist_name(self) -> None:
+        body = self._detail("ZY001")
+        self.assertEqual(body["assigned_therapist_id"], int(self.t1["id"]))
+        self.assertEqual(body["assigned_therapist_name"], "张三")
+
+    def test_detail_unassigned_has_null_name(self) -> None:
+        """无人负责时姓名为 null —— 客户端据此显示「未分配」。"""
+        body = self._detail("ZY002")
+        self.assertIsNone(body["assigned_therapist_id"])
+        self.assertIsNone(body["assigned_therapist_name"])
+
+    def test_list_items_carry_the_name_too(self) -> None:
+        resp = self.client.get("/api/v1/patients", headers=self.login_headers("T001"))
+        self.assertEqual(resp.status_code, 200, resp.text)
+        by_no = {item["inpatient_no"]: item for item in resp.json()["items"]}
+        self.assertEqual(by_no["ZY001"]["assigned_therapist_name"], "张三")
+        self.assertIsNone(by_no["ZY002"]["assigned_therapist_name"])
+
+    def test_name_is_resolved_at_query_time_not_copied(self) -> None:
+        """姓名是**查询时解析**的，不是患者表里的副本：治疗师改名后立刻跟着变。
+
+        这正是用相关子查询而不是把姓名冗余进 `patient` 表的理由 ——
+        副本会在改名那一刻永久过期，而"当前谁负责"恰恰是这份数据唯一要说的事。
+        """
+        user_model.update_user(self.conn, int(self.t1["id"]), name="张三丰")
+        self.assertEqual(self._detail("ZY001")["assigned_therapist_name"], "张三丰")
 
 
 if __name__ == "__main__":

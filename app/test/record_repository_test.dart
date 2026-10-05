@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:rehab_app/core/api_endpoints.dart';
+import 'package:rehab_app/core/error.dart';
 import 'package:rehab_app/data/local/app_database.dart';
 import 'package:rehab_app/data/remote/record_dto.dart';
 import 'package:rehab_app/data/repo/record_repository.dart';
@@ -582,6 +583,63 @@ void main() {
 
     test('没记过就返回空表（界面按模板顺序显示）', () async {
       expect(await repo.recentOptions('never_used'), isEmpty);
+    });
+  });
+
+  /// ★ 2026-10-05：用户要求「患者详情页的治疗记录要可以点进去，**在原始记录上进行修改**」。
+  ///
+  /// 已提交（`submitted`）的记录本地只镜像了最近同步过的那一份，而"最近同步过"不等于
+  /// "内容最新"（别人可能改过、或这条还没同步下来），所以点进去编辑前要按**服务端 id**
+  /// 回服务端取一次当前内容。
+  group('★ 按服务端 id 取记录（点进去改已有记录）', () {
+    late AppDatabase db;
+    late RecordRepository repo;
+    late ScriptedAdapter adapter;
+
+    setUp(() {
+      db = AppDatabase.forTesting(NativeDatabase.memory());
+      adapter = ScriptedAdapter({
+        kRecord(41): (200, {
+          'id': 41,
+          'patient_no': 'ZY001',
+          'therapist_id': 2,
+          'record_date': '2026-10-06',
+          'discipline': 'PT',
+          'kind': 'daily',
+          'status': 'submitted',
+          'seq_no': 3,
+          'body': {'mental': '一般', 'vas': 3},
+          'rendered_text': '康复治疗记录（PT运动）',
+        }),
+      });
+      repo = RecordRepository(
+        client: buildScriptedClient({}, adapter: adapter),
+        db: db,
+        sync: SyncEngine(client: buildScriptedClient({}), db: db),
+      );
+    });
+
+    tearDown(() async => db.close());
+
+    test('请求 /records/{id} 并解出 body / status（编辑要靠它们预填）', () async {
+      final record = await repo.fetchRecord(41);
+
+      expect(adapter.seen.single.path, '/api/v1/records/41');
+      expect(record.id, 41);
+      expect(record.status, 'submitted');
+      expect(record.body, {'mental': '一般', 'vas': 3});
+    });
+
+    test('服务端取不到这条记录时抛 AppError（调用方据此退回本地内容）', () async {
+      final broken = RecordRepository(
+        client: buildScriptedClient({
+          kRecord(41): (404, {'code': 'RECORD_NOT_FOUND', 'message': '记录不存在'}),
+        }),
+        db: db,
+        sync: SyncEngine(client: buildScriptedClient({}), db: db),
+      );
+
+      await expectLater(broken.fetchRecord(41), throwsA(isA<AppError>()));
     });
   });
 }

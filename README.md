@@ -73,10 +73,10 @@
 | 文档 | `设计.md` 修订至 **V1.4**、`开发计划.md` **V0.8**；跨文档校验 371 项 0 失败 | **已完成** |
 | 种子数据 | `app.cli seed` 与字典/选项集/反应定义/模板四类种子**已废弃**（承载它们六张表已由迁移 012 删除） | **已废弃** |
 | 中文 PDF | **reportlab + 内置 CID 字体 `STSong-Light`**，三套模板经 pypdf 反向文本校验 | **已完成**（D03 修订，Q10 版式 + SOAP 正文） |
-| 测试 | **336 个测试全部通过、0 skip**；端到端 268 项 + **浏览器 UI 验收 60 项** | **已完成** |
+| 测试 | **341 个测试全部通过、0 skip**；端到端 268 项 + **浏览器 UI 验收 60 项** | **已完成** |
 | 接口 | **45 个接口**（37 个路径：认证、用户、患者与出院、SOAP 记录表单、同步、汇总、打印、审计） | **已完成**（字典/选项集/反应定义/模板四组接口已删除） |
 | 管理后台 Web | **React 19 + Vite 8 + Ant Design 6 + TS**，**6 个模块**（总览 / 患者 / 治疗记录 / 汇总打印 / 用户 / 审计）；排期页、请假页、字典/选项集/反应定义/模板四个页面**已删除**；记录与汇总改为 SOAP 纯文本；患者页含**出院确认 / 取消待出院** | **已完成**（删除四个页面后重新构建 exit 0） |
-| 安卓 App | Flutter：**3 个页签**（患者 / 时间轴 / 我的）、汇总与 PDF 打印（三种去向）、同步与冲突处理；**Drift schemaVersion 6**（记录表按 SOAP 重建、删除 `record_items` 表）。**记录页已适配 SOAP 改造**（`GET /records/form` 一屏 chip + `body` 契约），**111 个本地测试全部通过** | **已完成** |
+| 安卓 App | Flutter：**3 个页签**（患者 / 时间轴 / 我的）、汇总与 PDF 打印（三种去向）、同步与冲突处理；**Drift schemaVersion 6**（记录表按 SOAP 重建、删除 `record_items` 表）。**记录页已适配 SOAP 改造**（`GET /records/form` 一屏 chip + `body` 契约），**121 个本地测试全部通过** | **已完成** |
 
 > **用哪个 Python**：必须用系统 Python 3.13
 > （`C:\Users\youda\AppData\Local\Programs\Python\Python313\python.exe`）。
@@ -160,7 +160,7 @@ $env:KB_ADMIN_PASSWORD = 'Admin#2026pass'
 & $py -m app.cli auto-discharge --days 7   # 待出院满 7 天自动出院（管理员也可确认/取消）
 
 & $py -m app.main --reload # 启动服务端：http://127.0.0.1:8000/docs
-& $py -m unittest discover -s tests -t . -v      # 336 个测试
+& $py -m unittest discover -s tests -t . -v      # 341 个测试
 & $py scripts\verify_http.py                     # 阶段 0 HTTP 端到端（14 项）
 & $py scripts\verify_stage1.py                   # 阶段 1 认证与患者（25 项）
 & $py scripts\verify_stage2.py                   # 患者列表排序（原阶段 2 排期已取消）（31 项）
@@ -219,7 +219,7 @@ Playwright）。这一步不是可选项 —— 类型检查与构建**测不出
 │  │                      **删除字典六表（012）**、**患者待出院（013）**
 │  ├─ seed/       **已废弃**（字典 4/29/89、反应 27、选项集 47/208、模板 4/29 随迁移 011/012 下线）
 │  ├─ scripts/    6 个验收脚本（http + 阶段 1–5）· count_verify_checks.py · check_docs_consistency.py · verify_admin_ui.py（CDP）
-│  └─ tests/      **336 个测试**（标准库 unittest）
+│  └─ tests/      **341 个测试**（标准库 unittest）
 ├─ app/           Flutter 客户端（3 个页签，Drift schemaVersion 6；**记录页已适配 SOAP**，见 `app/README.md`）
 ├─ admin/         管理后台 React 19 + Vite 8 + Ant Design 6（字典/选项集/反应定义/模板四个页面已删除）
 └─ deploy/        Docker Compose + Nginx（待建）

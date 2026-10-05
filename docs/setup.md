@@ -1,6 +1,6 @@
 # 环境搭建与运行（setup）
 
-**当前状态**：阶段 0–5 后端、管理后台与安卓 App 均已交付并验证（**336 个测试通过、0 skip**；
+**当前状态**：阶段 0–5 后端、管理后台与安卓 App 均已交付并验证（**341 个测试通过、0 skip**；
 端到端 268 项、跨文档一致性由 `check_docs_consistency.py` 自报（371 项）、浏览器 UI 验收 60 项）。
 
 **2026-10-05（第三步）：治疗记录从「参数表格」改成「SOAP 模板驱动」** —— 迁移 011 重建
@@ -8,7 +8,7 @@
 六张表，013 给 `patient.status` 加 `pending_discharge`；有效表从 17 张降到 **8 张**、视图 **2 个**；
 记录模板改由仓库根的 `templates/*.json`（**16 份**）承载，**不进数据库**。
 代价：后端测试 454 → **334**，安卓端（`app/`）**已适配 SOAP 记录页**（Drift schemaVersion 4 → 5 → 6、
-`body` 契约、**111 个本地测试全部通过**、`flutter analyze` 无问题、`flutter build apk --debug` 成功），
+`body` 契约、**121 个本地测试全部通过**、`flutter analyze` 无问题、`flutter build apk --debug` 成功），
 `admin/` 的字典 / 选项集 / 反应定义 / 模板四个页面**已删除**。
 
 **排期、休息块、请假三项功能已于 2026-10-05 整体下线**（科室确认排班不是本系统的职责），
@@ -77,7 +77,7 @@ $py = "C:\Users\youda\AppData\Local\Programs\Python\Python313\python.exe"
 
 ```powershell
 cd backend
-& $py -m unittest discover -s tests -t . -v      # 336 个测试
+& $py -m unittest discover -s tests -t . -v      # 341 个测试
 & $py scripts\verify_http.py                     # 阶段 0 HTTP 端到端（14 项）
 & $py scripts\verify_stage1.py                   # 阶段 1 认证与患者（25 项）
 & $py scripts\verify_stage2.py                   # 患者列表排序：我最近一次已提交治疗（31 项）
@@ -165,7 +165,7 @@ cd backend
    治疗记录改为 SOAP 模板驱动，模板是 `templates/*.json` 文件（**不进数据库**）。
 
 原剩余待办均已闭环：`app/` 的安卓记录页与离线 payload **已适配** SOAP 契约
-（`GET /records/form` + `body`，Drift schemaVersion 6，**111 个本地测试全部通过**）；
+（`GET /records/form` + `body`，Drift schemaVersion 6，**121 个本地测试全部通过**）；
 `admin/` 的字典 / 选项集 / 反应定义 / 模板四个页面**已删除**。
 见 `README.md` 进度表与 `开发计划.md` 第 9 章的下一步。
 

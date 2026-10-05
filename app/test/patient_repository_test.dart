@@ -1,6 +1,7 @@
 import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:rehab_app/core/api_endpoints.dart';
 import 'package:rehab_app/data/local/app_database.dart';
 import 'package:rehab_app/data/repo/patient_repository.dart';
 
@@ -23,12 +24,19 @@ void main() {
 
   tearDown(() async => db.close());
 
-  Future<void> seed(String no, String name, {int? therapistId, String status = 'in_hospital'}) {
+  Future<void> seed(
+    String no,
+    String name, {
+    int? therapistId,
+    String? therapistName,
+    String status = 'in_hospital',
+  }) {
     return db.into(db.patients).insertOnConflictUpdate(
           PatientsCompanion.insert(
             inpatientNo: no,
             name: name,
             assignedTherapistId: Value(therapistId),
+            assignedTherapistName: Value(therapistName),
             status: status,
             fetchedAt: '2027-03-01T00:00:00.000Z',
           ),
@@ -93,6 +101,66 @@ void main() {
 
       final rows = await repo.listLocal(therapistId: 3, onlyMine: true);
       expect(rows.map((p) => p.inpatientNo), ['C', 'B']);
+    });
+  });
+
+  /// ★ 2026-10-05：归属要显示**姓名**，不能再显示「治疗师 #2」这种原始 id。
+  ///
+  /// 姓名是**服务端**解析后随患者一起下发的（本地没有 `user` 表，也不该为了显示
+  /// 一个名字就把账号体系镜像到每台床旁设备上），所以本地只负责把它存下来并按
+  /// 三级兜底展示：有姓名 → 姓名；只有 id（离线/旧缓存拿不到姓名）→ 退回 id；
+  /// 没有归属 → 「未分配」。
+  ///
+  /// 中间那级是**刻意**的：拿不到姓名不等于没人负责，若一并显示成「未分配」，
+  /// 治疗师会以为这名患者无人接手。
+  group('★ 归属显示（ownerLabel 三级兜底）', () {
+    test('有姓名就用姓名', () async {
+      await seed('ZY001', '患者', therapistId: 2, therapistName: '张三');
+      expect((await repo.findByNo('ZY001'))!.ownerLabel, '张三');
+    });
+
+    test('只有 id 时退回「治疗师 #<id>」（不能因为没名字就说"未分配"）', () async {
+      await seed('ZY002', '患者', therapistId: 2);
+      expect((await repo.findByNo('ZY002'))!.ownerLabel, '治疗师 #2');
+    });
+
+    test('无归属显示「未分配」', () async {
+      await seed('ZY003', '患者');
+      expect((await repo.findByNo('ZY003'))!.ownerLabel, '未分配');
+    });
+
+    test('归属已清空时，本地残留的旧姓名也必须被忽略', () async {
+      // 释放归属后服务端会把姓名一并给成 null；万一某台设备上还留着改名前的副本，
+      // 显示「张三」会让治疗师以为这名患者仍有人负责 —— 未分配就只能是「未分配」。
+      await seed('ZY004', '患者', therapistName: '张三');
+      expect((await repo.findByNo('ZY004'))!.ownerLabel, '未分配');
+    });
+
+    test('服务端下发的 assigned_therapist_name 会落到本地并经列表读出', () async {
+      // 覆盖 `_upsert` 的写入：这条链路（服务端 → 本地镜像 → ownerLabel）断在任何
+      // 一处，床边看到的就又是「治疗师 #2」，而单测 `ownerLabel` 是看不出来的。
+      final client = buildScriptedClient({
+        kPatients: (200, {
+          'items': [
+            {
+              'inpatient_no': 'ZY001',
+              'name': '患者甲',
+              'status': 'in_hospital',
+              'assigned_therapist_id': 2,
+              'assigned_therapist_name': '张三',
+              'visible_therapist_id': 2,
+              'revision': 2,
+            },
+          ],
+          'total': 1,
+          'page': 1,
+          'page_size': 100,
+          'scope': 'dept',
+        }),
+      });
+      final synced = PatientRepository(client: client, db: db);
+      expect(await synced.refreshFromServer(), 1);
+      expect((await synced.listLocal()).single.ownerLabel, '张三');
     });
   });
 
