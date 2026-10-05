@@ -19,7 +19,7 @@
 
   "soap": [
     {
-      "key": "s", "label": "S", "heading": "主观资料", "inline": false,
+      "key": "s", "label": "S", "heading": "主观资料",
       "fields": [
         { "key": "summary", "type": "text", "label": "治疗过程汇总", "auto": "latest_vs_initial",
           "hint": "自动生成，只读：住院期间共治疗 N 次、首评→最近复评的功能变化" },
@@ -32,7 +32,7 @@
       ]
     },
     {
-      "key": "o", "label": "O", "heading": "客观资料", "inline": false,
+      "key": "o", "label": "O", "heading": "客观资料",
       "fields": [
         { "key": "mmt_upper", "type": "number", "label": "患肢肌力MMT 上肢", "unit": "级" },
         { "key": "mmt_lower", "type": "number", "label": "患肢肌力MMT 下肢", "unit": "级" },
@@ -49,7 +49,7 @@
       ]
     },
     {
-      "key": "a", "label": "A", "heading": "评估分析", "inline": false,
+      "key": "a", "label": "A", "heading": "评估分析",
       "fields": [
         { "key": "goal_achieved", "type": "single", "label": "本次住院康复长期目标",
           "options": ["基本达成", "部分达成", "未达成"] },
@@ -63,7 +63,7 @@
       ]
     },
     {
-      "key": "p", "label": "P", "heading": "出院指导", "inline": false,
+      "key": "p", "label": "P", "heading": "出院指导",
       "fields": [
         { "key": "home_training", "type": "multi", "label": "1.居家训练项目",
           "options": ["肌力训练", "平衡训练", "步态训练", "关节活动度训练", "耐力训练"] },

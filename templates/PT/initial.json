@@ -7,7 +7,7 @@
 
   "soap": [
     {
-      "key": "s", "label": "S", "heading": "主观资料", "inline": false,
+      "key": "s", "label": "S", "heading": "主观资料",
       "fields": [
         { "key": "complaint", "type": "multi", "label": "自觉症状",
           "options": ["肢体无力", "肢体僵硬", "活动费力", "肢体酸痛", "无明显不适"] },
@@ -21,7 +21,7 @@
       ]
     },
     {
-      "key": "o", "label": "O", "heading": "客观资料", "inline": false,
+      "key": "o", "label": "O", "heading": "客观资料",
       "fields": [
         { "key": "consciousness", "type": "single", "label": "神志",
           "options": ["清楚", "嗜睡", "意识模糊"] },
@@ -48,7 +48,7 @@
       ]
     },
     {
-      "key": "a", "label": "A", "heading": "评估分析", "inline": false,
+      "key": "a", "label": "A", "heading": "评估分析",
       "fields": [
         { "key": "diagnosis", "type": "multi", "label": "功能诊断", "required": true,
           "options": ["偏瘫运动功能障碍", "平衡功能障碍", "重心转移障碍", "移动能力下降", "跌倒高风险"] },
@@ -65,7 +65,7 @@
       ]
     },
     {
-      "key": "p", "label": "P", "heading": "康复计划", "inline": false,
+      "key": "p", "label": "P", "heading": "康复计划",
       "fields": [
         { "key": "therapy_items", "type": "multi", "label": "本次训练项目", "required": true,
           "options_source": "therapy_options" },

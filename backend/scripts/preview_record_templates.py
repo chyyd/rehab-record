@@ -211,6 +211,34 @@ def main() -> int:
     print()
 
     print("=" * 78)
+    print("五、多日记录：按时间顺序往下排（不分页、不一天一张）")
+    print("=" * 78)
+    print("  用户 2026-10-05：『多日的情况下，是按时间顺序往下排就行，不用一天一张』")
+    print()
+
+    def one_day(day: str, seq: int, extra: dict) -> str:
+        ans = rt.apply_prefill(
+            pt_daily, rt.blank_answers(pt_daily),
+            last_daily={"therapy_items": ["偏瘫肢体综合训练", "平衡功能训练"]})
+        ans.update({
+            "mental": "良好", "complaint": ["乏力"], "vas": 2, "dizziness": "无",
+            "compliance": "良好", "vital_signs": "平稳",
+            "completed": ["坐位重心转移"], "stand_sec": 40, "adverse": "无",
+            "performance": "较前改善", "existing_problem": ["患侧负重不足"],
+            "plan_effect": "有效", "next_step": "继续维持原方案",
+            "safety": ["继续落实防跌倒宣教"],
+        })
+        ans.update(extra)
+        return rt.render(pt_daily, ans, record_date=day, seq_no=seq)
+
+    print("\n\n".join([
+        one_day("2026-10-05", 2, {}),
+        one_day("2026-10-06", 3, {"stand_sec": 45, "vas": 1}),
+        one_day("2026-10-07", 4, {"stand_sec": 50, "vas": 1, "performance": "维持稳定"}),
+    ]))
+    print()
+
+    print("=" * 78)
     print("结论")
     print("=" * 78)
     if failures:

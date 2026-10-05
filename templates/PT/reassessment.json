@@ -17,7 +17,7 @@
 
   "soap": [
     {
-      "key": "s", "label": "S", "heading": "主观资料", "inline": false,
+      "key": "s", "label": "S", "heading": "主观资料",
       "fields": [
         { "key": "subjective_change", "type": "multi", "label": "患者/家属诉",
           "options": ["患肢力量较前明显改善", "稍有改善", "无变化",
@@ -32,7 +32,7 @@
       ]
     },
     {
-      "key": "o", "label": "O", "heading": "客观资料", "inline": false,
+      "key": "o", "label": "O", "heading": "客观资料",
       "fields": [
         { "key": "mmt_upper", "type": "number", "label": "肌力MMT 上肢", "unit": "级", "prefill": "last_assessment" },
         { "key": "mmt_lower", "type": "number", "label": "肌力MMT 下肢", "unit": "级", "prefill": "last_assessment" },
@@ -55,7 +55,7 @@
       ]
     },
     {
-      "key": "a", "label": "A", "heading": "评估分析", "inline": false,
+      "key": "a", "label": "A", "heading": "评估分析",
       "fields": [
         { "key": "prev_goal", "type": "single", "label": "前期短期目标",
           "options": ["已完成", "基本完成", "未完成"] },
@@ -73,7 +73,7 @@
       ]
     },
     {
-      "key": "p", "label": "P", "heading": "康复计划", "inline": false,
+      "key": "p", "label": "P", "heading": "康复计划",
       "fields": [
         { "key": "therapy_items", "type": "multi", "label": "本次训练项目", "required": true,
           "options_source": "therapy_options", "prefill": "last_daily" },

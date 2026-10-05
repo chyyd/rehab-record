@@ -13,7 +13,7 @@
 
   "soap": [
     {
-      "key": "s", "label": "S", "heading": "主观资料", "inline": true,
+      "key": "s", "label": "S", "heading": "主观资料",
       "fields": [
         { "key": "mental", "type": "single", "label": "精神状态",
           "options": ["良好", "一般", "差"] },
@@ -27,7 +27,7 @@
       ]
     },
     {
-      "key": "o", "label": "O", "heading": "客观资料", "inline": true,
+      "key": "o", "label": "O", "heading": "客观资料",
       "fields": [
         { "key": "therapy_items", "type": "multi", "label": "本次训练项目", "required": true,
           "options_source": "therapy_options", "prefill": "last_daily" },
@@ -41,7 +41,7 @@
       ]
     },
     {
-      "key": "a", "label": "A", "heading": "评估分析", "inline": true,
+      "key": "a", "label": "A", "heading": "评估分析",
       "fields": [
         { "key": "performance", "type": "single", "label": "本次训练功能表现",
           "options": ["较前改善", "维持稳定", "略有退步"] },
@@ -52,7 +52,7 @@
       ]
     },
     {
-      "key": "p", "label": "P", "heading": "康复计划", "inline": true,
+      "key": "p", "label": "P", "heading": "康复计划",
       "fields": [
         { "key": "next_step", "type": "single", "label": "后续安排",
           "options": ["继续维持原方案", "微调训练强度", "调整训练项目"] },
