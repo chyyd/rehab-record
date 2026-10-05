@@ -3,7 +3,7 @@
 
 import 'dart:convert';
 
-import 'package:drift/drift.dart' show Value;
+import 'package:drift/drift.dart' show Selectable, Value;
 
 import 'package:rehab_app/core/api_endpoints.dart';
 import 'package:rehab_app/data/local/app_database.dart';
@@ -89,12 +89,38 @@ class PatientRepository {
     int? therapistId,
     bool onlyMine = false,
   }) async {
+    final rows = await _visibleQuery(includeHidden: includeHidden).get();
+    return _shape(rows, therapistId: therapistId, onlyMine: onlyMine);
+  }
+
+  /// **响应式**版本：本地库一变就重新发射。
+  ///
+  /// ★ 必须用它而不是 [listLocal]：登录后的首次同步是后台写的，
+  /// 一次性快照不会因为落库而重建 —— 实测表现为"同步成功但界面一直空列表，
+  /// 除非手动下拉刷新"。床旁场景下这等于看不到患者。
+  Stream<List<PatientView>> watchLocal({
+    bool includeHidden = false,
+    int? therapistId,
+    bool onlyMine = false,
+  }) {
+    return _visibleQuery(includeHidden: includeHidden).watch().map(
+          (rows) => _shape(rows, therapistId: therapistId, onlyMine: onlyMine),
+        );
+  }
+
+  Selectable<Patient> _visibleQuery({required bool includeHidden}) {
     final query = _db.select(_db.patients);
     if (!includeHidden) {
       query.where((t) => t.visible.equals(true));
     }
-    final rows = await query.get();
+    return query;
+  }
 
+  List<PatientView> _shape(
+    List<Patient> rows, {
+    required int? therapistId,
+    required bool onlyMine,
+  }) {
     var patients = rows.map(PatientView.fromRow).toList();
     if (onlyMine && therapistId != null) {
       patients = patients

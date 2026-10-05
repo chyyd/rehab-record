@@ -77,14 +77,19 @@ lib/
 
 ## 常用命令
 
-**推荐用 `tool/build_env.ps1` 包装** —— 它一次设好镜像、SDK/JDK 与代理：
+**推荐用 `tool/` 下的两个脚本** —— 它们把本机的镜像/代理/地址坑都处理好了：
 
 ```powershell
 cd app
-pwsh -NoLogo -ExecutionPolicy Bypass -Command "& './tool/build_env.ps1'"                                  # 默认：build apk --debug
+
+# 构建与静态检查（自动设镜像 + SDK/JDK + 代理）
+pwsh -NoLogo -ExecutionPolicy Bypass -Command "& './tool/build_env.ps1'"                                  # 默认 build apk --debug
 pwsh -NoLogo -ExecutionPolicy Bypass -Command "& './tool/build_env.ps1' -FlutterCommand 'flutter analyze'"
 pwsh -NoLogo -ExecutionPolicy Bypass -Command "& './tool/build_env.ps1' -FlutterCommand 'flutter test'"
 pwsh -NoLogo -ExecutionPolicy Bypass -Command "& './tool/build_env.ps1' -NoProxy -FlutterCommand 'flutter pub get'"
+
+# 在模拟器上跑并连本机后端（自动 adb reverse + 按需起模拟器）
+pwsh -NoLogo -ExecutionPolicy Bypass -Command "& './tool/run_on_emulator.ps1'"
 ```
 
 > 不要用 `pwsh -File tool\build_env.ps1 -FlutterCommand ...`：`-File` 的命名参数绑定
@@ -155,13 +160,51 @@ flutter run                     # 跑到已连接设备/模拟器（已有 AVD r
    否则 `build_runner` 会报 `Could not resolve Dart library ... The library
    directive must appear before all other directives`，生成的 `.g.dart` 会是坏的。
 
+8. **★ 模拟器连本机后端：用 `adb reverse`，不要指望 `10.0.2.2`。**
+   安卓模拟器通常用 `10.0.2.2` 访问宿主机，但**本机这条路走不通**：
+   实测模拟器能 ping 通 `8.8.8.8`，却连不上 `10.0.2.2:<port>`；
+   在宿主机开临时监听确认过，**只收到 `127.0.0.1` 的连接、没有来自模拟器的** ——
+   原因是 Windows 防火墙入站默认阻止，而 uvicorn 没有放行规则。
+
+   可用做法是把模拟器的本地端口反向转发到宿主机：
+   ```powershell
+   adb reverse tcp:8000 tcp:8000
+   flutter run --dart-define=KB_BASE_URL=http://127.0.0.1:8000
+   ```
+   流量走 adb 通道、**不过防火墙**。`tool/run_on_emulator.ps1` 已封装这两步。
+
+   > `adb reverse` 在**模拟器重启后会失效**，需要重跑。
+   > `AppConfig` 的默认值在安卓上仍是 `10.0.2.2`（真机/正常网络下是对的），
+   > 本机模拟器联调时用上面的 `--dart-define` 覆盖。
+
+9. **模拟器里没有 `curl`**（`toybox` 也没有 `wget`），只有 `nc`。
+   要在模拟器内验证网络，用 `adb shell "printf 'GET / HTTP/1.1\r\n...' | toybox nc ..."`，
+   或者直接看宿主机侧 `netstat`/后端日志 —— `nc` 的 stdout 经 adb 捕获并不可靠。
+
+10. **`adb shell input` 对 Flutter 输入框有两处不可靠**（联调时踩到）：
+    - 特殊字符：`#` 会被 `adb shell` 当注释吞掉，且没有可靠的转义方式。
+      要自动化登录，**另建一个无特殊字符密码的账号**更省事；
+    - `input keyevent 67`（退格）对 Flutter 文本框**不生效**，清空内容请
+      `pm clear <包名>` 或重启应用拿干净状态。
+
 ---
 
 ## 当前状态
 
-工程骨架已建（`flutter create` + 依赖 + 镜像配置），
-`flutter analyze` 无问题、`flutter build apk --debug` 成功产出 APK。
+已完成**端到端竖切**（登录 → 患者列表 → 同步），已在 `rehab_pixel8` 模拟器上
+对真实后端跑通：登录成功、14 名患者自动落库并渲染、注意事项醒目、详情页可进。
 
-**尚未实现任何业务功能** —— `lib/` 里目前只有 `flutter create` 的默认示例。
-下一步按协议 §8 的顺序做端到端竖切：
-Drift 表 → 登录 + 令牌存储 + CA 注入 → 患者列表 → 同步引擎。
+| 已实现 | 说明 |
+|---|---|
+| Drift 本地库 | 7 张表；`change_queue` 是离线队列，`sync_state` 存游标 |
+| 认证 | 工号+密码登录、refresh token 进安全存储、冷启动自动恢复会话、401 静默刷新 |
+| 患者列表 | 全科白板 + 我的/未分配筛选 + 本地搜索；**响应式**（落库即刷新） |
+| 患者详情 | 注意事项醒目、诊断/状态/归属 |
+| 同步引擎 | 幂等推送（≤200/批）、游标增量拉取、按快照 upsert |
+| 「我的」页 | 后端地址、证书状态、待同步条数、上次同步时间、退出登录 |
+
+`flutter analyze` 无问题；**34 个测试通过**。
+
+**下一步**（按协议 §8 与 `开发计划.md` 阶段 3–4）：
+排期页（半日格子）→ 记录页（动态表单 + 患者反应 + 模板套用）→ 时间轴/汇总 →
+离线冲突处理 UI。
