@@ -16,16 +16,21 @@
 
 ## 输出形态
 
-    <title>
-    治疗日期：2026-10-05   第 12 次
+    康复初始评定（PT运动）
+    治疗日期：2026-10-05
 
-    【S 主观资料】
-    精神状态：良好；主诉：患肢酸胀/乏力；疼痛VAS：3分；配合度：一般
+    主观资料：
+    自觉症状：肢体无力/活动费力
+    疼痛VAS：3分
+    发病前功能状态：基本自理
 
-    【O 客观资料】
+    客观资料：
+    神志：清楚
     ...
 
-段内 `inline=true` 时输出成一行（日常记录），否则每个字段一行（首评/复评/出院）。
+段首是**中文段名 + 冒号**（用户 2026-10-05 指定：『主观资料：后面接各个字段。换行。』），
+不用 `【】`。段内 `inline=true` 时所有字段挤在一行（日常记录用），
+否则每个字段一行（首评/复评/出院用）。
 没填的字段**整条不出现**（模板第 3 条规则：「删除不需要的选项，保留选中项」）。
 """
 
@@ -296,11 +301,13 @@ def render(
             continue
 
         lines.append("")
-        lines.append(f"【{section['label']} {section['heading']}】")
         if section.get("inline"):
-            lines.append(SEP_INLINE.join(text for _, text in rendered))
+            # 日常记录：整段一行，最省空间
+            lines.append(section["heading"] + "：" + SEP_INLINE.join(t for _, t in rendered))
         else:
-            lines.extend(text for _, text in rendered)
+            # 完整版：`主观资料：` 开头，之后**每个字段一行**（用户 2026-10-05 指定的形式）
+            lines.append(section["heading"] + "：")
+            lines.extend(t for _, t in rendered)
 
     if template.footer:
         lines.append("")
