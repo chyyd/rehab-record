@@ -29,8 +29,8 @@ from app.core.errors import ForbiddenError, NotFoundError
 from app.core.security_deps import AdminUser, CurrentUser, is_admin
 from app.models import patient as patient_model
 from app.models import user as user_model
-from app.models.patient import ACTIVE_STATUSES
 from app.models.base import DomainError, Forbidden
+from app.models.patient import ACTIVE_STATUSES
 from app.schemas.patient import (
     SCOPE_DESCRIPTION,
     AssignmentHistoryOut,

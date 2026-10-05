@@ -14,11 +14,10 @@ import argparse
 import json
 import os
 import sys
-from datetime import date
 
 from app.core.config import get_settings
 from app.core.health import collect_health
-from app.core.worktime import day_period_bounds, period_end_datetime, period_label
+from app.core.worktime import day_period_bounds
 from app.db import storage
 from app.models import user as user_model
 from seed.dictionary import seed_dictionary
@@ -98,22 +97,21 @@ def cmd_health(args: argparse.Namespace) -> int:
 
 
 def cmd_periods(args: argparse.Namespace) -> int:
-    """打印半日制作息与各半日区间的结束时刻。
+    """打印半日制作息（`session_period` 的时间真源）。
 
-    > 2026-10-05：`close-expired` 子命令随临时指派删除（迁移 009）——
-    > 它唯一的工作就是把过期的 `temporary_assignment` 置为 closed，那张表已经不存在。
-    > 本子命令保留：半日边界仍是治疗记录 `session_period` 的时间真源，
-    > 运维需要能直接看到它。原来"临时指派到期时点"的说法已去掉。
+    > 2026-10-05：**两段输出被删掉了**，因为它们已无任何消费者：
+    > 1. `close-expired` 子命令 —— 随临时指派删除（迁移 009），
+    >    它唯一的工作就是把过期的 `temporary_assignment` 置为 closed，那张表已不存在；
+    > 2. "各半日区间的结束时刻" —— 那是临时指派 `expires_at` 的计算方式，
+    >    临时指派删除后没有任何调用方（`period_end_datetime` 也随之删除）。
+    >
+    > 剩下的半日边界仍然有用：它决定一条治疗记录属于哪个半日（`session_period`），
+    > 运维需要能直接看到它。注意只有 `am`/`pm` —— 治疗记录不接受 `full`。
     """
     cfg = get_settings()
     print("半日制作息（Q11 定稿）：")
     for period, bounds in day_period_bounds(cfg.worktime).items():
         print(f"  {period}（{bounds['label']}）：{bounds['start']} – {bounds['end']}")
-    print("\n各半日区间的结束时刻（当地墙钟）：")
-    today = date.today()
-    for period in ("am", "pm", "full"):
-        end_at = period_end_datetime(today, period, cfg.worktime)
-        print(f"  {period:<4}（{period_label(period)}）→ {end_at.isoformat(sep=' ')}")
     return 0
 
 

@@ -18,12 +18,12 @@
 - 2026-10-03 改成"**全科白板**"后，任何治疗师都能查看/记录任何在院患者，
   所以临时指派**不改变任何权限**，只影响 `scope=mine` 的筛选与排序分组。
 
-> 注意 `visibility_state` 列**保留但恒为 `'assigned'`**，只为兼容既有客户端与
-> `schemas/patient.py::PatientOut` 的字段；它已经退化，将来可再删。
+> 2026-10-05：`visibility_state` 列也已删除（迁移 010）—— 它在 009 之后恒为
+> `'assigned'`，没有任何真实消费者，留着只会诱使后来人写出基于它的判断。
 
 实现要点：
 1. 用 `v_patient_visibility` 视图统一计算，**不要**在路由或前端各写一遍；
-2. 视图定义必须与迁移 009 完全一致（`scripts/check_docs_consistency.py` 会逐字比对）。
+2. 视图定义必须与迁移 010 完全一致（`scripts/check_docs_consistency.py` 会逐字比对）。
 """
 
 from __future__ import annotations
@@ -75,7 +75,7 @@ SELECT_COLUMN_NAMES = (
 
 # 带表别名的列清单，供 JOIN 查询使用
 _PATIENT_COLUMNS = ", ".join(f"p.{name}" for name in SELECT_COLUMN_NAMES)
-_VISIBILITY_COLUMNS = "v.visible_therapist_id, v.visibility_state"
+_VISIBILITY_COLUMNS = "v.visible_therapist_id"
 
 # --------------------------------------------------------------------------- #
 # 可见性视图：全系统唯一的归属解析实现
@@ -83,19 +83,18 @@ _VISIBILITY_COLUMNS = "v.visible_therapist_id, v.visibility_state"
 # 2026-10-05（迁移 009）：临时指派删除后，归属只剩两层 ——
 # 可见归属**直接等于** `patient.assigned_therapist_id`（没有中间解析）。
 #
-# `visibility_state` 列保留但恒为 'assigned'：它是 `schemas/patient.py::PatientOut`
-# 的响应字段、也被安卓端 Drift 本地库缓存过，直接删列会让旧客户端拿不到预期字段。
-# 它已经退化（原来的 assigned / temp_released / temp_claimed 只剩第一种），
-# 将来确认没有客户端再读它时可以再开一个迁移删掉。
+# 2026-10-05（迁移 010）：`visibility_state` 列也删掉了。它在 009 之后恒为 'assigned'，
+# 是个"看起来有意义、实际恒定"的字段 —— 留着会诱使后来人写出基于它的判断。
+# 删除前复查确认它**没有任何真实消费者**：安卓本地库那列早已随 schemaVersion 4 删除、
+# 后台只是可选类型字段、后端只有 `PatientOut` 声明过它。
 #
-# ⚠ 这段 SQL 必须与 `app/db/migrations/009_drop_temporary_assignment.sql` 里的
+# ⚠ 这段 SQL 必须与 `app/db/migrations/010_drop_visibility_state.sql` 里的
 #   CREATE VIEW 逐字一致（`scripts/check_docs_consistency.py` 会比对两者）。
 VISIBILITY_VIEW_SQL = """
 CREATE VIEW v_patient_visibility AS
 SELECT p.inpatient_no,
        p.assigned_therapist_id,
-       p.assigned_therapist_id AS visible_therapist_id,
-       'assigned' AS visibility_state
+       p.assigned_therapist_id AS visible_therapist_id
 FROM patient p
 """
 
@@ -329,8 +328,8 @@ def claim_patient(conn: sqlite3.Connection, inpatient_no: str, therapist_id: int
         )
     # 2026-10-05：这里原有 `visibility_state == 'temp_released'` 的分支
     #（提示"该患者处于单日假临时释放中，请使用临时认领"，并带一个临时认领的 hint）。
-    # 临时指派整体删除（迁移 009）后 `visibility_state` 恒为 'assigned'，该分支不可达，
-    # 故删除；相应的提示文案与 hint 也一并消失 —— 不再存在"临时认领"这条路。
+    # 临时指派整体删除（迁移 009/010）后该状态已不存在，分支不可达故删除；
+    # 相应的提示文案与 hint 也一并消失 —— 不再存在"临时认领"这条路。
     _record_assignment(conn, inpatient_no, None, therapist_id, "claim", operator_user_id=therapist_id)
     conn.execute(
         "UPDATE patient SET assigned_therapist_id = ?, revision = revision + 1 WHERE inpatient_no = ?",

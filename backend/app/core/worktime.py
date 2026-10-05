@@ -20,8 +20,7 @@
 from __future__ import annotations
 
 import re
-from datetime import date as _date
-from datetime import datetime, time, timedelta
+from datetime import datetime, time
 
 from app.core.config import WorkTimeConfig, get_settings
 
@@ -91,10 +90,6 @@ def period_end(period: str, config: WorkTimeConfig | None = None) -> time:
     return period_interval(period, config)[1]
 
 
-def period_label(period: str) -> str:
-    return PERIOD_LABELS.get(period, period)
-
-
 def normalize_period(value: str) -> str:
     """容忍前端传来大写的 ``AM``/``PM``、以及中文"上午/下午"。"""
     if not isinstance(value, str):
@@ -137,31 +132,10 @@ def is_within_period(moment: time, period: str, config: WorkTimeConfig | None = 
     return start <= moment <= end
 
 
-def period_end_datetime(day: _date, period: str, config: WorkTimeConfig | None = None) -> datetime:
-    """某个半日区间的**结束时刻**（Q11），返回**本地** naive ``datetime``。
-
-    - ``am`` → 当日 11:30（Q11）
-    - ``pm`` → 当日 17:30（Q11）
-    - ``full`` → **次日 00:00**，即"整天"这一格的结束
-
-    > 2026-10-05：本函数原本叫"临时指派到期恢复时点（M09）"，唯一的生产调用方是
-    > `cli.py periods`（打印给人看）。临时指派删除（迁移 009）后它**仍是**半日边界的
-    > 正确表达，`cli periods` 继续在用，故保留；只是不再有 `core/clock.period_expiry()`
-    > 把它归一化成库格式时间戳（那个函数已随临时指派删除）。
-    """
-    cfg = config or get_settings().worktime
-    if period == PERIOD_FULL:
-        nxt = day + timedelta(days=1)
-        return datetime.combine(nxt, time(0, 0))
-    _, end = period_interval(period, cfg)
-    return datetime.combine(day, end)
-
-
 def day_period_bounds(config: WorkTimeConfig | None = None) -> dict[str, dict[str, str]]:
     """半日边界描述，供调用方（`/api/v1/health` 的 `periods`、`cli.py periods`）使用。
 
-    这样调用方不必自己硬编码"上午 06:00–11:30"。**前端排期页已随排期下线删除**，
-    现在主要是健康检查的自描述与运维查看。
+    这样调用方不必自己硬编码"上午 06:00–11:30"。现在主要是健康检查的自描述与运维查看。
     """
     cfg = config or get_settings().worktime
     return {
@@ -184,8 +158,6 @@ __all__ = [
     "normalize_period",
     "parse_hm",
     "period_end",
-    "period_end_datetime",
     "period_interval",
-    "period_label",
     "period_start",
 ]

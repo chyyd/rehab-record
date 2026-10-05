@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import unittest
-from datetime import date, datetime, time
+from datetime import time
 
 from app.core import worktime as wt
 from app.core.config import WorkTimeConfig, get_settings
@@ -57,17 +57,24 @@ class TestClassifyPeriod(unittest.TestCase):
         self.assertFalse(wt.is_within_period(time(12, 0), "pm", self.cfg))
 
 
-class TestPeriodLabelsAndNormalize(unittest.TestCase):
-    def test_labels(self) -> None:
-        self.assertEqual(wt.period_label("am"), "上午")
-        self.assertEqual(wt.period_label("pm"), "下午")
-        self.assertEqual(wt.period_label("full"), "全天")
+class TestNormalizePeriod(unittest.TestCase):
+    """`normalize_period` 仍容忍大小写与中文别名（历史输入值照旧接受）。
+
+    > 2026-10-05：`period_label()` 与 `TestExpiryPerQ11` 已随临时指派删除。
+    > `period_label` 唯一的生产调用方是 `cli periods` 打印"到期时点"那段，
+    > 而那个用途（临时指派 `expires_at`）已不存在；`period_end_datetime` 同理。
+    > `normalize_period` 保留 —— 它仍在容忍旧客户端传来的别名。
+    """
 
     def test_normalize_accepts_variants(self) -> None:
         self.assertEqual(wt.normalize_period("AM"), "am")
         self.assertEqual(wt.normalize_period(" 上午 "), "am")
         self.assertEqual(wt.normalize_period("PM"), "pm")
         self.assertEqual(wt.normalize_period("下午"), "pm")
+
+    def test_normalize_still_accepts_legacy_full(self) -> None:
+        # "full" 不再是任何存储列的取值（治疗记录只接受 am/pm），
+        # 但历史输入仍被接受，避免旧客户端直接 500。
         self.assertEqual(wt.normalize_period("full"), "full")
         self.assertEqual(wt.normalize_period("全天"), "full")
 
@@ -77,22 +84,7 @@ class TestPeriodLabelsAndNormalize(unittest.TestCase):
                 wt.normalize_period(bad)  # type: ignore[arg-type]
 
 
-class TestExpiryPerQ11(unittest.TestCase):
-    """M09 临时指派到期时点必须取所属半日区间的结束时刻（Q11）。"""
-
-    def setUp(self) -> None:
-        self.cfg = WorkTimeConfig()
-        self.day = date(2026, 10, 5)
-
-    def test_half_day_morning_expires_at_1130(self) -> None:
-        self.assertEqual(wt.period_end_datetime(self.day, "am", self.cfg), datetime(2026, 10, 5, 11, 30))
-
-    def test_half_day_afternoon_expires_at_1730(self) -> None:
-        self.assertEqual(wt.period_end_datetime(self.day, "pm", self.cfg), datetime(2026, 10, 5, 17, 30))
-
-    def test_full_day_expires_next_midnight(self) -> None:
-        self.assertEqual(wt.period_end_datetime(self.day, "full", self.cfg), datetime(2026, 10, 6, 0, 0))
-
+class TestParseHm(unittest.TestCase):
     def test_parse_hm_rejects_bad_input(self) -> None:
         for bad in ("6:0", "25:00", "abc", ""):
             with self.assertRaises(wt.WorkTimeError):

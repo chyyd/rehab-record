@@ -98,6 +98,7 @@ MIG006 = (ROOT / "backend/app/db/migrations/006_open_scheduling.sql").read_text(
 MIG007 = (ROOT / "backend/app/db/migrations/007_patient_last_treated.sql").read_text(encoding="utf-8")
 MIG008 = (ROOT / "backend/app/db/migrations/008_drop_scheduling.sql").read_text(encoding="utf-8")
 MIG009 = (ROOT / "backend/app/db/migrations/009_drop_temporary_assignment.sql").read_text(encoding="utf-8")
+MIG010 = (ROOT / "backend/app/db/migrations/010_drop_visibility_state.sql").read_text(encoding="utf-8")
 
 CONFIG = (ROOT / "backend/app/core/config.py").read_text(encoding="utf-8")
 SYNC_PY = (ROOT / "backend/app/services/sync.py").read_text(encoding="utf-8")
@@ -207,11 +208,11 @@ check("009 清掉 temporary_assignment 的历史同步游标",
 # 且 README 里的写法要与实际一致 —— 让"9 个迁移"这个数字不再是文档里的孤证，
 # 同时防止以后有人新增迁移却忘了更新 README / 本脚本。
 _MIGRATION_FILES = sorted(p.name for p in (ROOT / "backend/app/db/migrations").glob("*.sql"))
-check(f"迁移清单与 README 一致（共 {len(_MIGRATION_FILES)} 个：001–009，末个为 009_drop_temporary_assignment.sql）",
-      len(_MIGRATION_FILES) == 9
-      and _MIGRATION_FILES[-1] == "009_drop_temporary_assignment.sql"
-      and "9 个 SQL 迁移" in README
-      and "001–009" in README)
+check(f"迁移清单与 README 一致（共 {len(_MIGRATION_FILES)} 个：001–010，末个为 010_drop_visibility_state.sql）",
+      len(_MIGRATION_FILES) == 10
+      and _MIGRATION_FILES[-1] == "010_drop_visibility_state.sql"
+      and "10 个 SQL 迁移" in README
+      and "001–010" in README)
 
 _dropped = set(re.findall(r"DROP TABLE IF EXISTS (\w+)", MIG008 + MIG009))
 _effective_tables = tables - _dropped
@@ -265,25 +266,30 @@ check("007 按 (patient_no, therapist_id) 分组",
 check("008 重建视图时与 007 定义一致（同样只统计 submitted）",
       "WHERE r.status = 'submitted'" in MIG008)
 # 归属解析的唯一真源 `v_patient_visibility`：009 把它简化成"可见归属 = 原归属"，
+# 010 又删掉了恒为 'assigned' 的 `visibility_state` 死列，
 # 但视图本身**必须保留**（患者列表、认领、`scope` 筛选都建立在它上面）。
-check("视图 v_patient_visibility 保留（简化版，009 重建）",
-      "CREATE VIEW v_patient_visibility" in MIG009
+check("视图 v_patient_visibility 保留（010 重建的最终形态）",
+      "CREATE VIEW v_patient_visibility" in MIG010
       and "CREATE VIEW v_patient_visibility" in PATIENT_PY)
 check("009 的简化视图：可见归属直接等于原归属",
       "p.assigned_therapist_id AS visible_therapist_id" in MIG009)
-check("009 保留 visibility_state 列但恒为 'assigned'（已退化，仅为兼容客户端）",
-      "'assigned' AS visibility_state" in MIG009)
+check("010 删掉 visibility_state（恒为 'assigned' 的死列，无任何消费者）",
+      "DROP VIEW IF EXISTS v_patient_visibility;" in MIG010
+      and "visibility_state" not in MIG010.split("CREATE VIEW", 1)[1]
+      # 反向锁：不许再把它加回视图、模型或响应 schema
+      and "visibility_state" not in PATIENT_PY.split("VISIBILITY_VIEW_SQL", 1)[1].split('"""', 2)[1]
+      and "visibility_state" not in (ROOT / "backend/app/schemas/patient.py").read_text(encoding="utf-8"))
 # 模型里的视图常量必须与迁移逐字一致，否则"模型建库"与"迁移建库"会长出两个不同的视图。
 def _normalize_view_sql(sql: str) -> str:
     text = sql.strip().rstrip(";").strip()
     return re.sub(r"\s+", " ", text)
 
 
-_mig009_view = MIG009.split("CREATE VIEW v_patient_visibility AS", 1)[1].split(";", 1)[0]
+_mig_view = MIG010.split("CREATE VIEW v_patient_visibility AS", 1)[1].split(";", 1)[0]
 _patient_view = PATIENT_PY.split("VISIBILITY_VIEW_SQL = \"\"\"", 1)[1].split("\"\"\"", 1)[0]
 _patient_view = _patient_view.split("CREATE VIEW v_patient_visibility AS", 1)[1]
-check("patient.py 的 VISIBILITY_VIEW_SQL 与迁移 009 逐字一致",
-      _normalize_view_sql("CREATE VIEW v_patient_visibility AS" + _mig009_view)
+check("patient.py 的 VISIBILITY_VIEW_SQL 与迁移 010 逐字一致",
+      _normalize_view_sql("CREATE VIEW v_patient_visibility AS" + _mig_view)
       == _normalize_view_sql("CREATE VIEW v_patient_visibility AS" + _patient_view))
 _check_missing = [c for c in ("temp_assignment_id", "temp_therapist_id", "temp_original_therapist_id",
                               "temp_expires_at") if c in PATIENT_PY]
@@ -303,9 +309,13 @@ check("cli 不再注册 close-expired 子命令（它只清理临时指派）",
       'sub.add_parser("close-expired"' not in CLI_PY and "cmd_close_expired" not in CLI_PY)
 check("clock 不再定义/导出 period_expiry（只服务已删除的临时指派到期时点）",
       "def period_expiry(" not in CLOCK_PY and '"period_expiry"' not in CLOCK_PY)
-check("worktime 保留 period_end_datetime（cli periods 仍在用）",
-      "def period_end_datetime(" in WORKTIME_PY
-      and "period_end_datetime" in (ROOT / "backend/app/cli.py").read_text(encoding="utf-8"))
+check("worktime 也删掉了 period_end_datetime / period_label（唯一调用方是已删的到期时点输出）",
+      "def period_end_datetime(" not in WORKTIME_PY
+      and "def period_label(" not in WORKTIME_PY
+      and '"period_end_datetime"' not in WORKTIME_PY
+      # 但半日边界本身要留着：/health 与 `cli periods` 仍在用
+      and "def day_period_bounds(" in WORKTIME_PY
+      and "day_period_bounds" in (ROOT / "backend/app/cli.py").read_text(encoding="utf-8"))
 
 for label, values in {
     "patient.status": ["in_hospital", "discharged", "paused"],
@@ -576,6 +586,9 @@ _expected_total = total + 1  # 下面这次 check 本身也计入
 check(f"README 记录的跨文档校验项数与本脚本一致（{_expected_total} 项）",
       f"跨文档校验 {_expected_total} 项" in README)
 
+# ⚠ 失败汇总行要打印**包含最后那次自校验**的项数（即 `total`，此时 check() 已被调用过），
+# 否则会出现"检查 231 项，1 项失败"而实际跑了 232 项 —— 自己把自己的项数说少一项，
+# 与本文件要解决的"文档数字与实现漂移"是同一类毛病。
 if failures:
     print(f"检查 {total} 项，{len(failures)} 项失败：")
     for f in failures:

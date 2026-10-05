@@ -26,13 +26,6 @@ class PatientOut(BaseModel):
     visible_therapist_id: int | None = Field(
         default=None, description="可见归属，2026-10-05 起直接等于 assigned_therapist_id"
     )
-    visibility_state: str = Field(
-        default="assigned",
-        description=(
-            "**已退化**：恒为 assigned。2026-10-05 临时指派删除后不再出现 "
-            "temp_released / temp_claimed，该字段仅为兼容既有客户端保留"
-        ),
-    )
     status: str
     created_at: str | None = None
     updated_at: str | None = None

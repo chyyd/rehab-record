@@ -55,8 +55,8 @@ class _HomeShellState extends ConsumerState<HomeShell> {
       appBar: AppBar(
         title: Text(_titles[_index]),
         actions: [
-          // 患者页的同步按钮只作用于患者与记录；排期页自带刷新（它按周取数）；
-          // 时间轴是服务端只读视图，刷新在它自己的空态/下拉里。
+          // 患者页的同步按钮只作用于患者与治疗记录；
+          // 时间轴是服务端只读视图（没有离线写入），刷新在它自己的空态/下拉里。
           if (_index == 0)
             IconButton(
               tooltip: '同步',

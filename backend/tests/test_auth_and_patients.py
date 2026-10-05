@@ -817,8 +817,9 @@ class TestVisibleTherapistResolution(ApiTestCase):
         patient = patient_model.get_patient_or_raise(self.conn, self.patient_no)
         self.assertEqual(patient["visible_therapist_id"], int(self.original["id"]))
         self.assertEqual(patient["assigned_therapist_id"], int(self.original["id"]))
-        # `visibility_state` 已退化：等价于原归属，恒为 assigned
-        self.assertEqual(patient["visibility_state"], "assigned")
+        # 2026-10-05（迁移 010）：`visibility_state` 列已删除 —— 它在 009 之后恒为
+        # 'assigned'，没有任何真实消费者。这里断言它**不再出现**，防止被误加回来。
+        self.assertNotIn("visibility_state", patient)
 
     def test_visible_resolution_is_observable_in_patient_scopes(self) -> None:
         """归属解析必须能从接口的 `scope` 筛选上**观察到**（不再直接调模型函数）。
