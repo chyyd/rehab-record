@@ -1,136 +1,29 @@
-"""临时指派（M09）、患者反应（M04）、记录留痕（M11）与选项集（M03）。
+"""患者反应（M04）、记录留痕（M11）与选项集（M03）等库层规则。
 
 > 2026-10-05：请假（`leave_record`）随排期功能整体下线被删除 ——
 > 本文件原本的 `TestLeaveRecord` 整组用例随之删除（被测的表已经不存在了）。
-> **临时指派保留**：它是归属解析的一部分（`v_patient_visibility` 依赖它），
-> 与请假无关，见 `app/models/temporary_assignment.py`。
+> 随后 `temporary_assignment`（临时指派）也被**彻底删除**（迁移 009）——
+> 归属简化成两层，`v_open_temporary_assignment` 视图与
+> `TestTemporaryAssignment` 整组用例（临时释放 / 临时认领 / 到期时点 /
+> 关闭后腾出时段 / updated_at 触发器）一并删除。
+>
+> ⚠ 文件名保留了历史名字（任务按文件名指定改动位置），但它现在**不再包含**
+> 任何临时指派用例。
+>
+> ⚠ 另外注意**两件事不要混淆**（用户 2026-10-05 决定）：
+> `scope=temp` 这个**筛选**已全部删除（患者列表 + 时间轴/记录列表 + App 时间轴页签）；
+> 但 `is_temporary` 这个**记录级标记**仍然保留 —— 它由
+> `treatment_model.temporary_expr()` 查询时推导，PDF / 患者每日汇总 / 后台记录列表
+> 三处消费方都在用，与已删除的 `temporary_assignment` 从来没有依赖关系。
+> 这**不是**"临时治疗功能整体下线"。
 """
 
 from __future__ import annotations
 
 import sqlite3
 import unittest
-from datetime import date, datetime
 
-from app.core.clock import period_expiry
-from app.core.config import WorkTimeConfig
 from tests.support import DbTestCase
-
-
-class TestTemporaryAssignment(DbTestCase):
-    """M09：临时释放 / 临时认领，原归属不变。
-
-    2026-10-05 起临时指派不再由"单日假"自动产生（见 `app/models/temporary_assignment.py`），
-    但它仍是**归属解析**的依据，所以状态机与到期时点继续有测试盯着。
-    """
-
-    # 远未来的日期：`expires_at` 是否已过期会参与 SQL 比较（`v_patient_visibility`），
-    # 写死"今天"会让用例随运行时刻时红时绿。
-    TEMP_DAY = date(2099, 1, 5)
-
-    def setUp(self) -> None:
-        super().setUp()
-        self.migrate()
-        self.original = self.add_user("T001", "原归属")
-        self.cover = self.add_user("T002", "临时接管")
-        self.p1 = self.add_patient("ZY001", "王五", therapist_id=self.original)
-
-    def _open_temp(self, temporary_therapist_id: int | None, period: str = "am") -> int:
-        # 必须用**库格式**的到期时点（UTC + 毫秒 + Z，见 core/clock.py）：
-        # 写成 '2099-01-05 11:30:00' 这种本地墙钟字符串会因为 ' ' < 'T'
-        # 被 SQL 字符串比较判定成"已过期"，fixture 就不再代表一条有效的临时指派。
-        expires = period_expiry(self.TEMP_DAY, period, WorkTimeConfig())
-        cur = self.conn.execute(
-            "INSERT INTO temporary_assignment"
-            " (patient_no, original_therapist_id, temporary_therapist_id, date, period, expires_at)"
-            " VALUES (?, ?, ?, ?, ?, ?)",
-            (
-                self.p1, self.original, temporary_therapist_id,
-                self.TEMP_DAY.isoformat(), period, expires,
-            ),
-        )
-        return int(cur.lastrowid)
-
-    def test_temp_release_keeps_original_owner(self) -> None:
-        """临时指派期间 patient.assigned_therapist_id 必须保持不变。"""
-        self._open_temp(None)
-        row = self.conn.execute(
-            "SELECT assigned_therapist_id FROM patient WHERE inpatient_no = ?", (self.p1,)
-        ).fetchone()
-        self.assertEqual(row["assigned_therapist_id"], self.original)
-        state = self.conn.execute("SELECT state FROM v_open_temporary_assignment").fetchone()["state"]
-        self.assertEqual(state, "temp_released")
-
-    def test_temp_claim_state(self) -> None:
-        self._open_temp(self.cover)
-        row = self.conn.execute("SELECT state, temporary_therapist_id FROM v_open_temporary_assignment").fetchone()
-        self.assertEqual(row["state"], "temp_claimed")
-        self.assertEqual(row["temporary_therapist_id"], self.cover)
-        # 原归属仍然不变
-        assigned = self.conn.execute(
-            "SELECT assigned_therapist_id FROM patient WHERE inpatient_no = ?", (self.p1,)
-        ).fetchone()[0]
-        self.assertEqual(assigned, self.original)
-
-    def test_only_one_open_assignment_per_slot(self) -> None:
-        self._open_temp(None)
-        with self.assertRaises(sqlite3.IntegrityError):
-            self._open_temp(self.cover)
-
-    def test_expiry_uses_q11_boundary(self) -> None:
-        """下午假的到期时点是**当地** 17:30（Q11）；存库时统一转成 UTC。
-
-        注意不能直接断言字符串里有 "17:30"：库里存的是 UTC 时间戳
-        （+08:00 下 17:30 会存成 09:30Z），所以这里转回本地时区再比时刻。
-        """
-        temp_id = self._open_temp(None, "pm")
-        expires = self.conn.execute(
-            "SELECT expires_at FROM temporary_assignment WHERE id = ?", (temp_id,)
-        ).fetchone()[0]
-        self.assertRegex(expires, r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$", expires)
-        local = datetime.fromisoformat(expires.replace("Z", "+00:00")).astimezone()
-        self.assertEqual(local.strftime("%H:%M"), "17:30", "下午假的到期时点应为当地 17:30（Q11）")
-        self.assertEqual(local.date(), self.TEMP_DAY)
-
-    def test_closing_frees_the_slot(self) -> None:
-        temp_id = self._open_temp(None)
-        self.conn.execute(
-            "UPDATE temporary_assignment SET status = 'closed', closed_at = datetime('now','localtime')"
-            " WHERE id = ?",
-            (temp_id,),
-        )
-        # 关闭后同一时段可以重新开出临时指派
-        self._open_temp(self.cover)
-        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM temporary_assignment").fetchone()[0], 2)
-
-    def test_closed_assignment_leaves_the_view(self) -> None:
-        temp_id = self._open_temp(None)
-        self.conn.execute("UPDATE temporary_assignment SET status = 'closed' WHERE id = ?", (temp_id,))
-        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM v_open_temporary_assignment").fetchone()[0], 0)
-
-    def test_updated_at_refreshes_on_state_change(self) -> None:
-        """回归防线：曾用 `IS NOT` 写 WHEN 条件，SQLite 无此不等式运算符，
-        触发器静默不工作，updated_at 永不更新 → 同步端永远拉不到变更。"""
-        import time
-
-        temp_id = self._open_temp(None)
-        before = self.conn.execute(
-            "SELECT updated_at FROM temporary_assignment WHERE id = ?", (temp_id,)
-        ).fetchone()[0]
-        time.sleep(0.005)
-        self.conn.execute("UPDATE temporary_assignment SET status = 'closed' WHERE id = ?", (temp_id,))
-        after = self.conn.execute(
-            "SELECT updated_at FROM temporary_assignment WHERE id = ?", (temp_id,)
-        ).fetchone()[0]
-        self.assertNotEqual(before, after, "临时指派状态变化必须刷新 updated_at")
-
-    def test_close_does_not_break_on_updated_at_column(self) -> None:
-        """temporary_assignment 必须有 updated_at 列，否则触发器一执行就报 no such column。"""
-        cols = {
-            row["name"]
-            for row in self.conn.execute("PRAGMA table_info(temporary_assignment)").fetchall()
-        }
-        self.assertIn("updated_at", cols)
 
 
 class TestPatientStatusAndJson(DbTestCase):

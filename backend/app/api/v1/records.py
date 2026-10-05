@@ -361,17 +361,22 @@ def timeline(
     date_from: str | None = Query(None, alias="from"),
     date_to: str | None = Query(None, alias="to"),
     main_item_id: int | None = None,
-    scope: str = Query("visible", description="mine / temp / visible"),
+    scope: str = Query("visible", description="mine / visible"),
 ) -> dict[str, Any]:
     """按日期倒序的记录流。
 
-    `scope=temp` 只看"临时治疗"（记录人 ≠ 患者归属人），
-    这是治疗师在临时接管他人患者期间需要复查的部分。
+    `scope=mine` 只看我写的记录；`visible`（默认）看我能看到的全部患者。
+
+    > 曾有的 `scope=temp`（只看"临时治疗"）已按用户决定**删除**（2026-10-05）：
+    > 它的动机是"单日请假期间临时接管他人患者后复查"，而请假与临时指派都已下线。
+    > 注意 `is_temporary` 这个**标记本身仍然保留** —— 打印 PDF 会标"（临时）"、
+    > 患者每日汇总会置 `temporary`、后台记录列表也有该列，那些是"这条记录是谁做的"
+    > 的审计信息，与筛选无关。
     """
     from app.models import dictionary as dictionary_model
 
-    if scope not in {"mine", "temp", "visible"}:
-        raise NotFoundError("INVALID_SCOPE", "scope 只能是 mine / temp / visible", details={"scope": scope})
+    if scope not in {"mine", "visible"}:
+        raise NotFoundError("INVALID_SCOPE", "scope 只能是 mine / visible", details={"scope": scope})
 
     patient_nos = None if scope == "visible" and is_admin(user) else visibility.visible_patient_numbers(conn, user)
     items, total = treatment_model.list_records(
@@ -399,8 +404,6 @@ def timeline(
 
     out: list[dict[str, Any]] = []
     for record in items:
-        if scope == "temp" and not int(record.get("is_temporary") or 0):
-            continue
         if main_item_id is not None:
             names = main_names.get(int(record["id"]), [])
             target = dictionary_model.get_main_item(conn, main_item_id)

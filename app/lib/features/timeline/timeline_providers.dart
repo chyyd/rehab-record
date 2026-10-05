@@ -13,13 +13,14 @@ import 'package:rehab_app/data/remote/timeline_dto.dart';
 ///
 /// 与服务端 `scope` 一一对应：
 ///  - `visible`：我能看到的全部患者（全科协作视图）；
-///  - `mine`：只有我写的记录；
-///  - `temp`：只看"临时治疗"（记录人 ≠ 患者归属人）——治疗师在单日假期间
-///    接管他人患者后需要复查的部分。
+///  - `mine`：只有我写的记录。
+///
+/// > 曾有的 `temp`（"临时治疗"）已按用户决定删除：它的动机是"单日请假期间临时
+/// > 接管他人患者后复查"，而请假与临时指派都已下线。记录级仍带 `is_temporary`
+/// > 标记（打印与汇总在用），但不再作为筛选入口。
 enum TimelineScope {
   visible('全科', 'visible'),
-  mine('我写的', 'mine'),
-  temp('临时治疗', 'temp');
+  mine('我写的', 'mine');
 
   const TimelineScope(this.label, this.wire);
   final String label;

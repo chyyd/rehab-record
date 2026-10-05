@@ -1,24 +1,29 @@
-"""患者数据访问与**归属可见性解析**（阶段 1 / `设计.md` 3.3、3.5.5，`开发计划.md` M09/M12/M18）。
+"""患者数据访问与**归属可见性解析**（阶段 1 / `设计.md` 3.3、3.5.5，`开发计划.md` M12/M18）。
 
 本模块承载本系统最关键的一条业务规则：**"当前谁负责这个患者"**。
 
-原归属（`patient.assigned_therapist_id`）与可见归属（`visible_therapist`）是两件事：
+**2026-10-05 起归属简化为两层**（`temporary_assignment` 已彻底删除，迁移 009）：
 
 | 场景 | `assigned_therapist_id` | 可见归属 |
 |---|---|---|
-| 正常 | 张三 | 张三 |
-| 临时释放（未被认领） | 张三 | **NULL**（谁都不负责，别人可临时认领） |
-| 临时释放被李四临时认领 | 张三（**不变**） | 李四 |
-| 管理员批量排空 | NULL | NULL |
+| 有归属 | 张三 | 张三（**恒等于原归属**） |
+| 放弃归属 / 管理员批量排空 | NULL | NULL |
 
-> 这两列场景在 2026-10-05 前分别叫"单日假临时释放"与"多日假正式排空"：请假功能
-> （`leave_record`）已整体下线，临时指派现在只由人工按业务需要建立
-> （见 `app/models/temporary_assignment.py`），但**上面这四条解析语义没有变**。
+也就是说 `visible_therapist_id` 现在**直接就是** `patient.assigned_therapist_id`，
+`v_patient_visibility` 不再做任何解析。原先的"临时释放 → 可见归属变 NULL →
+他人临时认领"三层语义随临时指派一并删除：
+
+- 它唯一的自动来源是"单日请假"，而请假已随排期功能下线（迁移 008）；
+- 它从来没有 API/CLI 登记入口（`/temp-release`、`/temp-claim` 从未实现）；
+- 2026-10-03 改成"**全科白板**"后，任何治疗师都能查看/记录任何在院患者，
+  所以临时指派**不改变任何权限**，只影响 `scope=mine` 的筛选与排序分组。
+
+> 注意 `visibility_state` 列**保留但恒为 `'assigned'`**，只为兼容既有客户端与
+> `schemas/patient.py::PatientOut` 的字段；它已经退化，将来可再删。
 
 实现要点：
 1. 用 `v_patient_visibility` 视图统一计算，**不要**在路由或前端各写一遍；
-2. 判定"临时指派是否仍有效"采用**读时兜底**——同时看 `status='open'` 与 `expires_at`。
-   这样即使定时清理任务漏跑（服务重启等），归属显示也不会错（`开发计划.md` R8）。
+2. 视图定义必须与迁移 009 完全一致（`scripts/check_docs_consistency.py` 会逐字比对）。
 """
 
 from __future__ import annotations
@@ -41,10 +46,20 @@ ACTIVE_STATUSES = (STATUS_IN_HOSPITAL, STATUS_PAUSED)
 #
 # 2026-10-03 起新增 `dept`（科室级白板）：治疗师默认范围，含义是"科室当前在院/暂停的患者"，
 # 不再按归属隔离。原有取值保留：
-#   - `mine`/`unassigned`/`temp` 仍用于**筛选**（我的患者、未分配、临时相关）；
+#   - `mine`/`unassigned` 仍用于**筛选**（归属是我 / 归属为空）；
 #   - `visible` 保留为 `dept` 的同义兼容值（旧客户端仍能用）；
 #   - `all` 仍是**管理员专属**的全表范围（含已出院）。
-Scope = Literal["mine", "unassigned", "temp", "all", "visible", "dept"]
+#
+# 2026-10-05：`temp` **已从患者列表的范围白名单里删除**（`temporary_assignment` 已删，
+# 迁移 009）。「时间轴 / 记录列表」（`api/v1/records.py`）的 `scope=temp` 也已按用户决定
+# 一并删除（现在只有 `mine` / `visible`）。
+#
+# ⚠ 两件事**不要混淆**：
+#   * `scope=temp`（数据范围筛选）—— 已全部删除；
+#   * `is_temporary`（记录级标记，"记录人 ≠ 该患者当时的归属人"）—— **仍然保留**，
+#     由 `treatment_model.temporary_expr()` 查询时推导，PDF、患者每日汇总与后台记录列表
+#     三个消费方都还在用它。它与 `temporary_assignment` 从来没有依赖关系。
+Scope = Literal["mine", "unassigned", "all", "visible", "dept"]
 
 SELECT_COLUMN_NAMES = (
     "inpatient_no",
@@ -60,50 +75,28 @@ SELECT_COLUMN_NAMES = (
 
 # 带表别名的列清单，供 JOIN 查询使用
 _PATIENT_COLUMNS = ", ".join(f"p.{name}" for name in SELECT_COLUMN_NAMES)
-_VISIBILITY_COLUMNS = (
-    "v.visible_therapist_id, v.visibility_state, v.temp_assignment_id,"
-    " v.temp_therapist_id, v.temp_original_therapist_id"
-)
+_VISIBILITY_COLUMNS = "v.visible_therapist_id, v.visibility_state"
 
 # --------------------------------------------------------------------------- #
 # 可见性视图：全系统唯一的归属解析实现
 # --------------------------------------------------------------------------- #
-# 取每个患者「当前有效」的临时指派：
-#   - status = 'open'
-#   - expires_at 为空（不设过期）或未过期   ← 读时兜底，不依赖定时任务
-# 若同一患者有多条（正常情况下唯一索引会拦住），取 id 最大的一条。
+# 2026-10-05（迁移 009）：临时指派删除后，归属只剩两层 ——
+# 可见归属**直接等于** `patient.assigned_therapist_id`（没有中间解析）。
+#
+# `visibility_state` 列保留但恒为 'assigned'：它是 `schemas/patient.py::PatientOut`
+# 的响应字段、也被安卓端 Drift 本地库缓存过，直接删列会让旧客户端拿不到预期字段。
+# 它已经退化（原来的 assigned / temp_released / temp_claimed 只剩第一种），
+# 将来确认没有客户端再读它时可以再开一个迁移删掉。
+#
+# ⚠ 这段 SQL 必须与 `app/db/migrations/009_drop_temporary_assignment.sql` 里的
+#   CREATE VIEW 逐字一致（`scripts/check_docs_consistency.py` 会比对两者）。
 VISIBILITY_VIEW_SQL = """
 CREATE VIEW v_patient_visibility AS
-WITH active_temp AS (
-    SELECT ta.*
-    FROM temporary_assignment ta
-    WHERE ta.status = 'open'
-      AND (ta.expires_at IS NULL OR ta.expires_at > strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-),
-picked_temp AS (
-    SELECT * FROM active_temp t
-    WHERE t.id = (SELECT MAX(x.id) FROM active_temp x WHERE x.patient_no = t.patient_no)
-)
 SELECT p.inpatient_no,
        p.assigned_therapist_id,
-       pt.id                     AS temp_assignment_id,
-       pt.temporary_therapist_id AS temp_therapist_id,
-       pt.original_therapist_id  AS temp_original_therapist_id,
-       pt.date                   AS temp_date,
-       pt.period                 AS temp_period,
-       pt.expires_at             AS temp_expires_at,
-       CASE
-           WHEN pt.id IS NULL THEN p.assigned_therapist_id
-           WHEN pt.temporary_therapist_id IS NOT NULL THEN pt.temporary_therapist_id
-           ELSE NULL
-       END AS visible_therapist_id,
-       CASE
-           WHEN pt.id IS NULL THEN 'assigned'
-           WHEN pt.temporary_therapist_id IS NOT NULL THEN 'temp_claimed'
-           ELSE 'temp_released'
-       END AS visibility_state
+       p.assigned_therapist_id AS visible_therapist_id,
+       'assigned' AS visibility_state
 FROM patient p
-LEFT JOIN picked_temp pt ON pt.patient_no = p.inpatient_no
 """
 
 
@@ -116,21 +109,20 @@ def visibility_from(scope: Scope, user_id: int) -> tuple[str, list[Any]]:
                     不按归属隔离。一个上午里 PT/OT/言语/吞咽可能各给同一患者做一次，
                     所以"别人的患者"必须可见。
     - ``visible``   ``dept`` 的同义兼容值（旧客户端仍在用）。
-    - ``mine``      可见归属是我（含临时认领我的患者）—— 仍可作为**筛选**使用。
-    - ``unassigned`` 无人负责（原归属为空，或正处于临时释放中且未被认领）。
-    - ``temp``      与我有关的临时指派（我作为原归属者被临时释放的，或我临时认领的）。
+    - ``mine``      可见归属是我 —— 因为可见归属恒等于原归属，等价于"归属是我"。
+    - ``unassigned`` 无人负责（归属为 NULL）。
     - ``all``       不加限制（**仅管理员**，路由层负责拦截；含已出院）。
+
+    > ``temp`` 在 2026-10-05 随 `temporary_assignment` 删除（迁移 009）：
+    > 它只影响筛选，而"临时把患者从甲转给乙"在全科白板下不改变任何权限，
+    > 用 `assigned_therapist_id` 直接表达即可。`api/v1/records.py` 的 `scope=temp`
+    > 也已按用户决定一并删除 —— 那是**另一件事**（记录级的"临时治疗"筛选），
+    > 详情见本模块顶部注释。
     """
     if scope == "mine":
         return "WHERE v.visible_therapist_id = ?", [user_id]
     if scope == "unassigned":
         return "WHERE v.visible_therapist_id IS NULL", []
-    if scope == "temp":
-        return (
-            "WHERE v.temp_assignment_id IS NOT NULL"
-            " AND (v.temp_therapist_id = ? OR v.temp_original_therapist_id = ?)",
-            [user_id, user_id],
-        )
     if scope == "all":
         return "", []
     if scope in ("dept", "visible"):
@@ -335,12 +327,10 @@ def claim_patient(conn: sqlite3.Connection, inpatient_no: str, therapist_id: int
             "该患者当前已有负责治疗师，不能认领",
             details={"visible_therapist_id": patient["visible_therapist_id"]},
         )
-    if patient["visibility_state"] == "temp_released":
-        # 处于临时释放中：应走临时认领，而不是改原归属
-        raise Conflict(
-            "该患者处于单日假临时释放中，请使用临时认领",
-            details={"hint": "temp-claim"},
-        )
+    # 2026-10-05：这里原有 `visibility_state == 'temp_released'` 的分支
+    #（提示"该患者处于单日假临时释放中，请使用临时认领"，并带一个临时认领的 hint）。
+    # 临时指派整体删除（迁移 009）后 `visibility_state` 恒为 'assigned'，该分支不可达，
+    # 故删除；相应的提示文案与 hint 也一并消失 —— 不再存在"临时认领"这条路。
     _record_assignment(conn, inpatient_no, None, therapist_id, "claim", operator_user_id=therapist_id)
     conn.execute(
         "UPDATE patient SET assigned_therapist_id = ?, revision = revision + 1 WHERE inpatient_no = ?",

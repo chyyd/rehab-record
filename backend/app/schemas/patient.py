@@ -7,8 +7,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.models.patient import PATIENT_STATUSES
 
 SCOPE_DESCRIPTION = (
-    "dept（科室白板：在院+暂停，治疗师默认）/ mine（可见归属是我）/ "
-    "unassigned（无人负责）/ temp（与我有关的临时指派）/ "
+    "dept（科室白板：在院+暂停，治疗师默认）/ mine（归属是我）/ "
+    "unassigned（归属为空 = 无人负责）/ "
     "visible（dept 的同义兼容值）/ all（全表含已出院，仅管理员）"
 )
 
@@ -21,22 +21,22 @@ class PatientOut(BaseModel):
     diagnosis: str | None = None
     admin_note: str | None = None
     assigned_therapist_id: int | None = Field(
-        default=None, description="原归属。单日假期间不变；多日假排空后为 NULL"
+        default=None, description="归属治疗师（可见归属恒等于它）；放弃或批量排空后为 NULL"
     )
     visible_therapist_id: int | None = Field(
-        default=None, description="可见归属（当前实际谁负责），由 visible_therapist 规则解析"
+        default=None, description="可见归属，2026-10-05 起直接等于 assigned_therapist_id"
     )
     visibility_state: str = Field(
-        default="assigned", description="assigned / temp_released / temp_claimed"
+        default="assigned",
+        description=(
+            "**已退化**：恒为 assigned。2026-10-05 临时指派删除后不再出现 "
+            "temp_released / temp_claimed，该字段仅为兼容既有客户端保留"
+        ),
     )
     status: str
     created_at: str | None = None
     updated_at: str | None = None
     revision: int = 1
-    temp_assignment_id: int | None = None
-    temp_therapist_id: int | None = None
-    temp_original_therapist_id: int | None = None
-    temp_expires_at: str | None = None
 
 
 class PatientCreateRequest(BaseModel):

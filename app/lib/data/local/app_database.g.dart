@@ -70,17 +70,6 @@ class $PatientsTable extends Patients with TableInfo<$PatientsTable, Patient> {
     type: DriftSqlType.int,
     requiredDuringInsert: false,
   );
-  static const VerificationMeta _visibilityStateMeta = const VerificationMeta(
-    'visibilityState',
-  );
-  @override
-  late final GeneratedColumn<String> visibilityState = GeneratedColumn<String>(
-    'visibility_state',
-    aliasedName,
-    true,
-    type: DriftSqlType.string,
-    requiredDuringInsert: false,
-  );
   static const VerificationMeta _statusMeta = const VerificationMeta('status');
   @override
   late final GeneratedColumn<String> status = GeneratedColumn<String>(
@@ -136,7 +125,6 @@ class $PatientsTable extends Patients with TableInfo<$PatientsTable, Patient> {
     adminNote,
     assignedTherapistId,
     visibleTherapistId,
-    visibilityState,
     status,
     revision,
     visible,
@@ -203,15 +191,6 @@ class $PatientsTable extends Patients with TableInfo<$PatientsTable, Patient> {
         ),
       );
     }
-    if (data.containsKey('visibility_state')) {
-      context.handle(
-        _visibilityStateMeta,
-        visibilityState.isAcceptableOrUnknown(
-          data['visibility_state']!,
-          _visibilityStateMeta,
-        ),
-      );
-    }
     if (data.containsKey('status')) {
       context.handle(
         _statusMeta,
@@ -273,10 +252,6 @@ class $PatientsTable extends Patients with TableInfo<$PatientsTable, Patient> {
         DriftSqlType.int,
         data['${effectivePrefix}visible_therapist_id'],
       ),
-      visibilityState: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}visibility_state'],
-      ),
       status: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}status'],
@@ -309,7 +284,13 @@ class Patient extends DataClass implements Insertable<Patient> {
   final String? adminNote;
   final int? assignedTherapistId;
   final int? visibleTherapistId;
-  final String? visibilityState;
+
+  /// 2026-10-05：`visibility_state` 列**已删除**（本地库 schemaVersion 3 → 4）。
+  ///
+  /// 它缓存的是服务端 `v_patient_visibility.visibility_state`，而那个字段随临时指派
+  /// 删除后**恒为 `'assigned'`**（服务端的"可见归属"现在直接等于 `assigned_therapist_id`）。
+  /// 一个恒为常量的镜像列没有任何查询价值，继续留着只会让后来的人以为本地有归属状态机。
+  /// 服务端仍返回该字段（为兼容既有客户端），但 App **不再读也不再写**它。
   final String status;
 
   /// 服务端 `revision`，用于推送时做乐观锁基线。
@@ -328,7 +309,6 @@ class Patient extends DataClass implements Insertable<Patient> {
     this.adminNote,
     this.assignedTherapistId,
     this.visibleTherapistId,
-    this.visibilityState,
     required this.status,
     required this.revision,
     required this.visible,
@@ -350,9 +330,6 @@ class Patient extends DataClass implements Insertable<Patient> {
     }
     if (!nullToAbsent || visibleTherapistId != null) {
       map['visible_therapist_id'] = Variable<int>(visibleTherapistId);
-    }
-    if (!nullToAbsent || visibilityState != null) {
-      map['visibility_state'] = Variable<String>(visibilityState);
     }
     map['status'] = Variable<String>(status);
     map['revision'] = Variable<int>(revision);
@@ -377,9 +354,6 @@ class Patient extends DataClass implements Insertable<Patient> {
       visibleTherapistId: visibleTherapistId == null && nullToAbsent
           ? const Value.absent()
           : Value(visibleTherapistId),
-      visibilityState: visibilityState == null && nullToAbsent
-          ? const Value.absent()
-          : Value(visibilityState),
       status: Value(status),
       revision: Value(revision),
       visible: Value(visible),
@@ -401,7 +375,6 @@ class Patient extends DataClass implements Insertable<Patient> {
         json['assignedTherapistId'],
       ),
       visibleTherapistId: serializer.fromJson<int?>(json['visibleTherapistId']),
-      visibilityState: serializer.fromJson<String?>(json['visibilityState']),
       status: serializer.fromJson<String>(json['status']),
       revision: serializer.fromJson<int>(json['revision']),
       visible: serializer.fromJson<bool>(json['visible']),
@@ -418,7 +391,6 @@ class Patient extends DataClass implements Insertable<Patient> {
       'adminNote': serializer.toJson<String?>(adminNote),
       'assignedTherapistId': serializer.toJson<int?>(assignedTherapistId),
       'visibleTherapistId': serializer.toJson<int?>(visibleTherapistId),
-      'visibilityState': serializer.toJson<String?>(visibilityState),
       'status': serializer.toJson<String>(status),
       'revision': serializer.toJson<int>(revision),
       'visible': serializer.toJson<bool>(visible),
@@ -433,7 +405,6 @@ class Patient extends DataClass implements Insertable<Patient> {
     Value<String?> adminNote = const Value.absent(),
     Value<int?> assignedTherapistId = const Value.absent(),
     Value<int?> visibleTherapistId = const Value.absent(),
-    Value<String?> visibilityState = const Value.absent(),
     String? status,
     int? revision,
     bool? visible,
@@ -449,9 +420,6 @@ class Patient extends DataClass implements Insertable<Patient> {
     visibleTherapistId: visibleTherapistId.present
         ? visibleTherapistId.value
         : this.visibleTherapistId,
-    visibilityState: visibilityState.present
-        ? visibilityState.value
-        : this.visibilityState,
     status: status ?? this.status,
     revision: revision ?? this.revision,
     visible: visible ?? this.visible,
@@ -471,9 +439,6 @@ class Patient extends DataClass implements Insertable<Patient> {
       visibleTherapistId: data.visibleTherapistId.present
           ? data.visibleTherapistId.value
           : this.visibleTherapistId,
-      visibilityState: data.visibilityState.present
-          ? data.visibilityState.value
-          : this.visibilityState,
       status: data.status.present ? data.status.value : this.status,
       revision: data.revision.present ? data.revision.value : this.revision,
       visible: data.visible.present ? data.visible.value : this.visible,
@@ -490,7 +455,6 @@ class Patient extends DataClass implements Insertable<Patient> {
           ..write('adminNote: $adminNote, ')
           ..write('assignedTherapistId: $assignedTherapistId, ')
           ..write('visibleTherapistId: $visibleTherapistId, ')
-          ..write('visibilityState: $visibilityState, ')
           ..write('status: $status, ')
           ..write('revision: $revision, ')
           ..write('visible: $visible, ')
@@ -507,7 +471,6 @@ class Patient extends DataClass implements Insertable<Patient> {
     adminNote,
     assignedTherapistId,
     visibleTherapistId,
-    visibilityState,
     status,
     revision,
     visible,
@@ -523,7 +486,6 @@ class Patient extends DataClass implements Insertable<Patient> {
           other.adminNote == this.adminNote &&
           other.assignedTherapistId == this.assignedTherapistId &&
           other.visibleTherapistId == this.visibleTherapistId &&
-          other.visibilityState == this.visibilityState &&
           other.status == this.status &&
           other.revision == this.revision &&
           other.visible == this.visible &&
@@ -537,7 +499,6 @@ class PatientsCompanion extends UpdateCompanion<Patient> {
   final Value<String?> adminNote;
   final Value<int?> assignedTherapistId;
   final Value<int?> visibleTherapistId;
-  final Value<String?> visibilityState;
   final Value<String> status;
   final Value<int> revision;
   final Value<bool> visible;
@@ -550,7 +511,6 @@ class PatientsCompanion extends UpdateCompanion<Patient> {
     this.adminNote = const Value.absent(),
     this.assignedTherapistId = const Value.absent(),
     this.visibleTherapistId = const Value.absent(),
-    this.visibilityState = const Value.absent(),
     this.status = const Value.absent(),
     this.revision = const Value.absent(),
     this.visible = const Value.absent(),
@@ -564,7 +524,6 @@ class PatientsCompanion extends UpdateCompanion<Patient> {
     this.adminNote = const Value.absent(),
     this.assignedTherapistId = const Value.absent(),
     this.visibleTherapistId = const Value.absent(),
-    this.visibilityState = const Value.absent(),
     required String status,
     this.revision = const Value.absent(),
     this.visible = const Value.absent(),
@@ -581,7 +540,6 @@ class PatientsCompanion extends UpdateCompanion<Patient> {
     Expression<String>? adminNote,
     Expression<int>? assignedTherapistId,
     Expression<int>? visibleTherapistId,
-    Expression<String>? visibilityState,
     Expression<String>? status,
     Expression<int>? revision,
     Expression<bool>? visible,
@@ -597,7 +555,6 @@ class PatientsCompanion extends UpdateCompanion<Patient> {
         'assigned_therapist_id': assignedTherapistId,
       if (visibleTherapistId != null)
         'visible_therapist_id': visibleTherapistId,
-      if (visibilityState != null) 'visibility_state': visibilityState,
       if (status != null) 'status': status,
       if (revision != null) 'revision': revision,
       if (visible != null) 'visible': visible,
@@ -613,7 +570,6 @@ class PatientsCompanion extends UpdateCompanion<Patient> {
     Value<String?>? adminNote,
     Value<int?>? assignedTherapistId,
     Value<int?>? visibleTherapistId,
-    Value<String?>? visibilityState,
     Value<String>? status,
     Value<int>? revision,
     Value<bool>? visible,
@@ -627,7 +583,6 @@ class PatientsCompanion extends UpdateCompanion<Patient> {
       adminNote: adminNote ?? this.adminNote,
       assignedTherapistId: assignedTherapistId ?? this.assignedTherapistId,
       visibleTherapistId: visibleTherapistId ?? this.visibleTherapistId,
-      visibilityState: visibilityState ?? this.visibilityState,
       status: status ?? this.status,
       revision: revision ?? this.revision,
       visible: visible ?? this.visible,
@@ -657,9 +612,6 @@ class PatientsCompanion extends UpdateCompanion<Patient> {
     if (visibleTherapistId.present) {
       map['visible_therapist_id'] = Variable<int>(visibleTherapistId.value);
     }
-    if (visibilityState.present) {
-      map['visibility_state'] = Variable<String>(visibilityState.value);
-    }
     if (status.present) {
       map['status'] = Variable<String>(status.value);
     }
@@ -687,7 +639,6 @@ class PatientsCompanion extends UpdateCompanion<Patient> {
           ..write('adminNote: $adminNote, ')
           ..write('assignedTherapistId: $assignedTherapistId, ')
           ..write('visibleTherapistId: $visibleTherapistId, ')
-          ..write('visibilityState: $visibilityState, ')
           ..write('status: $status, ')
           ..write('revision: $revision, ')
           ..write('visible: $visible, ')
@@ -3354,7 +3305,6 @@ typedef $$PatientsTableCreateCompanionBuilder = PatientsCompanion Function({
   Value<String?> adminNote,
   Value<int?> assignedTherapistId,
   Value<int?> visibleTherapistId,
-  Value<String?> visibilityState,
   required String status,
   Value<int> revision,
   Value<bool> visible,
@@ -3368,7 +3318,6 @@ typedef $$PatientsTableUpdateCompanionBuilder = PatientsCompanion Function({
   Value<String?> adminNote,
   Value<int?> assignedTherapistId,
   Value<int?> visibleTherapistId,
-  Value<String?> visibilityState,
   Value<String> status,
   Value<int> revision,
   Value<bool> visible,
@@ -3412,11 +3361,6 @@ class $$PatientsTableFilterComposer
 
   ColumnFilters<int> get visibleTherapistId => $composableBuilder(
     column: $table.visibleTherapistId,
-    builder: (column) => ColumnFilters(column),
-  );
-
-  ColumnFilters<String> get visibilityState => $composableBuilder(
-    column: $table.visibilityState,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -3480,11 +3424,6 @@ class $$PatientsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
-  ColumnOrderings<String> get visibilityState => $composableBuilder(
-    column: $table.visibilityState,
-    builder: (column) => ColumnOrderings(column),
-  );
-
   ColumnOrderings<String> get status => $composableBuilder(
     column: $table.status,
     builder: (column) => ColumnOrderings(column),
@@ -3539,11 +3478,6 @@ class $$PatientsTableAnnotationComposer
     builder: (column) => column,
   );
 
-  GeneratedColumn<String> get visibilityState => $composableBuilder(
-    column: $table.visibilityState,
-    builder: (column) => column,
-  );
-
   GeneratedColumn<String> get status =>
       $composableBuilder(column: $table.status, builder: (column) => column);
 
@@ -3591,7 +3525,6 @@ class $$PatientsTableTableManager
                 Value<String?> adminNote = const Value.absent(),
                 Value<int?> assignedTherapistId = const Value.absent(),
                 Value<int?> visibleTherapistId = const Value.absent(),
-                Value<String?> visibilityState = const Value.absent(),
                 Value<String> status = const Value.absent(),
                 Value<int> revision = const Value.absent(),
                 Value<bool> visible = const Value.absent(),
@@ -3604,7 +3537,6 @@ class $$PatientsTableTableManager
                 adminNote: adminNote,
                 assignedTherapistId: assignedTherapistId,
                 visibleTherapistId: visibleTherapistId,
-                visibilityState: visibilityState,
                 status: status,
                 revision: revision,
                 visible: visible,
@@ -3619,7 +3551,6 @@ class $$PatientsTableTableManager
                 Value<String?> adminNote = const Value.absent(),
                 Value<int?> assignedTherapistId = const Value.absent(),
                 Value<int?> visibleTherapistId = const Value.absent(),
-                Value<String?> visibilityState = const Value.absent(),
                 required String status,
                 Value<int> revision = const Value.absent(),
                 Value<bool> visible = const Value.absent(),
@@ -3632,7 +3563,6 @@ class $$PatientsTableTableManager
                 adminNote: adminNote,
                 assignedTherapistId: assignedTherapistId,
                 visibleTherapistId: visibleTherapistId,
-                visibilityState: visibilityState,
                 status: status,
                 revision: revision,
                 visible: visible,

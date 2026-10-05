@@ -746,7 +746,10 @@ class TestTemporaryTreatmentFlag(SeededApiTestCase):
 
     2026-10-05 排期下线后它不再是存储列，而是查询时按 `patient_assignment_history`
     回溯推导（`app/models/treatment.py::temporary_expr`）。这组用例钉住推导结果 ——
-    它是"临时治疗"统计和时间轴 `scope=temp` 的唯一数据源。
+    它是"临时治疗"标记的唯一数据源（打印 PDF、患者每日汇总、后台记录列表三处消费）。
+
+    > 注意：`scope=temp` 这个**筛选入口**已于 2026-10-05 删除（患者列表与时间轴都不再接受它），
+    > 但**标记本身保留** —— 两者不是一回事。
     """
 
     def _create(self, headers: dict, patient_no: str = "ZY001", **overrides) -> dict:

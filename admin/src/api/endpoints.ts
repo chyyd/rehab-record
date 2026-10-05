@@ -115,6 +115,7 @@ export interface PatientOut {
   admin_note?: string | null
   assigned_therapist_id?: number | null
   visible_therapist_id?: number | null
+  /** 已退化：2026-10-05 临时指派删除后恒为 'assigned'，仅为与后端响应字段对齐而保留 */
   visibility_state?: string
   status: string
   created_at?: string

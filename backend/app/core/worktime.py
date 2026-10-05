@@ -3,14 +3,17 @@
 **这是全系统"半日"边界的唯一时间真源。** 任何模块都不允许自己写
 "上午到 11:30"这类字面量，必须调用本模块。
 
-> 2026-10-05 排期、休息块、请假整体下线后，这里服务的对象只剩两类：
-> 治疗记录的 `session_period`（"这条记录属于哪个半日"）与 `temporary_assignment`
-> 的到期时点（`expires_at`）。"上午 11:30 结束"本身没有变，也不再用于任何排班判定。
+> 2026-10-05 排期、休息块、请假整体下线（迁移 008），临时指派随后也删除
+> （迁移 009）。现在这里服务的对象**只剩一类**：治疗记录的 `session_period`
+> （"这条记录属于哪个半日"）。"上午 11:30 结束"本身没有变，
+> 也不再用于任何排班判定。
 
 约定：
 - ``period`` 取值：``"am"``（上午）、``"pm"``（下午）、``"full"``（全天）。
-- ``"full"`` **不是半日单位**（治疗记录的 `session_period` 不接受它），只用于临时指派的
-  "整天"粒度；请假功能下线前它是请假粒度。
+- ``"full"`` **不是半日单位**（治疗记录的 `session_period` 不接受它）。
+  它现在**没有任何存储列在用**（`temporary_assignment.period` 已随表删除），
+  仅作为历史输入值继续被 ``normalize_period`` 接受、并被 ``cli periods`` 打印，
+  保留是因为删掉它会改变既有调用方的可接受输入集合，收益不明确。
 - 所有时间都是"本地墙钟时间"（Asia/Shanghai，依据 D07），不带时区偏移。
 """
 
@@ -31,8 +34,11 @@ PERIOD_FULL = "full"
 # 保留是为了不破坏既有导入 —— 它现在表达的就是"一天分两个半日"。
 APPOINTMENT_PERIODS: tuple[str, ...] = (PERIOD_AM, PERIOD_PM)
 # 允许的 ``period`` 全集：比半日多一个 ``full``（全天）。
-# ``full`` 现在的唯一用处是**临时指派**的粒度（`temporary_assignment.period`）；
-# 名字保留是历史原因：2026-10-05 请假功能下线前它是请假粒度（`leave_record.period`）。
+# ``full`` 现在**没有任何存储列在用**：它原本是请假（`leave_record.period`）与
+# 临时指派（`temporary_assignment.period`）的粒度，两者都已在迁移 008/009 删除。
+# 保留它（连同 ``PERIOD_FULL``）是因为 `normalize_period` 仍然接受 "full"/"全天"
+# 作为兼容输入、`cli periods` 也会打印全天区间的结束时刻；
+# 删掉它会收窄既有调用方的可接受输入集合，而收益不明确，故**保留并说明**。
 LEAVE_PERIODS: tuple[str, ...] = (PERIOD_AM, PERIOD_PM, PERIOD_FULL)
 
 PERIOD_LABELS: dict[str, str] = {
@@ -132,14 +138,16 @@ def is_within_period(moment: time, period: str, config: WorkTimeConfig | None = 
 
 
 def period_end_datetime(day: _date, period: str, config: WorkTimeConfig | None = None) -> datetime:
-    """临时指派到期恢复时点（M09），返回**本地** naive ``datetime``。
+    """某个半日区间的**结束时刻**（Q11），返回**本地** naive ``datetime``。
 
     - ``am`` → 当日 11:30（Q11）
     - ``pm`` → 当日 17:30（Q11）
-    - ``full`` → **次日 00:00**，即整天都不在，第二天一早恢复
+    - ``full`` → **次日 00:00**，即"整天"这一格的结束
 
-    要写进库里请用 `core/clock.py::period_expiry()` —— 它会再归一化成 UTC 时间戳；
-    `cli.py periods` 只打印给人看，所以直接调本函数。
+    > 2026-10-05：本函数原本叫"临时指派到期恢复时点（M09）"，唯一的生产调用方是
+    > `cli.py periods`（打印给人看）。临时指派删除（迁移 009）后它**仍是**半日边界的
+    > 正确表达，`cli periods` 继续在用，故保留；只是不再有 `core/clock.period_expiry()`
+    > 把它归一化成库格式时间戳（那个函数已随临时指派删除）。
     """
     cfg = config or get_settings().worktime
     if period == PERIOD_FULL:

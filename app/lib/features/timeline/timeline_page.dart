@@ -15,11 +15,6 @@ import 'package:rehab_app/features/timeline/timeline_providers.dart';
 /// 这是**全科协作视图** —— 治疗师需要看到别人写的记录（谁给这个患者做了什么、
 /// 今天做了几次）。本地库只镜像了自己同步过的部分，用它做时间轴会显示成
 /// "别人什么都没做"。只读数据没有离线写入需求，所以直接查服务端。
-///
-/// ## `scope=temp` 的意义
-///
-/// "临时治疗"= 记录人 ≠ 患者归属人。治疗师在单日假期间接管他人患者时，
-/// 需要单独复查这部分记录（避免"我到底替谁做了几次"扯不清）。
 class TimelinePage extends ConsumerStatefulWidget {
   const TimelinePage({super.key});
 
@@ -440,7 +435,6 @@ class _EmptyView extends StatelessWidget {
               switch (filter.scope) {
                 TimelineScope.visible => '这段时间没有治疗记录',
                 TimelineScope.mine => '这段时间没有我写的记录',
-                TimelineScope.temp => '这段时间没有临时治疗记录',
               },
               style: theme.textTheme.bodyLarge,
             ),

@@ -21,7 +21,13 @@ class Patients extends Table {
   TextColumn get adminNote => text().nullable()();
   IntColumn get assignedTherapistId => integer().nullable()();
   IntColumn get visibleTherapistId => integer().nullable()();
-  TextColumn get visibilityState => text().nullable()();
+
+  /// 2026-10-05：`visibility_state` 列**已删除**（本地库 schemaVersion 3 → 4）。
+  ///
+  /// 它缓存的是服务端 `v_patient_visibility.visibility_state`，而那个字段随临时指派
+  /// 删除后**恒为 `'assigned'`**（服务端的"可见归属"现在直接等于 `assigned_therapist_id`）。
+  /// 一个恒为常量的镜像列没有任何查询价值，继续留着只会让后来的人以为本地有归属状态机。
+  /// 服务端仍返回该字段（为兼容既有客户端），但 App **不再读也不再写**它。
   TextColumn get status => text()();
 
   /// 服务端 `revision`，用于推送时做乐观锁基线。

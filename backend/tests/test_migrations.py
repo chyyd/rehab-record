@@ -12,7 +12,8 @@ from app.db import storage
 from tests.support import DbTestCase
 
 EXPECTED_TABLES = {
-    # 2026-10-05：`appointment` / `rest_block` / `leave_record` 随排期功能下线一并删除。
+    # 2026-10-05：`appointment` / `rest_block` / `leave_record` 随排期功能下线删除（008），
+    # `temporary_assignment` 随临时指派功能删除（009）—— 归属简化成两层。
     "audit_log",
     "auth_session",
     "change_log",
@@ -28,7 +29,6 @@ EXPECTED_TABLES = {
     "schema_migrations",
     "sub_item",
     "sub_item_param_def",
-    "temporary_assignment",
     "treatment_record",
     "user",
 }
@@ -36,8 +36,8 @@ EXPECTED_TABLES = {
 EXPECTED_VIEWS = {
     # `v_patient_next_appointment` → `v_patient_last_treated`（迁移 007/008）：
     # 患者列表排序依据从"下一个排期"换成"我最近一次已提交治疗"。
+    # `v_open_temporary_assignment` 随临时指派删除（迁移 009）。
     "v_patient_last_treated",
-    "v_open_temporary_assignment",
     "v_patient_visibility",
 }
 
@@ -155,20 +155,13 @@ class TestTimestamps(DbTestCase):
         self.assertLess(delta, timedelta(minutes=5), f"时间戳基准错误，偏差 {delta}")
 
     def test_updated_at_trigger_uses_utc_with_millis(self) -> None:
-        # 2026-10-05：原来拿 appointment 验这条，排期表已随功能下线删除；
-        # 改用 temporary_assignment（保留表，触发器同样只在状态变化时刷新 updated_at）。
+        # 2026-10-05：原来拿 appointment 验这条，排期表已随功能下线删除（008），
+        # 之后改用 temporary_assignment，它又随临时指派功能删除（009）。
+        # 现在改用 patient —— `trg_patient_updated_at` 同样无条件刷新 updated_at。
         self.add_patient("ZY001")
-        therapist = self.add_user("T001")
-        cur = self.conn.execute(
-            "INSERT INTO temporary_assignment"
-            " (patient_no, original_therapist_id, date, period, status)"
-            " VALUES ('ZY001', ?, '2026-10-05', 'am', 'open')",
-            (therapist,),
-        )
-        temp_id = int(cur.lastrowid)
-        self.conn.execute("UPDATE temporary_assignment SET status = 'closed' WHERE id = ?", (temp_id,))
+        self.conn.execute("UPDATE patient SET name = '改名' WHERE inpatient_no = 'ZY001'")
         updated = self.conn.execute(
-            "SELECT updated_at FROM temporary_assignment WHERE id = ?", (temp_id,)
+            "SELECT updated_at FROM patient WHERE inpatient_no = 'ZY001'"
         ).fetchone()[0]
         self.assertRegex(updated, r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$")
 

@@ -20,7 +20,6 @@ from app.core.config import get_settings
 from app.core.health import collect_health
 from app.core.worktime import day_period_bounds, period_end_datetime, period_label
 from app.db import storage
-from app.models import temporary_assignment as temp_assignment_model
 from app.models import user as user_model
 from seed.dictionary import seed_dictionary
 from seed.options import seed_options
@@ -92,27 +91,6 @@ def cmd_seed(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_close_expired(args: argparse.Namespace) -> int:
-    """清理已过期的临时指派（把 status 置为 closed）。
-
-    **这只是清理，不是判定依据**：`v_patient_visibility` 视图在读取时也检查 `expires_at`，
-    所以即使这个任务漏跑，归属显示依然正确（`开发计划.md` R8）。
-    建议用系统计划任务（Windows 任务计划 / Linux cron）每 5 分钟调用一次；
-    未安装 APScheduler 时也可由部署脚本调用。
-    """
-    cfg = get_settings()
-    if not cfg.db_path.exists():
-        print("数据库不存在，请先执行 init。", file=sys.stderr)
-        return 1
-    conn = storage.connect(cfg)
-    try:
-        closed = temp_assignment_model.close_expired_temporary_assignments(conn)
-    finally:
-        conn.close()
-    print(f"已关闭 {closed} 条过期的临时指派。")
-    return 0
-
-
 def cmd_health(args: argparse.Namespace) -> int:
     payload = collect_health()
     print(json.dumps(payload, ensure_ascii=False, indent=2))
@@ -120,15 +98,22 @@ def cmd_health(args: argparse.Namespace) -> int:
 
 
 def cmd_periods(args: argparse.Namespace) -> int:
+    """打印半日制作息与各半日区间的结束时刻。
+
+    > 2026-10-05：`close-expired` 子命令随临时指派删除（迁移 009）——
+    > 它唯一的工作就是把过期的 `temporary_assignment` 置为 closed，那张表已经不存在。
+    > 本子命令保留：半日边界仍是治疗记录 `session_period` 的时间真源，
+    > 运维需要能直接看到它。原来"临时指派到期时点"的说法已去掉。
+    """
     cfg = get_settings()
     print("半日制作息（Q11 定稿）：")
     for period, bounds in day_period_bounds(cfg.worktime).items():
         print(f"  {period}（{bounds['label']}）：{bounds['start']} – {bounds['end']}")
-    print("\n半日区间结束时刻（临时指派到期时点，M09）：")
+    print("\n各半日区间的结束时刻（当地墙钟）：")
     today = date.today()
     for period in ("am", "pm", "full"):
-        expires_at = period_end_datetime(today, period, cfg.worktime)
-        print(f"  {period:<4}（{period_label(period)}）→ {expires_at.isoformat(sep=' ')}")
+        end_at = period_end_datetime(today, period, cfg.worktime)
+        print(f"  {period:<4}（{period_label(period)}）→ {end_at.isoformat(sep=' ')}")
     return 0
 
 
@@ -211,9 +196,6 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("init", help="建库并迁移到最新").set_defaults(func=cmd_init)
     sub.add_parser("migrate", help="应用未执行的迁移").set_defaults(func=cmd_migrate)
     sub.add_parser("seed", help="导入字典种子（幂等）").set_defaults(func=cmd_seed)
-    sub.add_parser("close-expired", help="关闭过期的临时指派（建议每 5 分钟调用）").set_defaults(
-        func=cmd_close_expired
-    )
     create_admin = sub.add_parser("create-admin", help="创建或重置初始管理员")
     create_admin.add_argument("employee_no", help="管理员工号")
     create_admin.add_argument("--name", default="系统管理员", help="姓名")

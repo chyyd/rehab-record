@@ -33,7 +33,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 3;
+  int get schemaVersion => 4;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -56,6 +56,15 @@ class AppDatabase extends _$AppDatabase {
           if (from < 3) {
             await m.deleteTable('appointments');
             await m.dropColumn(treatmentRecords, 'appointment_id');
+          }
+          // v4：临时指派（`temporary_assignment`）彻底删除（服务端迁移 009），
+          // 归属简化成"可见归属 = 原归属"两层；本地镜像里那个恒为 'assigned' 的
+          // `visibility_state` 列随之删除。
+          //
+          // 与 v3 同理，这里按**列名**删而不是引用 `patients.visibilityState` ——
+          // 该列已从 `Patients` 表定义里移除，Drift 不再认识它。
+          if (from < 4) {
+            await m.dropColumn(patients, 'visibility_state');
           }
         },
         beforeOpen: (details) async {

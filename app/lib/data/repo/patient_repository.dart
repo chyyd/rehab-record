@@ -24,7 +24,6 @@ class PatientView {
     this.adminNote,
     this.assignedTherapistId,
     this.visibleTherapistId,
-    this.visibilityState,
     required this.revision,
     required this.visible,
   });
@@ -38,7 +37,10 @@ class PatientView {
   final String? adminNote;
   final int? assignedTherapistId;
   final int? visibleTherapistId;
-  final String? visibilityState;
+
+  /// 2026-10-05：`visibilityState` 字段**已删除**。服务端那个
+  /// `visibility_state` 随临时指派删除后恒为 `'assigned'`（可见归属直接等于原归属），
+  /// 镜像一个常量没有意义；本地库 schemaVersion 3 → 4 已把该列删掉。
   final int revision;
 
   /// 本地是否仍在可见范围内（已出院患者会从白板消失，但本地不删，见协议 §2）。
@@ -57,7 +59,6 @@ class PatientView {
         adminNote: row.adminNote,
         assignedTherapistId: row.assignedTherapistId,
         visibleTherapistId: row.visibleTherapistId,
-        visibilityState: row.visibilityState,
         revision: row.revision,
         visible: row.visible,
       );
@@ -293,7 +294,8 @@ class PatientRepository {
             adminNote: Value(json['admin_note'] as String?),
             assignedTherapistId: Value((json['assigned_therapist_id'] as num?)?.toInt()),
             visibleTherapistId: Value((json['visible_therapist_id'] as num?)?.toInt()),
-            visibilityState: Value(json['visibility_state'] as String?),
+            // 服务端仍会回 `visibility_state`，但它是恒为 'assigned' 的兼容字段，
+            // App 本地不再镜像它（schemaVersion 4 已删列），这里刻意不读。
             // status / fetchedAt 在表定义里带 withDefault，Drift 生成的 companion
             // 字段类型是**非空** `Value<T>`，构造器参数直接收 `T`，不能再包 Value()。
             status: json['status'] as String? ?? 'in_hospital',

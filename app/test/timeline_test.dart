@@ -185,7 +185,7 @@ void main() {
       await repo.fetchTimeline(
         page: 2,
         pageSize: 20,
-        scope: 'temp',
+        scope: 'mine',
         dateFrom: '2027-07-01',
         dateTo: '2027-07-08',
       );
@@ -193,7 +193,8 @@ void main() {
       final q = adapter.seen.single.queryParameters;
       expect(q['page'], 2);
       expect(q['page_size'], 20);
-      expect(q['scope'], 'temp');
+      // 注意：`scope=temp` 已按用户决定删除；现在只有 visible / mine。
+      expect(q['scope'], 'mine');
       expect(q['from'], '2027-07-01');
       expect(q['to'], '2027-07-08');
       // 没传主项目就不该带这个参数（服务端按存在与否判断）。

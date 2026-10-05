@@ -8,18 +8,16 @@
 2. 用户管理权限（管理员专属、不许消灭最后一个管理员）
 3. 患者数据级权限（D10：全科白板——在院/暂停对所有治疗师可见，已出院仅管理员）
 4. 归属变更（认领 / 放弃 / 管理员指定 / 归属历史）
-5. 归属解析可见归属（临时释放与临时认领）
+5. 归属解析（2026-10-05 起归属只有两层：可见归属直接等于原归属；
+   临时释放/临时认领与 `scope=temp` 已随临时指派删除）
 6. 患者列表排序（"我最近一次已提交治疗"降序，不再是下一个排期）
 """
 
 from __future__ import annotations
 
 import unittest
-from datetime import date
 
 from app.core import security
-from app.core.clock import period_expiry
-from app.core.config import WorkTimeConfig
 from app.models import patient as patient_model
 from app.models import user as user_model
 from tests.api_base import DEFAULT_PASSWORD, ApiTestCase
@@ -322,7 +320,8 @@ class TestPatientVisibility(ApiTestCase):
     """D10：数据级权限。
 
     **2026-10-03 起改为全科白板**：治疗师默认（`scope=dept`）能看见科室当前**在院/暂停**
-    的全部患者，不再按归属隔离；`mine` / `unassigned` / `temp` 保留为**筛选**语义；
+    的全部患者，不再按归属隔离；`mine` / `unassigned` 保留为**筛选**语义
+    （`temp` 已于 2026-10-05 随临时指派从患者列表删除）；
     `all`（含已出院）仍**仅管理员**。
     """
 
@@ -767,93 +766,37 @@ class TestClaimAndAssignment(ApiTestCase):
 
 
 class TestVisibleTherapistResolution(ApiTestCase):
-    """M09 / 3.5.5：临时释放与临时认领期间的归属解析。
+    """M18 / 3.5.5：归属解析的**可观察行为**。
 
-    这是本系统最关键的一条业务规则，用**模型层（视图输出）与接口层（scope 筛选）**
-    两条路径验证：视图给出 `visible_therapist_id` / `visibility_state`，
-    接口给出调用方真正观察得到的 `scope=mine` / `scope=unassigned` 结果。
+    2026-10-05 起归属只有**两层**：`visible_therapist_id` **直接等于**
+    `patient.assigned_therapist_id` —— 临时指派及其"临时释放 → 可见归属变 NULL →
+    他人临时认领"三层语义已彻底删除（迁移 009，`temporary_assignment` 表已删）。
 
-    2026-10-05 请假功能下线后，临时指派不再由"单日假"自动产生（详见
-    `app/models/temporary_assignment.py`），但它仍是**归属解析**的依据：
-    `v_patient_visibility` 依赖它算 `visible_therapist_id`。
+    本组用例钉的仍是"归属变更之后调用方能从 `scope` 筛选上观察到什么"，
+    那是权限与"我的患者"页签真正依赖的东西：
+
+    - `scope=mine`       ⟺ 「该治疗师就是归属者」；
+    - `scope=unassigned` ⟺ 「归属为空」（谁都不负责，谁都可能接手）。
+
+    > 原先的 `test_temp_release_*` / `test_temp_claim_*` / `test_expired_temp_assignment_*` /
+    > `test_closed_temp_assignment_*` / `test_temp_released_patient_cannot_be_claimed_formally` /
+    > `test_temp_related_patients_appear_in_temp_scope` 与 `_open_temp` fixture
+    > 随临时指派一并删除。`_open_temp` 曾有一个"日期必须取远未来"的修复
+    >（`expires_at` 参与 SQL 字符串比较）；fixture 删掉后这个时间依赖自然消失 ——
+    > 本类现在没有任何用例依赖"当前时刻"。
     """
-
-    # 临时指派的日期取**远未来**：`v_patient_visibility` 读时会比对
-    # `expires_at > now`，若把日期硬编码成"写测试那天"，上午假的到期时点
-    # （本地 11:30）一过，这些用例就会整体失败 —— 那是测试自身的时间依赖。
-    TEMP_DAY = date(2099, 1, 5)
 
     def setUp(self) -> None:
         super().setUp()
         self.migrate()
-        self.original = self.make_user("T001", "原归属")
-        self.cover = self.make_user("T002", "临时接管")
+        self.original = self.make_user("T001", "归属者")
+        self.cover = self.make_user("T002", "接手者")
+        self.make_admin("A001")
         self.patient_no = "ZY001"
         patient_model.create_patient(
             self.conn, inpatient_no=self.patient_no, name="患者",
             assigned_therapist_id=int(self.original["id"]),
         )
-
-    def _open_temp(self, temporary_therapist_id: int | None, period: str = "am") -> int:
-        # 必须用与模型一致的 UTC+毫秒格式（core.clock.period_expiry）；
-        # 写成 '2026-10-05 11:30:00' 会因为 ' ' < 'T' 而被判定成"已过期"
-        expires = period_expiry(self.TEMP_DAY, period, WorkTimeConfig())
-        cur = self.conn.execute(
-            "INSERT INTO temporary_assignment"
-            " (patient_no, original_therapist_id, temporary_therapist_id, date, period, expires_at)"
-            " VALUES (?, ?, ?, ?, ?, ?)",
-            (
-                self.patient_no, self.original["id"], temporary_therapist_id,
-                self.TEMP_DAY.isoformat(), period, expires,
-            ),
-        )
-        return int(cur.lastrowid)
-
-    def test_plain_assignment_visible_is_original(self) -> None:
-        patient = patient_model.get_patient_or_raise(self.conn, self.patient_no)
-        self.assertEqual(patient["visible_therapist_id"], int(self.original["id"]))
-        self.assertEqual(patient["visibility_state"], "assigned")
-
-    def test_temp_release_keeps_original_but_hides_visibility(self) -> None:
-        """临时释放：原归属不变，可见归属变为 NULL。"""
-        self._open_temp(None)
-        patient = patient_model.get_patient_or_raise(self.conn, self.patient_no)
-        self.assertEqual(patient["assigned_therapist_id"], int(self.original["id"]), "原归属不得修改")
-        self.assertIsNone(patient["visible_therapist_id"])
-        self.assertEqual(patient["visibility_state"], "temp_released")
-
-    def test_temp_claim_sets_visible_to_claimer(self) -> None:
-        self._open_temp(int(self.cover["id"]))
-        patient = patient_model.get_patient_or_raise(self.conn, self.patient_no)
-        self.assertEqual(patient["assigned_therapist_id"], int(self.original["id"]), "原归属不得修改")
-        self.assertEqual(patient["visible_therapist_id"], int(self.cover["id"]))
-        self.assertEqual(patient["visibility_state"], "temp_claimed")
-
-    def test_expired_temp_assignment_is_ignored(self) -> None:
-        """读时兜底：即使定时清理没跑，过期的临时指派也不能影响归属（R8）。"""
-        temp_id = self._open_temp(None)
-        self.conn.execute(
-            "UPDATE temporary_assignment SET expires_at = '2020-01-01T00:00:00.000Z' WHERE id = ?",
-            (temp_id,),
-        )
-        patient = patient_model.get_patient_or_raise(self.conn, self.patient_no)
-        self.assertEqual(patient["visible_therapist_id"], int(self.original["id"]), "过期应回落到原归属")
-        self.assertEqual(patient["visibility_state"], "assigned")
-
-    def test_closed_temp_assignment_is_ignored(self) -> None:
-        temp_id = self._open_temp(None)
-        self.conn.execute("UPDATE temporary_assignment SET status = 'closed' WHERE id = ?", (temp_id,))
-        patient = patient_model.get_patient_or_raise(self.conn, self.patient_no)
-        self.assertEqual(patient["visible_therapist_id"], int(self.original["id"]))
-
-    def test_temp_released_patient_cannot_be_claimed_formally(self) -> None:
-        """临时释放中的患者要走 temp-claim，不能直接把原归属改掉。"""
-        self._open_temp(None)
-        from app.models.base import Conflict
-
-        with self.assertRaises(Conflict) as ctx:
-            patient_model.claim_patient(self.conn, self.patient_no, int(self.cover["id"]))
-        self.assertEqual(ctx.exception.details.get("hint"), "temp-claim")
 
     def _list_scope(self, employee_no: str, scope: str) -> set[str]:
         """按数据范围查询患者列表（走真实接口），返回住院编号集合。"""
@@ -862,54 +805,84 @@ class TestVisibleTherapistResolution(ApiTestCase):
         ).json()
         return {item["inpatient_no"] for item in body["items"]}
 
+    def _admin_assign(self, therapist_id: int | None) -> None:
+        resp = self.client.post(
+            f"/api/v1/patients/{self.patient_no}/assign",
+            json={"therapist_id": therapist_id},
+            headers=self.login_headers("A001"),
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+
+    def test_plain_assignment_visible_is_original(self) -> None:
+        patient = patient_model.get_patient_or_raise(self.conn, self.patient_no)
+        self.assertEqual(patient["visible_therapist_id"], int(self.original["id"]))
+        self.assertEqual(patient["assigned_therapist_id"], int(self.original["id"]))
+        # `visibility_state` 已退化：等价于原归属，恒为 assigned
+        self.assertEqual(patient["visibility_state"], "assigned")
+
     def test_visible_resolution_is_observable_in_patient_scopes(self) -> None:
-        """Q3：可见归属解析必须能从接口的 `scope` 筛选上**观察到**（不再直接调模型函数）。
+        """归属解析必须能从接口的 `scope` 筛选上**观察到**（不再直接调模型函数）。
 
         本用例替代原先直接调用 `patient_model.covers_patient()` 的写法 —— 那个函数
         **已随排期下线按死代码删除**（它唯一的生产调用方是已删除的 `api/v1/schedule.py`）。
         断言的可观察等价关系：
 
-        - `scope=mine`       ⟺ 「该治疗师就是可见归属者」；
-        - `scope=unassigned` ⟺ 「可见归属为空」（谁都不负责，谁都可能接手）。
+        - `scope=mine`       ⟺ 「该治疗师就是归属者」；
+        - `scope=unassigned` ⟺ 「归属为空」（谁都不负责，谁都可能接手）。
 
-        于是原用例钉的三件事在这里一一对应：正常时原归属者"能动"（`mine` 里有它）；
-        临时释放后原归属者"不能动"而其他人可以（`mine` 里没有它、`unassigned` 里有它）；
-        被临时认领后只有认领者"能动"。
+        归属变更**只有三条路**（全部要求直接改 `assigned_therapist_id`）：
+        管理员指定（`admin_assign`）/ 管理员或本人放弃（`admin_release`）/ 认领（`claim`）。
+        曾经还有"临时释放不改原归属"的第四条路，随临时指派一起删了。
         """
         self.make_user("T003", "王五")
 
-        # 正常：可见归属 = 原归属者
+        # 正常：可见归属 = 归属者
         self.assertIn(self.patient_no, self._list_scope("T001", "mine"))
         self.assertNotIn(self.patient_no, self._list_scope("T002", "mine"))
+        self.assertNotIn(self.patient_no, self._list_scope("T003", "unassigned"))
 
-        # 临时释放（未被认领）：可见归属变 NULL —— 原归属者的 mine 里不再有它，
+        # 管理员清空归属（admin_release）：可见归属变 NULL —— 原归属者的 mine 里不再有它，
         # 但它落到 unassigned，因此**任何治疗师**都可以接手。
-        # 这正是临时释放的意义：原归属者不在岗时，患者不该被"锁死"在他名下。
-        self._open_temp(None)
+        self._admin_assign(None)
+        patient = patient_model.get_patient_or_raise(self.conn, self.patient_no)
+        self.assertIsNone(patient["assigned_therapist_id"])
+        self.assertIsNone(patient["visible_therapist_id"], "可见归属必须跟着原归属一起变 NULL")
         self.assertNotIn(self.patient_no, self._list_scope("T001", "mine"))
         self.assertIn(self.patient_no, self._list_scope("T001", "unassigned"))
         self.assertIn(self.patient_no, self._list_scope("T003", "unassigned"))
 
-        # 被临时认领后：只有认领者能看到"自己负责它"；原归属者与第三人都不能
-        self.conn.execute(
-            "UPDATE temporary_assignment SET temporary_therapist_id = ? WHERE patient_no = ?",
-            (self.cover["id"], self.patient_no),
+        # 认领（claim）：只有认领者能看到"自己负责它"
+        claimed = self.client.post(
+            "/api/v1/patients/claim",
+            params={"inpatient_no": self.patient_no},
+            headers=self.login_headers("T002"),
         )
+        self.assertEqual(claimed.status_code, 200, claimed.text)
         self.assertIn(self.patient_no, self._list_scope("T002", "mine"))
         self.assertNotIn(self.patient_no, self._list_scope("T001", "mine"))
         self.assertNotIn(self.patient_no, self._list_scope("T003", "mine"))
         self.assertNotIn(self.patient_no, self._list_scope("T003", "unassigned"))
 
-    def test_temp_related_patients_appear_in_temp_scope(self) -> None:
-        """原归属者与临时认领者都能在 scope=temp 里看到该患者。"""
-        self._open_temp(int(self.cover["id"]))
-        for employee_no in ("T001", "T002"):
-            headers = self.login_headers(employee_no)
-            body = self.client.get(
-                "/api/v1/patients", params={"scope": "temp"}, headers=headers
-            ).json()
-            numbers = {i["inpatient_no"] for i in body["items"]}
-            self.assertIn(self.patient_no, numbers, f"{employee_no} 应看到与自己相关的临时指派")
+        # 管理员改派（admin_assign）：可见归属跟着走到新归属者
+        self._admin_assign(int(self.original["id"]))
+        self.assertIn(self.patient_no, self._list_scope("T001", "mine"))
+        self.assertNotIn(self.patient_no, self._list_scope("T002", "mine"))
+        self.assertNotIn(self.patient_no, self._list_scope("T001", "unassigned"))
+
+    def test_scope_temp_is_no_longer_accepted_for_patients(self) -> None:
+        """`scope=temp` 已从**患者列表**的范围白名单里删除（迁移 009）。
+
+        > 用户 2026-10-05 追加决定：「时间轴 / 记录列表」（`/api/v1/records`）的
+        > `scope=temp` 也一并删除（现在只接受 `mine` / `visible`）。
+        > 但 `is_temporary`（**记录级**标记，"记录人 ≠ 该患者当时的归属人"）
+        > **仍然保留** —— 打印 PDF、患者每日汇总、后台记录列表三处都在用它，
+        > 它由 `treatment_model.temporary_expr()` 查询时推导，与本次删除无关。
+        > 自测覆盖见 `test_records.py::TestTemporaryTreatmentFlag`。
+        """
+        resp = self.client.get(
+            "/api/v1/patients", params={"scope": "temp"}, headers=self.login_headers("T001")
+        )
+        self.assert_error(resp, 409)
 
     def test_multi_day_release_clears_assignment(self) -> None:
         """批量排空：把该治疗师名下患者正式清空，且写归属历史。

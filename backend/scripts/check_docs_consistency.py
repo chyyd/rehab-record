@@ -11,16 +11,64 @@
 
 | 旧断言 | 新断言 |
 |---|---|
-| 表清单里有 `appointment` / `rest_block` / `leave_record` | 008 必须删掉这三张表，且**不删** `temporary_assignment` |
+| 表清单里有 `appointment` / `rest_block` / `leave_record` | 008 必须删掉这三张表 |
 | 视图 `v_patient_next_appointment` | 视图 `v_patient_last_treated`（只统计 `submitted`） |
 | `treatment_record` 的 `is_temporary` / `appointment_id` 列 | 三列已删；`is_temporary` 改为查询时推导 |
 | "设计.md 两条半日不变量" | 这两条不变量在文档里**不得再作为现行规则**出现 |
 | —— | **新增**：`设计.md` / `README.md` / `开发计划.md` 里**不得出现**已删死代码 `covers_patient`（连"已删除"留痕也不写名字 —— 按"标记行"放行的旧断言抓不住"直接当现行函数写"的漂移） |
 | 接口数 / 待办数字 | 直接数路由注册与验收脚本，与文档里的数字对账 |
 
+## 2026-10-05（第二步）：临时指派（`temporary_assignment`）彻底删除
+
+`temporary_assignment` 是"临时指派"（原治疗师请半天假 → 可见归属变 NULL → 他人可认领）。
+它已**设计性失效**：唯一的自动来源（单日请假）随 008 下线；从来没有 API/CLI 登记入口
+（`/temp-release`、`/temp-claim` 从未实现）；2026-10-03 改成"全科白板"后它**不改变任何权限**，
+只影响 `scope=mine` 的筛选与排序分组。实测表 0 行、`temp_claim`/`temp_release` 历史 0 条。
+
+于是迁移 **009** 删掉该表、`v_open_temporary_assignment` 视图与它的触发器，并把
+`v_patient_visibility` 简化成"可见归属 = 原归属"两层结构：
+
+| 旧断言 | 新断言 |
+|---|---|
+| 008 **不删** `temporary_assignment` | 009 **必须删**它（008 依旧不得删它 —— 它只是"保留"到 009） |
+| 有效表集合里**仍有** `temporary_assignment` | 有效表集合里**没有**它 |
+| 唯一索引 `ux_temp_assign_open` 仍在 | 该索引随表在 009 消失（001 里的定义是历史事实） |
+| 视图 `v_open_temporary_assignment` 存在 | 009 删掉它；`v_patient_visibility` 保留（简化版） |
+| 迁移枚举 `temp status` | —— 该枚举已无任何现行存储列承载 |
+| —— | **新增**：`visibility_from()` 里不再有 `temp` scope；`Scope` Literal 不含 `temp`；`patient.py` 的 `VISIBILITY_VIEW_SQL` 与 009 逐字一致 |
+
+> ⚠ **文档已同步（2026-10-05 收尾）**：`设计.md` / `开发计划.md` / `README.md` /
+> `docs/sync-protocol.md` / `docs/setup.md` / `app/README.md` 里"`temporary_assignment` 保留"
+> 这类**把临时指派当现行设计**的表述已全部改写为"已删除（009）"。因此
+> `temporary_assignment` / `v_open_temporary_assignment` **已加入 `DEPRECATED_TOKENS`** ——
+> 从现在起，任何文档行再把它们当现行设计写（不带"已删除/已下线/曾"这类标记）都会失败。
+>
+> 同一次收尾还**新增了一条"迁移清单"断言**（`001–009` 共 9 个、末个是
+> `009_drop_temporary_assignment.sql`、且 `README.md` 的写法一致），并**合并了一条近乎重复的
+> 009 视图断言**（"删掉 `v_open_temporary_assignment`" 与 "不得重建它"），
+> 所以本脚本自报的总项数**仍是 231 项** —— README 里那一项就是拿这个数字与本脚本比对。
+
+## ⚠ `scope=temp` 删除 ≠ `is_temporary` 删除（两件事，别混）
+
+用户决定（2026-10-05）把 **`scope=temp` 这个筛选**也一并删除：患者列表的
+（`patient.py::Scope` / `visibility_from()`）与「时间轴 / 记录列表」的
+（`api/v1/records.py`，现在只接受 `mine` / `visible`）**都删了**，
+App 的 `TimelineScope` 枚举也只剩 `visible` / `mine`。
+
+但 **`is_temporary` 是记录级标记，必须保留**：它表示"记录人 ≠ 该患者**记录创建时刻**
+的归属治疗师"，由 `app/models/treatment.py::temporary_expr()` **查询时推导**，
+与已删除的 `temporary_assignment` 表从来没有依赖关系。它有三个真实消费方：
+
+| 消费方 | 用途 |
+|---|---|
+| `app/services/pdf.py` | 打印时在治疗师名后标"（临时）" |
+| `app/services/summary.py` | 患者每日汇总的 `temporary` 标记 |
+| `admin/src/pages/RecordsPage.tsx` | 后台记录明细的"是否临时治疗" |
+
+因此**不存在**"临时治疗功能整体下线"这种说法 —— 下线的只是两个筛选入口。
+
 `DEPRECATED_TOKENS` 是"已下线功能"的守门人：这些词**只允许**出现在
 "已删除 / 已下线 / 曾如此"这类说明行里，不允许作为现行设计再次出现。
-`temporary_assignment` **不在**这些词里 —— 它是归属解析的一部分，没有被删。
 """
 
 from __future__ import annotations
@@ -49,6 +97,7 @@ MIG005 = (ROOT / "backend/app/db/migrations/005_template_code.sql").read_text(en
 MIG006 = (ROOT / "backend/app/db/migrations/006_open_scheduling.sql").read_text(encoding="utf-8")
 MIG007 = (ROOT / "backend/app/db/migrations/007_patient_last_treated.sql").read_text(encoding="utf-8")
 MIG008 = (ROOT / "backend/app/db/migrations/008_drop_scheduling.sql").read_text(encoding="utf-8")
+MIG009 = (ROOT / "backend/app/db/migrations/009_drop_temporary_assignment.sql").read_text(encoding="utf-8")
 
 CONFIG = (ROOT / "backend/app/core/config.py").read_text(encoding="utf-8")
 SYNC_PY = (ROOT / "backend/app/services/sync.py").read_text(encoding="utf-8")
@@ -56,14 +105,22 @@ SUMMARY_PY = (ROOT / "backend/app/services/summary.py").read_text(encoding="utf-
 PDF_PY = (ROOT / "backend/app/services/pdf.py").read_text(encoding="utf-8")
 TREATMENT_PY = (ROOT / "backend/app/models/treatment.py").read_text(encoding="utf-8")
 PATIENT_PY = (ROOT / "backend/app/models/patient.py").read_text(encoding="utf-8")
+RECORDS_PY = (ROOT / "backend/app/api/v1/records.py").read_text(encoding="utf-8")
+CLI_PY = (ROOT / "backend/app/cli.py").read_text(encoding="utf-8")
+CLOCK_PY = (ROOT / "backend/app/core/clock.py").read_text(encoding="utf-8")
+WORKTIME_PY = (ROOT / "backend/app/core/worktime.py").read_text(encoding="utf-8")
 
 APP_DB = (ROOT / "app/lib/data/local/app_database.dart").read_text(encoding="utf-8")
 APP_TABLES = (ROOT / "app/lib/data/local/tables.dart").read_text(encoding="utf-8")
 APP_HOME = (ROOT / "app/lib/features/home/home_shell.dart").read_text(encoding="utf-8")
 APP_PDF = (ROOT / "app/lib/features/timeline/pdf_export.dart").read_text(encoding="utf-8")
+APP_TIMELINE_PROVIDERS = (ROOT / "app/lib/features/timeline/timeline_providers.dart").read_text(
+    encoding="utf-8"
+)
 
 ADMIN_README = (ROOT / "admin" / "README.md").read_text(encoding="utf-8")
 ADMIN_ROUTES = (ROOT / "admin" / "src" / "routes.tsx").read_text(encoding="utf-8")
+ADMIN_RECORDS_TSX = (ROOT / "admin" / "src" / "pages" / "RecordsPage.tsx").read_text(encoding="utf-8")
 ADMIN_MODULE_ROUTES = (
     "/patients",
     "/records",
@@ -88,6 +145,10 @@ DEPRECATED_TOKENS = (
     "/schedule",
     "/rest-blocks",
     "/leave",
+    # 2026-10-05（第二步）：临时指派整体删除（迁移 009）。文档已同步改写为"已删除"，
+    # 故从本轮起纳入守门 —— 不许再把它们当作现行设计出现（含"保留"这类旧口径）。
+    "temporary_assignment",
+    "v_open_temporary_assignment",
 )
 DEPRECATED_MARKERS = ("下线", "删除", "移除", "废止", "取消", "曾", "不做", "已不", "不再", "不排")
 
@@ -114,30 +175,58 @@ def deprecated_lines(text: str, tokens: tuple[str, ...] = DEPRECATED_TOKENS) -> 
 tables = set(re.findall(r"CREATE TABLE (\w+)", MIG001))
 for t in [
     "user", "auth_session", "patient", "patient_assignment_history",
-    "temporary_assignment", "main_item", "sub_item", "sub_item_param_def",
+    "main_item", "sub_item", "sub_item_param_def",
     "option_set", "option_item", "response_def", "record_template", "record_template_item",
     "treatment_record", "record_item", "audit_log", "change_log",
 ]:
     check(f"表 {t}", t in tables)
 
-# 008 是"排期下线"的唯一落点：三张表都要删，temporary_assignment 必须留下
+# 008 是"排期下线"的唯一落点：三张表都要删（008 里**不得**动 temporary_assignment ——
+# 那是 009 的职责：008 之后、009 之前的中间态里它还必须存在）。
 for t in ("appointment", "rest_block", "leave_record"):
     check(f"008 删除表 {t}", f"DROP TABLE IF EXISTS {t};" in MIG008)
-check("008 不删 temporary_assignment（归属解析，与请假无关）",
+check("008 不删 temporary_assignment（该表保留到 009）",
       "DROP TABLE IF EXISTS temporary_assignment" not in MIG008)
-_dropped = set(re.findall(r"DROP TABLE IF EXISTS (\w+)", MIG008))
+
+# 009 是"临时指派删除"的唯一落点
+check("009 删除表 temporary_assignment", "DROP TABLE IF EXISTS temporary_assignment;" in MIG009)
+check("009 先删视图再删表（否则悬空引用会让迁移失败）",
+      MIG009.index("DROP VIEW IF EXISTS v_patient_visibility;")
+      < MIG009.index("DROP TABLE IF EXISTS temporary_assignment;"))
+# 两条 009 视图断言合并为一条（原本是"必须有 DROP"与"不得有 CREATE"两条，
+# 说的是同一个对象；合并后腾出的项数用于新增下面的"迁移清单"断言，总项数不变）。
+check("009 删除 v_open_temporary_assignment 视图且不再重建它",
+      "DROP VIEW IF EXISTS v_open_temporary_assignment;" in MIG009
+      and "CREATE VIEW v_open_temporary_assignment" not in MIG009)
+check("009 删除临时指派的 updated_at 触发器",
+      "DROP TRIGGER IF EXISTS trg_temp_assign_updated_at;" in MIG009)
+check("009 清掉 temporary_assignment 的历史同步游标",
+      "DELETE FROM change_log WHERE entity = 'temporary_assignment'" in MIG009)
+
+# 迁移清单（2026-10-05 新增）：文件数、末个文件必须是"删除临时指派"的那个，
+# 且 README 里的写法要与实际一致 —— 让"9 个迁移"这个数字不再是文档里的孤证，
+# 同时防止以后有人新增迁移却忘了更新 README / 本脚本。
+_MIGRATION_FILES = sorted(p.name for p in (ROOT / "backend/app/db/migrations").glob("*.sql"))
+check(f"迁移清单与 README 一致（共 {len(_MIGRATION_FILES)} 个：001–009，末个为 009_drop_temporary_assignment.sql）",
+      len(_MIGRATION_FILES) == 9
+      and _MIGRATION_FILES[-1] == "009_drop_temporary_assignment.sql"
+      and "9 个 SQL 迁移" in README
+      and "001–009" in README)
+
+_dropped = set(re.findall(r"DROP TABLE IF EXISTS (\w+)", MIG008 + MIG009))
 _effective_tables = tables - _dropped
 check("有效表集合里没有排期/休息块/请假",
       not (_effective_tables & {"appointment", "rest_block", "leave_record"}))
-check("有效表集合里仍有 temporary_assignment", "temporary_assignment" in _effective_tables)
+check("有效表集合里没有 temporary_assignment（临时指派已彻底删除）",
+      "temporary_assignment" not in _effective_tables)
 check("008 清掉 appointment 的历史同步游标",
       "DELETE FROM change_log WHERE entity = 'appointment'" in MIG008)
 check("006 已删除 ux_appt_therapist_slot（治疗师半日唯一，S1 放开）",
       "DROP INDEX IF EXISTS ux_appt_therapist_slot" in MIG006)
 check("006 已删除 ux_appt_patient_slot（患者半日唯一，放弃 Q2）",
       "DROP INDEX IF EXISTS ux_appt_patient_slot" in MIG006)
-check("唯一索引 ux_temp_assign_open 仍在（临时指派与排期无关）",
-      "ux_temp_assign_open" in MIG001)
+check("ux_temp_assign_open 只在 001 的历史定义里（随 009 删表一起消失）",
+      "ux_temp_assign_open" in MIG001 and "ux_temp_assign_open" not in MIG009)
 
 # treatment_record 去掉三个已无语义的列（008 重建表；代码侧也要核对）
 _new_record_table = MIG008.split("CREATE TABLE treatment_record_new", 1)[-1].split(");", 1)[0]
@@ -151,6 +240,20 @@ check("is_temporary 改为查询时推导（temporary_expr）",
 check("查询里真的用上了 temporary_expr", TREATMENT_PY.count("temporary_expr(") >= 3)
 check("设计.md 写明 is_temporary 按“记录创建时刻”的归属推导",
       "记录创建时刻" in DESIGN and "is_temporary" in DESIGN)
+# 时间轴/记录列表的 `scope=temp` 也已按用户决定**删除**（2026-10-05），
+# 现在只剩 mine / visible。但这**不等于**"临时治疗"这个概念下线：
+# `is_temporary`（记录级标记）仍由 temporary_expr 推导，且有三个真实消费方。
+check("记录列表/时间轴的 scope=temp 已删除（只留 mine / visible）",
+      '"mine", "visible"' in RECORDS_PY and 'scope == "temp"' not in RECORDS_PY)
+check("is_temporary 记录级标记仍保留，且三个消费方都在（PDF / 汇总 / 后台列表）",
+      "def temporary_expr(" in TREATMENT_PY
+      and '"（临时）"' in PDF_PY
+      and '"temporary"' in SUMMARY_PY
+      and "is_temporary" in ADMIN_RECORDS_TSX)
+check("app 时间轴枚举已删除 temp（只留 visible / mine）",
+      "enum TimelineScope {" in APP_TIMELINE_PROVIDERS
+      and "temp(" not in APP_TIMELINE_PROVIDERS
+      and "'mine'" in APP_TIMELINE_PROVIDERS)
 
 # 视图：旧的排期视图必须消失，新的"我最近一次已提交治疗"必须在文档与迁移里同时出现
 check("视图 v_patient_last_treated（007 新建）",
@@ -161,14 +264,52 @@ check("007 按 (patient_no, therapist_id) 分组",
       "GROUP BY r.patient_no, r.therapist_id" in MIG007)
 check("008 重建视图时与 007 定义一致（同样只统计 submitted）",
       "WHERE r.status = 'submitted'" in MIG008)
-check("视图 v_open_temporary_assignment",
-      "CREATE VIEW v_open_temporary_assignment" in MIG001
-      and "v_open_temporary_assignment" in DESIGN)
+# 归属解析的唯一真源 `v_patient_visibility`：009 把它简化成"可见归属 = 原归属"，
+# 但视图本身**必须保留**（患者列表、认领、`scope` 筛选都建立在它上面）。
+check("视图 v_patient_visibility 保留（简化版，009 重建）",
+      "CREATE VIEW v_patient_visibility" in MIG009
+      and "CREATE VIEW v_patient_visibility" in PATIENT_PY)
+check("009 的简化视图：可见归属直接等于原归属",
+      "p.assigned_therapist_id AS visible_therapist_id" in MIG009)
+check("009 保留 visibility_state 列但恒为 'assigned'（已退化，仅为兼容客户端）",
+      "'assigned' AS visibility_state" in MIG009)
+# 模型里的视图常量必须与迁移逐字一致，否则"模型建库"与"迁移建库"会长出两个不同的视图。
+def _normalize_view_sql(sql: str) -> str:
+    text = sql.strip().rstrip(";").strip()
+    return re.sub(r"\s+", " ", text)
+
+
+_mig009_view = MIG009.split("CREATE VIEW v_patient_visibility AS", 1)[1].split(";", 1)[0]
+_patient_view = PATIENT_PY.split("VISIBILITY_VIEW_SQL = \"\"\"", 1)[1].split("\"\"\"", 1)[0]
+_patient_view = _patient_view.split("CREATE VIEW v_patient_visibility AS", 1)[1]
+check("patient.py 的 VISIBILITY_VIEW_SQL 与迁移 009 逐字一致",
+      _normalize_view_sql("CREATE VIEW v_patient_visibility AS" + _mig009_view)
+      == _normalize_view_sql("CREATE VIEW v_patient_visibility AS" + _patient_view))
+_check_missing = [c for c in ("temp_assignment_id", "temp_therapist_id", "temp_original_therapist_id",
+                              "temp_expires_at") if c in PATIENT_PY]
+check("patient.py 不再输出任何 temp_* 视图列"
+      + (f"：命中 {'、'.join(_check_missing)}" if _check_missing else ""),
+      not _check_missing)
+check("visibility_from() 里不再有 temp scope",
+      'if scope == "temp"' not in PATIENT_PY)
+check("Scope Literal 不含 temp（患者列表的范围白名单）",
+      'Scope = Literal["mine", "unassigned", "all", "visible", "dept"]' in PATIENT_PY)
+check("认领不再依赖临时指派（temp_released 分支与 temp-claim hint 已删）",
+      'if patient["visibility_state"] == "temp_released"' not in PATIENT_PY
+      and '"hint": "temp-claim"' not in PATIENT_PY)
+check("临时指派模块已删除（文件不存在）",
+      not (ROOT / "backend/app/models/temporary_assignment.py").exists())
+check("cli 不再注册 close-expired 子命令（它只清理临时指派）",
+      'sub.add_parser("close-expired"' not in CLI_PY and "cmd_close_expired" not in CLI_PY)
+check("clock 不再定义/导出 period_expiry（只服务已删除的临时指派到期时点）",
+      "def period_expiry(" not in CLOCK_PY and '"period_expiry"' not in CLOCK_PY)
+check("worktime 保留 period_end_datetime（cli periods 仍在用）",
+      "def period_end_datetime(" in WORKTIME_PY
+      and "period_end_datetime" in (ROOT / "backend/app/cli.py").read_text(encoding="utf-8"))
 
 for label, values in {
     "patient.status": ["in_hospital", "discharged", "paused"],
     "period": ["'am'", "'pm'"],
-    "temp status": ["'open'", "'closed'", "'converted'"],
     "record status": ["'draft'", "'submitted'", "'locked'"],
     "scope": ["'global'", "'dept'", "'personal'"],
     "value_type": ["'tag'", "'number'", "'select'", "'text'"],
@@ -226,8 +367,9 @@ check("设计.md 不再把排期相关概念当现行设计",
       not deprecated_lines(DESIGN))
 check("开发计划.md 不再把排期接口/表当现行设计",
       not deprecated_lines(PLAN))
-check("sync-protocol.md 不再把 appointment 当同步通道",
-      not deprecated_lines(SYNC_DOC, ("appointment", "/rest-blocks", "/leave")))
+check("sync-protocol.md 不再把 appointment / 临时指派当同步通道",
+      not deprecated_lines(SYNC_DOC, ("appointment", "/rest-blocks", "/leave",
+                                      "temporary_assignment", "v_open_temporary_assignment")))
 
 # --------------------------------------------------------------------------- #
 # 3. 阶段 4：离线同步支撑
@@ -387,10 +529,15 @@ check("CHANGELOG 记录了代价（验收项数下降 + 阶段 2 作废）",
 # --------------------------------------------------------------------------- #
 # 8. 安卓端（页签 3 个、PDF 三种去向、没有排期）
 # --------------------------------------------------------------------------- #
-check("Drift schemaVersion 已升到 3", "schemaVersion => 3" in APP_DB)
+check("Drift schemaVersion 已升到 4（v3 删排期表、v4 删 visibility_state）",
+      "schemaVersion => 4" in APP_DB)
 check("Drift 迁移删掉 appointments 表", "deleteTable('appointments')" in APP_DB)
 check("Drift 迁移去掉 treatment_records.appointment_id",
       "dropColumn(treatmentRecords, 'appointment_id')" in APP_DB)
+check("Drift 迁移删掉 patients.visibility_state（临时指派删除后该字段已退化）",
+      "dropColumn(patients, 'visibility_state')" in APP_DB)
+check("Drift 不再定义 Patients.visibilityState",
+      "visibilityState" not in APP_TABLES)
 check("Drift 不再定义 Appointments 表", "class Appointments" not in APP_TABLES)
 check("App 页签为 3 个（患者 / 时间轴 / 我的）",
       APP_HOME.count("NavigationDestination(") == 3

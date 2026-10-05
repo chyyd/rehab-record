@@ -12,13 +12,12 @@
 ## 依赖顺序（子表 → 父表）
 
     record_item → treatment_record ┐
-    temporary_assignment           ├→ patient
-    patient_assignment_history     ┘
+    patient_assignment_history     ┘→ patient
 
 `change_log` 用实体名+字符串 id 记录，没有外键，可以最后按 entity_id 清。
 
-> 2026-10-05：`appointment` / `rest_block` / `leave_record` 三张表随排期功能下线删除，
-> 本文件的清理顺序里不再包含它们。
+> 2026-10-05：`appointment` / `rest_block` / `leave_record` 三张表随排期功能下线删除（迁移 008），
+> `temporary_assignment` 随后也被彻底删除（迁移 009），本文件的清理顺序里不再包含它们。
 """
 
 from __future__ import annotations
@@ -48,9 +47,8 @@ def purge_patients(conn: sqlite3.Connection, patient_nos: Iterable[str]) -> None
     ]
     conn.execute(f"DELETE FROM treatment_record WHERE patient_no IN ({marks})", nos)
 
-    # 临时指派、归属历史
-    # （`appointment` 表已于 2026-10-05 随排期功能下线删除，不再需要清理）
-    conn.execute(f"DELETE FROM temporary_assignment WHERE patient_no IN ({marks})", nos)
+    # 归属历史
+    #（`temporary_assignment` 表已于 2026-10-05 随临时指派功能删除（迁移 009），不再需要清理）
     conn.execute(f"DELETE FROM patient_assignment_history WHERE patient_no IN ({marks})", nos)
 
     # 变更日志（无外键，按实体名 + 字符串 id 清）
