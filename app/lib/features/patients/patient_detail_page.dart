@@ -133,22 +133,32 @@ class PatientDetailPage extends ConsumerWidget {
               if (p.status == 'pending_discharge' || p.status == 'discharged')
                 _DischargedNotice(status: p.status)
               else
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    // ★ 用户："在记录治疗的左侧对称位置添加出院按钮"。
-                    _DischargeButton(
-                      patientNo: inpatientNo,
-                      summaries: summaries.value ?? const [],
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: _DisciplineButtons(
+                // ★ 用户："在记录治疗的左侧对称位置添加出院按钮" ——
+                // 让左边的出院按钮与右边的四大类按钮**等高**才叫对称。
+                //
+                // ⚠ 必须包 `IntrinsicHeight`：`Row` 在纵向 `ListView` 里高度**无界**，
+                // 直接 `crossAxisAlignment: stretch` 会抛
+                // `BoxConstraints forces an infinite height` ——
+                // 而且异常发生在布局期，整页会**渲染成空白**（连错误提示都没有），
+                // 现场看就是"点进患者详情一片白"。
+                // `IntrinsicHeight` 先量出最高子项的固有高度，`stretch` 才有意义。
+                IntrinsicHeight(
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      _DischargeButton(
                         patientNo: inpatientNo,
-                        summaries: summaries,
+                        summaries: summaries.value ?? const [],
                       ),
-                    ),
-                  ],
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: _DisciplineButtons(
+                          patientNo: inpatientNo,
+                          summaries: summaries,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
 
               const Divider(height: 32),
