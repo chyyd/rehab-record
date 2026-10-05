@@ -56,7 +56,7 @@
 | 文档 | `设计.md` 修订至 V1.2/V1.3（Q11 作息、PDF 方案修订；排期/请假章节已删除，新增患者列表排序语义与"可见归属 = 原归属"） | **已完成**（跨文档校验 231 项 0 失败） |
 | 种子数据 | 字典 4/29/89 + 患者反应 27 条 + 全局选项集 47 套/208 项 + 模板 4 套，全部幂等导入 | **已完成** |
 | 中文 PDF | **reportlab + 内置 CID 字体 `STSong-Light`**，三套模板经 pypdf 反向文本校验 | **已完成**（D03 修订，Q10 版式） |
-| 测试 | **457 个测试全部通过、0 skip**；端到端 182 项 + **浏览器 UI 验收 60 项** | **已完成** |
+| 测试 | **454 个测试全部通过、0 skip**；端到端 182 项 + **浏览器 UI 验收 60 项** | **已完成** |
 | 接口 | **70 个接口**（52 个路径：认证、用户、患者、字典读写、选项集、记录、同步、汇总、打印、模板、审计、后台） | **已完成**（排期/休息/请假 17 个操作已删除；`scope=temp` 两个筛选也已删除，不影响接口数） |
 | 管理后台 Web | **React 19 + Vite 8 + Ant Design 6 + TS**，10 个页面全部实现，构建通过（`admin/`） | **已完成**（T5.4 前端；排期页与请假页已删除） |
 | 安卓 App | Flutter：**3 个页签**（患者 / 时间轴 / 我的）、记录页、汇总与 PDF 打印（三种去向）、同步与冲突处理；**Drift schemaVersion 4**、91 个本地测试通过 | **已完成** |
@@ -103,7 +103,7 @@
 │   │   ├── models/          数据访问
 │   │   ├── schemas/         请求/响应模型
 │   │   ├── core/            配置、安全、错误、依赖
-│   │   └── db/migrations/   9 个 SQL 迁移（带 checksum 校验；007 排序视图、008 删除排期、009 删除临时指派）
+│   │   └── db/migrations/   10 个 SQL 迁移（带 checksum 校验；007 排序视图、008 删除排期、009 删除临时指派、010 删除 visibility_state）
 │   ├── seed/                种子数据（字典/选项集/反应定义/模板，JSON + 导入器）
 │   ├── scripts/             端到端验收脚本（_ 前缀的是共用工具）
 │   ├── tests/               单元与集成测试
@@ -137,7 +137,7 @@ $env:KB_ADMIN_PASSWORD = 'Admin#2026pass'
 & $py -m app.cli periods   # 打印半日制作息（决定记录的 session_period）
 
 & $py -m app.main --reload # 启动服务端：http://127.0.0.1:8000/docs
-& $py -m unittest discover -s tests -t . -v      # 457 个测试
+& $py -m unittest discover -s tests -t . -v      # 454 个测试
 & $py scripts\verify_http.py                     # 阶段 0 HTTP 端到端
 & $py scripts\verify_stage1.py                   # 阶段 1 认证与患者
 & $py scripts\verify_stage2.py                   # 患者列表排序（原阶段 2 排期已取消）
@@ -188,10 +188,10 @@ Playwright）。这一步不是可选项 —— 类型检查与构建**测不出
 ├─ docs/          setup.md（环境）、sync-protocol.md（**离线同步协议**）、后续补 api.md / data-model.md
 ├─ backend/
 │  ├─ app/        core（配置/作息/健康）· db（存储/迁移）· cli.py · main.py
-│  │  └─ db/migrations/   001–009（表结构、触发器、可见归属视图、同步、模板 code、放开半日互斥、排序视图、**删除排期**、**删除临时指派**）
+│  │  └─ db/migrations/   001–010（表结构、触发器、可见归属视图、同步、模板 code、放开半日互斥、排序视图、**删除排期**、**删除临时指派**、**删除 visibility_state**）
 │  ├─ seed/       四份种子（字典 4/29/89、反应 27、选项集 47/208、模板 4/29；幂等 upsert）
 │  ├─ scripts/    6 个验收脚本（http + 阶段 1–5）· count_verify_checks.py · check_docs_consistency.py · verify_admin_ui.py（CDP）
-│  └─ tests/      457 个测试（标准库 unittest）
+│  └─ tests/      454 个测试（标准库 unittest）
 ├─ app/           Flutter 客户端（3 个页签，Drift schemaVersion 4；`app/README.md`）
 ├─ admin/         管理后台 React 19 + Vite 8 + Ant Design 6（10 个页面已实现）
 └─ deploy/        Docker Compose + Nginx（待建）

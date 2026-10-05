@@ -414,6 +414,36 @@
   - **验收**：实测 `start → stop → start` 与连续 `start` 多轮，确认端口能干净释放、进程不堆积；并用 headless Edge 走通"打开登录页 → 用脚本生成的密码登录 → 进入总览页"，无异常、无 console 错误。
 
 ### 决策
+- **【业务决策】2026-10-05：删除 `visibility_state` 死列与 `cli periods` 的"到期时点"输出**（迁移 `010`）
+  - **背景**：上一条决策删掉临时指派后，留下两处"还能跑、但没有消费者"的残留。
+    复查后确认两者都可安全删除，于是收尾清理。
+  - **`visibility_state`（迁移 `010_drop_visibility_state.sql`）**：
+    它在 009 之后**恒为 `'assigned'`**（原 `assigned`/`temp_released`/`temp_claimed` 只剩第一种）。
+    当时保留的理由是"怕旧客户端拿不到预期字段"，复查后证明不成立：
+    - 安卓端 Drift 本地库的 `patients.visibility_state` 列**已随 schemaVersion 4 删除**，
+      代码里只剩注释，`app_database.g.dart` 里 **0 处引用**；
+    - 管理后台的 TS 类型里它只是个**可选**字段，没有任何页面渲染它；
+    - 后端只有 `schemas/patient.py::PatientOut` 声明过它。
+    即**没有任何真实消费者**。留着的害处是"一个看起来有意义、实际恒定的字段"会诱使后来人
+    写出基于它的判断（这正是它当初退化的原因），所以删除。
+    ⚠ `v_patient_visibility` **视图本身保留**（它是归属解析的单点实现），只删列。
+  - **`cli periods` 的"各半日区间的结束时刻"**：那段算的是临时指派 `expires_at`，
+    临时指派删除后**没有任何调用方**。连带删除 `worktime.period_end_datetime()`
+    与 `period_label()`（后者唯一调用方就是这段打印）。
+    ⚠ `day_period_bounds()` **保留** —— `/api/v1/health` 的 `periods` 与 `cli periods`
+    仍在用它描述半日边界；半日边界本身仍决定一条记录属于哪个半日（`session_period`）。
+  - **明确不做（保留现状）**：
+    - `normalize_period()` 仍接受 `"full"`/`"全天"` —— 历史输入值照旧容忍，避免旧客户端 500；
+      但治疗记录的 `session_period` **只接受 `am`/`pm`**（`treatment.py` 里显式校验）。
+    - 迁移 `001` 的 `patient_assignment_history.change_type` CHECK 里仍留着
+      `'temp_claim'`/`'temp_release'` —— **已应用迁移不得修改**（校验和），
+      写入侧已不再产生这两个值，文档里标注为"历史定义"。
+  - **代价（实测）**：后端测试 457 → **454**（删 `TestExpiryPerQ11` 三例与 `test_labels`，
+    另补 `TestParseHm` 与 `TestNormalizePeriod` 分组）、迁移 9 → **10 个**、
+    跨文档一致性仍 **231 项**（本轮是"换对象"：5 条旧断言改成对应新断言，净增 0 条 ——
+    脚本的自校验项数断言当场抓住了我一度把 README 写成 232 的错误）。
+  - **顺带修掉一个误导性显示**：一致性脚本的失败汇总行原本打印 `total`（未含最后那次自校验），
+    会出现"检查 231 项，1 项失败"而实际跑了 232 项 —— 自己把项数说少一项。已修正。
 - **【业务决策】2026-10-05：删除临时指派（`temporary_assignment`）与 `scope=temp` 筛选**
   - **用户的原始理由（决定的唯一依据）**："**`scope=temp` 不需要了**"——
     顺着排期下线（上一条决策）继续做减法：临时指派这条路已经没有用户，留着只会让后来的人
