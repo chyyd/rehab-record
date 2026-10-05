@@ -314,12 +314,63 @@ class TestIdempotentPush(SyncTestCase):
         self.assertIsNone(row["seq_no"], "首评不占次数")
         self.assertEqual(row["span_seq"], 1)
 
-    def test_push_daily_without_initial_is_blocked(self) -> None:
-        """★ 离线推送不是后门：第 1 次日常缺首评同样被 409 拦下。"""
+    def test_push_daily_without_initial_is_reported_per_item(self) -> None:
+        """★ 离线推送不是后门：第 1 次日常缺首评同样被拦下。
+
+        **★ 2026-10-05 修：拦截方式从"整批 409"改为"逐条 conflict"。**
+
+        原来 `apply_push` 里 `create_record()` 抛的 `Conflict` 直接穿透，
+        整个 `/sync/push` 返回 409 —— 离线队列里攒了几十条时，客户端**连哪一条
+        出的问题都不知道**，只能整批重推。现在这一条进 `conflicts` 并带
+        `reason`/`details`，其余条目照常应用，HTTP 仍是 200。
+        """
         resp = self.push([self.change("uuid-aaaa-0009")])
-        self.assert_error(resp, 409, "MISSING_ASSESSMENT")
+        self.assertEqual(resp.status_code, 200, resp.text)
+        body = resp.json()
+        self.assertEqual(body["applied"], [])
+        self.assertEqual(len(body["conflicts"]), 1, str(body)[:250])
+        item = body["conflicts"][0]
+        self.assertEqual(item["client_uuid"], "uuid-aaaa-0009")
+        self.assertEqual(item["reason"], "MISSING_ASSESSMENT")
+        self.assertEqual(item["details"]["missing_document"], "initial")
+        # 服务端根本没写：拦下的条目不能留下半条数据
         self.assertEqual(
             self.conn.execute("SELECT COUNT(*) FROM treatment_record").fetchone()[0], 0
+        )
+
+    def test_one_blocked_item_does_not_stop_the_rest_of_the_batch(self) -> None:
+        """★ 一条被门禁拦下，同批其它条目照常应用 —— 这是本次修复的全部意义。
+
+        构造是**确定性**的：先备好首评 + 当天 1 条日常（该日已占 1 条），
+        再在同一批里推「同一天的第 3 条」（必然撞同日上限 → conflict）
+        与「另一天的第 1 条」（必然应用）。断言两条各自的归属。
+        """
+        self.push_initial(uuid="uuid-init-batch")
+        self.push_daily("uuid-day1-first", record_date="2027-03-01")
+        self.push_daily("uuid-day1-second", record_date="2027-03-01")  # 该日已 2 条 → 满
+
+        blocked = {
+            "entity": "treatment_record",
+            "client_uuid": "uuid-day1-third",
+            "op": "insert",
+            "payload": self.record_payload(record_date="2027-03-01"),   # 第 3 条 → 拦
+        }
+        ok = {
+            "entity": "treatment_record",
+            "client_uuid": "uuid-day2-first",
+            "op": "insert",
+            "payload": self.record_payload(record_date="2027-03-02"),   # 另一天 → 放行
+        }
+        resp = self.push([blocked, ok])
+        self.assertEqual(resp.status_code, 200, resp.text)
+        body = resp.json()
+        self.assertEqual(
+            [c["client_uuid"] for c in body["conflicts"]], ["uuid-day1-third"],
+            f"只该拦下同日第 3 条；body={str(body)[:250]}",
+        )
+        self.assertEqual(
+            [a["client_uuid"] for a in body["applied"]], ["uuid-day2-first"],
+            f"同批里合法的那条必须照常应用；body={str(body)[:250]}",
         )
 
     def test_same_client_uuid_twice_is_idempotent(self) -> None:

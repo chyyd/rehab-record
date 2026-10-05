@@ -877,7 +877,7 @@ import count_verify_checks  # noqa: E402
 
 _counts = count_verify_checks.count_all()
 _doc_counts = {name: int(n) for name, n in re.findall(r"(verify_\w+\.py).*?（(\d+) 项）", SETUP)}
-check("setup.md 逐个列出 6 个验收脚本的项数", set(_doc_counts) == set(_counts))
+check("setup.md 逐个列出 7 个验收脚本的项数", set(_doc_counts) == set(_counts))
 for name, count in sorted(_counts.items()):
     check(f"setup.md 的 {name} 项数与脚本一致（{count} 项）", _doc_counts.get(name) == count)
 check("setup.md 的端到端项数等于各脚本之和",

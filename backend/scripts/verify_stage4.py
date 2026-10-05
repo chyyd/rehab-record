@@ -9,8 +9,12 @@
 `body`（`{field_key: value}`），多出 `discipline` 与 `kind`。更重要的是：**服务端推送入口
 `app/services/sync.py::_push_treatment_record` 直接调用 `treatment_model.create_record()`** ——
 在线接口的**三条硬阻断**（缺首评 / 缺复评 / 待出院）在离线通道上**同样生效**。
-本脚本因此新增一项：把一个"没有首评的日常记录"推进来，必须被 409 拦下，
-否则离线就成了绕过门禁的后门。
+本脚本因此新增一项：把一个"没有首评的日常记录"推进来，必须被拦下（**逐条 conflict**，
+见下），否则离线就成了绕过门禁的后门。
+
+> **2026-10-05 补充**：拦截方式从"整批 409"改成"逐条 conflict（HTTP 200）"。
+> 门禁强度没变 —— 被拒的条目一样不落库；变的是**可恢复性**：同批里合法的条目照常应用，
+> 客户端也能从 `reason`/`message`/`details.missing_document` 知道该补哪份文书。
 
     cd backend
     python scripts/verify_stage4.py
@@ -360,9 +364,14 @@ def main() -> int:
               f"conflicts={len(mixed['conflicts'])} applied={len(mixed['applied'])}")
 
         # ---------------------------------------------------------------- #
-        # 10) ★ 离线不是后门：缺首评的日常记录在推送时同样被 409 拦下
+        # 10) ★ 离线不是后门：缺首评的日常在推送时同样被拦下
+        #
+        # ★ 2026-10-05 改了**拦截方式**：原来是整批 409，现在是**逐条 conflict**
+        #   （HTTP 仍 200）。理由见 `docs/sync-protocol.md`：离线队列通常攒了几十条，
+        #   一条撞门禁就让整批失败时，客户端连"哪一条出的问题"都不知道，只能整批重推。
+        #   门禁强度**没变** —— 被拒的条目依然不落库（下面那条断言就是守它的）。
         # ---------------------------------------------------------------- #
-        code, err = request(
+        code, pushed = request(
             "/api/v1/sync/push", "POST",
             {"changes": [{
                 "entity": "treatment_record", "client_uuid": "e2e-nogate-0001", "op": "insert",
@@ -370,10 +379,14 @@ def main() -> int:
             }]},
             h,
         )
-        check("离线推送缺首评的日常 → 409 MISSING_ASSESSMENT（与在线同一套门禁）",
-              code == 409 and err.get("code") == "MISSING_ASSESSMENT"
-              and err["details"]["missing_document"] == "initial",
-              f"{code} {str(err)[:200]}")
+        item = (pushed.get("conflicts") or [{}])[0]
+        check("离线推送缺首评的日常 → 逐条 conflict（HTTP 200，门禁与在线一致）",
+              code == 200 and not pushed.get("applied")
+              and item.get("reason") == "MISSING_ASSESSMENT"
+              and (item.get("details") or {}).get("missing_document") == "initial",
+              f"{code} {str(pushed)[:220]}")
+        check("conflict 带给人看的原因（客户端可直接展示）",
+              "首评" in str(item.get("message") or ""), str(item.get("message"))[:120])
         conn = storage.connect(settings)
         try:
             smuggled = conn.execute(

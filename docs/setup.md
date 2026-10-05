@@ -1,7 +1,7 @@
 # 环境搭建与运行（setup）
 
 **当前状态**：阶段 0–5 后端、管理后台与安卓 App 均已交付并验证（**336 个测试通过、0 skip**；
-端到端 228 项、跨文档一致性由 `check_docs_consistency.py` 自报（369 项）、浏览器 UI 验收 60 项）。
+端到端 268 项、跨文档一致性由 `check_docs_consistency.py` 自报（370 项）、浏览器 UI 验收 60 项）。
 
 **2026-10-05（第三步）：治疗记录从「参数表格」改成「SOAP 模板驱动」** —— 迁移 011 重建
 `treatment_record`（19 列，含 `body_json` / `rendered_text`），012 删掉字典 / 选项集 / 患者反应定义
@@ -82,9 +82,10 @@ cd backend
 & $py scripts\verify_stage1.py                   # 阶段 1 认证与患者（25 项）
 & $py scripts\verify_stage2.py                   # 患者列表排序：我最近一次已提交治疗（31 项）
 & $py scripts\verify_stage3.py                   # 阶段 3 SOAP 模板记录（56 项）
-& $py scripts\verify_stage4.py                   # 阶段 4 离线与同步（35 项）
+& $py scripts\verify_stage4.py                   # 阶段 4 离线与同步（36 项）
 & $py scripts\verify_stage5.py                   # 阶段 5 汇总打印、后台与 SOAP 文本（67 项）
-& $py scripts\count_verify_checks.py             # 复核上面 6 个脚本的项数（合计 228 项）
+& $py scripts\verify_soap_flow.py              # SOAP 记录全链路：表单/门禁/出院/输出（39 项）
+& $py scripts\count_verify_checks.py             # 复核上面 7 个脚本的项数（合计 268 项）
 & $py scripts\check_docs_consistency.py          # 跨文档一致性
 ```
 
@@ -98,7 +99,7 @@ cd backend
 > **2026-10-05（SOAP 改造）后的主题变化**：`verify_stage3.py` 由「字典 / 记录 / 患者反应」
 > **重写为「SOAP 模板记录」验收**（取表单 → 建首评 → 当天日常、缺首评/缺复评 409、
 > 同一天同一大类至多 2 条、必填缺失 422、`rendered_text` 落库且是 SOAP 文本），35 → 56 项；
-> `verify_stage4.py` 改用 `body` payload，并**新增「离线推送同样受硬阻断约束」**一项，28 → 35 项；
+> `verify_stage4.py` 改用 `body` payload，并**新增「离线推送同样受硬阻断约束」**一项、后又把该拦截改为逐条 conflict，28 → 36 项；
 > `verify_stage5.py` 断言输出是 **SOAP 文本而不是表格**、多日按时间顺序连排，58 → 67 项；
 > `verify_stage2.py` 31 项（新增"评估文书不参与排序"）。
 

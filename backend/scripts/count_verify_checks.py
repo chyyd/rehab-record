@@ -37,6 +37,11 @@ DEFAULT_SCRIPTS = (
     "verify_stage3.py",
     "verify_stage4.py",
     "verify_stage5.py",
+    # 2026-10-05 新增：SOAP 记录全链路（表单 → 硬阻断 → 计数口径 → 出院流程 → SOAP 输出）。
+    # 它不属于任何"阶段"，而是**记录这条主链**的端到端验收 ——
+    # 之所以单独一个脚本，是因为截图驱动的界面验证在这个环境下不可靠，
+    # 改用真实接口把跨步骤的状态变化断言下来。
+    "verify_soap_flow.py",
 )
 
 

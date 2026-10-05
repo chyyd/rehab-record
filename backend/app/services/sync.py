@@ -27,7 +27,7 @@ import sqlite3
 from typing import Any
 
 from app.core import jsonutil
-from app.models.base import Invalid
+from app.models.base import Conflict, Invalid
 
 # 允许客户端推送的实体（一期范围）
 # 2026-10-05：排期（appointment）随功能下线一并移除；现在只剩治疗记录可离线写。
@@ -306,7 +306,34 @@ def apply_push(
         seen_uuids.add(client_uuid)
 
         handler = _HANDLERS[entity]
-        result = handler(conn, user=user, change=change)
+        try:
+            result = handler(conn, user=user, change=change)
+        except Conflict as exc:
+            # ★ 2026-10-05：**业务门禁失败降级为逐条 conflict**，不再让整批 409。
+            #
+            # 离线队列通常攒了几十条；只要有一条缺首评/复评（或撞上同日上限、
+            # 或患者已待出院），原来整个 `/sync/push` 直接 409 —— 客户端**连哪一条
+            # 出的问题都不知道**，只能整批重推，越推越卡。现在这一条进 `conflicts`
+            # 并带 `code`/`details`（客户端据此提示"先补首评"），其余照常应用。
+            #
+            # ⚠ 只降级 `Conflict`（可预期的业务冲突，409）。
+            #   `Invalid`（请求体格式错，422）继续让整批失败 —— 那是客户端 bug，
+            #   静默按条跳过会掩盖真正的调用错误；`NotFound`/`Forbidden` 同理。
+            #
+            # 安全性：`treatment_model.create_record/update_record` 的**所有**业务校验
+            # （门禁、同日上限、待出院、必填）都在 INSERT/UPDATE **之前**执行，
+            # 所以这里不会留下半写的数据 —— 不需要 savepoint 回滚。
+            # （连接是 `isolation_level=None` 自动提交，真要回滚就得显式 savepoint。）
+            conflicts.append({
+                "outcome": "conflict",
+                "client_uuid": client_uuid,
+                "entity": entity,
+                "reason": exc.code,
+                "message": exc.message,
+                "details": exc.details,
+                # 不回 revision：服务端根本没写，客户端手上的基线仍然有效。
+            })
+            continue
         if result["outcome"] == "applied":
             applied.append(result)
         elif result["outcome"] == "skipped":

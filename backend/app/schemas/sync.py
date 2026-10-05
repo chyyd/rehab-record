@@ -40,6 +40,14 @@ class SyncPushResultItem(BaseModel):
     server_revision: int | None = None
     server_status: str | None = None
     reason: str | None = None
+    # 给人看的具体原因（如「第 1 次日常记录前必须先完成首评」）——
+    # 客户端可直接展示，不必自己按 reason 拼文案。
+    message: str | None = None
+    # ★ 2026-10-05：业务门禁失败（如缺评估文书）改为**逐条 conflict** 上报，
+    # 客户端要据此提示"先补首评/复评"，所以 `details` 必须透出来 ——
+    # 少了这个字段，客户端只知道"被拒了"，不知道**要补哪份文书**。
+    # （实测过：没有它时 `details.missing_document` 会被 pydantic 静默丢掉。）
+    details: dict[str, Any] = Field(default_factory=dict)
 
 
 class SyncPushResponse(BaseModel):
