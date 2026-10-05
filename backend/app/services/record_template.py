@@ -192,15 +192,36 @@ def load_all() -> dict[str, dict[str, Template]]:
 # --------------------------------------------------------------------------- #
 # 触发：该用哪种形态
 # --------------------------------------------------------------------------- #
-def kind_for_seq(seq_no: int) -> str:
-    """按「该大类第几次治疗」决定形态。
+def counts_as_session(kind: str) -> bool:
+    """这种形态是否计入「该大类第几次治疗」。
 
-    - 第 1 次 → 首评（用户：首评**不能后补，强制第一次治疗填写**）
-    - 每满 20 次后的一次 → 复评（第 21、41、61… 次）
-    - 其余 → 日常
+    ★ **只有日常记录计数**（用户 2026-10-05 纠正）：
+      「评定并不占用日常训练的次数，比如第一次首评后，当天还是要有一个日常记录
+        用来记录当天的训练。复评和出院小结也是。」
+
+    所以首评/复评/出院小结是**独立文书**，与当天的日常记录**并存**：
+    第 1 天会有两条（首评 + 日常记录，后者算第 1 次）；
+    第 21 天也有两条（复评 + 日常记录，后者算第 21 次）。
+
+    >>> [counts_as_session(k) for k in ("initial", "daily", "reassessment", "discharge")]
+    [False, True, False, False]
+    """
+    return kind == "daily"
+
+
+def kind_for_seq(seq_no: int) -> str:
+    """按「该大类已有多少次**日常记录**」决定今天该填哪种形态。
+
+    注意 `seq_no` 是**日常记录**的序号（不含首评/复评/出院小结）。
+
+    - 第 1 次日常 → 同时需要首评（首评是独立文书，不占次数）
+    - 每满 20 次日常后（即第 21、41、61… 次日常）→ 同时需要复评
 
     >>> [kind_for_seq(n) for n in (1, 2, 20, 21, 40, 41, 61)]
     ['initial', 'daily', 'daily', 'reassessment', 'daily', 'reassessment', 'reassessment']
+
+    ⚠ 返回值表示「除了日常记录之外，还需要哪份文书」；`daily` 表示不需要额外文书。
+    日常记录本身**每次都填**。
     """
     if seq_no <= 1:
         return "initial"
@@ -209,8 +230,22 @@ def kind_for_seq(seq_no: int) -> str:
     return "daily"
 
 
+def pending_documents(seq_no: int) -> list[str]:
+    """今天需要补的**评估文书**列表（不含日常记录本身）。
+
+    >>> pending_documents(1)
+    ['initial']
+    >>> pending_documents(2)
+    []
+    >>> pending_documents(21)
+    ['reassessment']
+    """
+    kind = kind_for_seq(seq_no)
+    return [] if kind == "daily" else [kind]
+
+
 def sessions_until_reassessment(seq_no: int) -> int:
-    """还差几次到下一次复评（已到点则为 0）。界面用来显示「12/20」。"""
+    """还差几次**日常记录**到下一次复评（已到点则为 0）。界面用来显示「12/20」。"""
     if seq_no < 1:
         return REASSESS_EVERY
     done = seq_no - 1
@@ -273,6 +308,10 @@ def render(
 
     `answers` 的键是字段 key；`auto` 字段由调用方预先算好放进 answers
     （渲染器不做数据查询，保持纯函数）。
+
+    ★ `seq_no` 是**日常记录**的序号。评估文书（首评/复评/出院小结）不占次数
+      （用户 2026-10-05 纠正），所以它们**不显示序号** —— 否则「出院小结 第 21 次」
+      会让人以为这是第 21 次治疗记录。出院小结改显示「共治疗 N 次」。
     """
     lines: list[str] = [template.title]
     if template.subtitle:
@@ -281,7 +320,7 @@ def render(
     header: list[str] = []
     if record_date:
         header.append(f"治疗日期：{record_date}")
-    if seq_no is not None and template.kind != "initial":
+    if seq_no is not None and counts_as_session(template.kind):
         header.append(f"第 {seq_no} 次")
     if total_sessions is not None and template.kind == "discharge":
         header.append(f"共治疗 {total_sessions} 次")

@@ -3,64 +3,189 @@
   "discipline": "PT",
   "kind": "daily",
   "title": "康复治疗记录（PT运动）",
-  "trigger": { "mandatory": false },
-
+  "trigger": {
+    "mandatory": false
+  },
   "$comment": [
     "日常记录刻意保持短。用户的核心痛点是『太过于繁琐，需要点好多次』，",
     "所以：① 四个段**各输出成一行**（inline），② S 段只留每天真正会变的项，",
     "③ **只预填『本次训练项目』**（上次做了啥），其余留空 —— 见 schema.json 的 prefill 说明。"
   ],
-
   "soap": [
     {
-      "key": "s", "label": "S", "heading": "主观资料",
+      "key": "s",
+      "label": "S",
+      "heading": "主观资料",
       "fields": [
-        { "key": "mental", "type": "single", "label": "精神状态",
-          "options": ["良好", "一般", "差"] },
-        { "key": "complaint", "type": "multi", "label": "主诉",
-          "options": ["患肢酸胀", "乏力", "无不适"] },
-        { "key": "vas", "type": "number", "label": "疼痛VAS", "unit": "分" },
-        { "key": "dizziness", "type": "single", "label": "有无头晕胸闷",
-          "options": ["无", "有"] },
-        { "key": "compliance", "type": "single", "label": "训练配合度",
-          "options": ["良好", "一般", "差"] }
+        {
+          "key": "mental",
+          "type": "single",
+          "label": "精神状态",
+          "options": [
+            "良好",
+            "一般",
+            "差"
+          ]
+        },
+        {
+          "key": "complaint",
+          "type": "multi",
+          "label": "主诉",
+          "options": [
+            "患肢酸胀",
+            "乏力",
+            "无不适"
+          ]
+        },
+        {
+          "key": "vas",
+          "type": "number",
+          "label": "疼痛VAS",
+          "unit": "分"
+        },
+        {
+          "key": "dizziness",
+          "type": "single",
+          "label": "有无头晕胸闷",
+          "options": [
+            "无",
+            "有"
+          ]
+        },
+        {
+          "key": "compliance",
+          "type": "single",
+          "label": "训练配合度",
+          "options": [
+            "良好",
+            "一般",
+            "差"
+          ]
+        }
       ]
     },
     {
-      "key": "o", "label": "O", "heading": "客观资料",
+      "key": "o",
+      "label": "O",
+      "heading": "客观资料",
       "fields": [
-        { "key": "therapy_items", "type": "multi", "label": "本次训练项目", "required": true,
-          "options_source": "therapy_options", "prefill": "last_daily" },
-        { "key": "vital_signs", "type": "single", "label": "训练中生命体征",
-          "options": ["平稳", "轻度波动"] },
-        { "key": "completed", "type": "multi", "label": "可完成",
-          "options": ["坐位重心转移", "辅助站立负重训练", "床椅转移", "辅助步行"] },
-        { "key": "stand_sec", "type": "number", "label": "维持站立时间", "unit": "s" },
-        { "key": "adverse", "type": "single", "label": "训练过程有无不适、跌倒先兆",
-          "options": ["无", "有"] }
+        {
+          "key": "therapy_items",
+          "type": "multi",
+          "label": "本次训练项目",
+          "required": true,
+          "options_source": "therapy_options",
+          "prefill": "last_daily"
+        },
+        {
+          "key": "vital_signs",
+          "type": "single",
+          "label": "训练中生命体征",
+          "options": [
+            "平稳",
+            "轻度波动"
+          ]
+        },
+        {
+          "key": "completed",
+          "type": "multi",
+          "label": "可完成",
+          "options": [
+            "坐位重心转移",
+            "辅助站立负重训练",
+            "床椅转移",
+            "辅助步行"
+          ]
+        },
+        {
+          "key": "stand_sec",
+          "type": "number",
+          "label": "维持站立时间",
+          "unit": "s"
+        },
+        {
+          "key": "adverse",
+          "type": "single",
+          "label": "训练过程有无不适、跌倒先兆",
+          "options": [
+            "无",
+            "有"
+          ]
+        }
       ]
     },
     {
-      "key": "a", "label": "A", "heading": "评估分析",
+      "key": "a",
+      "label": "A",
+      "heading": "评估分析",
       "fields": [
-        { "key": "performance", "type": "single", "label": "本次训练功能表现",
-          "options": ["较前改善", "维持稳定", "略有退步"] },
-        { "key": "existing_problem", "type": "multi", "label": "现存问题",
-          "options": ["患侧负重不足", "站立稳定性差", "躯干控制弱"] },
-        { "key": "plan_effect", "type": "single", "label": "当前训练方案",
-          "options": ["有效", "基本合适", "需调整"] }
+        {
+          "key": "performance",
+          "type": "single",
+          "label": "本次训练功能表现",
+          "options": [
+            "较前改善",
+            "维持稳定",
+            "略有退步"
+          ]
+        },
+        {
+          "key": "existing_problem",
+          "type": "multi",
+          "label": "现存问题",
+          "options": [
+            "患侧负重不足",
+            "站立稳定性差",
+            "躯干控制弱"
+          ]
+        },
+        {
+          "key": "plan_effect",
+          "type": "single",
+          "label": "当前训练方案",
+          "options": [
+            "有效",
+            "基本合适",
+            "需调整"
+          ]
+        }
       ]
     },
     {
-      "key": "p", "label": "P", "heading": "康复计划",
+      "key": "p",
+      "label": "P",
+      "heading": "康复计划",
       "fields": [
-        { "key": "next_step", "type": "single", "label": "后续安排",
-          "options": ["继续维持原方案", "微调训练强度", "调整训练项目"] },
-        { "key": "safety", "type": "multi", "label": "安全与宣教",
-          "options": ["继续落实防跌倒宣教", "嘱训练后适当休息，避免过度疲劳", "全程监护"] }
+        {
+          "key": "next_step",
+          "type": "single",
+          "label": "后续安排",
+          "options": [
+            "继续维持原方案",
+            "微调训练强度",
+            "调整训练项目"
+          ]
+        },
+        {
+          "key": "safety",
+          "type": "multi",
+          "label": "安全与宣教",
+          "options": [
+            "继续落实防跌倒宣教",
+            "嘱训练后适当休息，避免过度疲劳",
+            "全程监护"
+          ]
+        },
+        {
+          "key": "extra_note",
+          "type": "text",
+          "label": "备注",
+          "hint": "选填。留空则记录里不显示这一项。"
+        }
       ]
     }
   ],
-
-  "footer": ["治疗师签名：__________"]
+  "footer": [
+    "治疗师签名：__________"
+  ]
 }

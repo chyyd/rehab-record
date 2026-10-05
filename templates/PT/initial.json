@@ -3,86 +3,330 @@
   "discipline": "PT",
   "kind": "initial",
   "title": "康复初始评定（PT运动）",
-  "trigger": { "mandatory": true },
-
+  "trigger": {
+    "mandatory": true
+  },
   "soap": [
     {
-      "key": "s", "label": "S", "heading": "主观资料",
+      "key": "s",
+      "label": "S",
+      "heading": "主观资料",
       "fields": [
-        { "key": "complaint", "type": "multi", "label": "自觉症状",
-          "options": ["肢体无力", "肢体僵硬", "活动费力", "肢体酸痛", "无明显不适"] },
-        { "key": "vas", "type": "number", "label": "疼痛VAS", "unit": "分" },
-        { "key": "premorbid", "type": "single", "label": "发病前功能状态",
-          "options": ["完全自理", "基本自理", "部分依赖"] },
-        { "key": "compliance", "type": "single", "label": "当前依从性",
-          "options": ["配合良好", "配合一般", "不配合"] },
-        { "key": "expectation", "type": "multi", "label": "患者及家属康复期望",
-          "options": ["恢复站立能力", "恢复室内步行", "改善患肢肌力", "降低跌倒风险"], "allow_other": true }
+        {
+          "key": "complaint",
+          "type": "multi",
+          "label": "自觉症状",
+          "options": [
+            "肢体无力",
+            "肢体僵硬",
+            "活动费力",
+            "肢体酸痛",
+            "无明显不适"
+          ]
+        },
+        {
+          "key": "vas",
+          "type": "number",
+          "label": "疼痛VAS",
+          "unit": "分"
+        },
+        {
+          "key": "premorbid",
+          "type": "single",
+          "label": "发病前功能状态",
+          "options": [
+            "完全自理",
+            "基本自理",
+            "部分依赖"
+          ]
+        },
+        {
+          "key": "compliance",
+          "type": "single",
+          "label": "当前依从性",
+          "options": [
+            "配合良好",
+            "配合一般",
+            "不配合"
+          ]
+        },
+        {
+          "key": "expectation",
+          "type": "multi",
+          "label": "患者及家属康复期望",
+          "options": [
+            "恢复站立能力",
+            "恢复室内步行",
+            "改善患肢肌力",
+            "降低跌倒风险"
+          ],
+          "allow_other": true
+        }
       ]
     },
     {
-      "key": "o", "label": "O", "heading": "客观资料",
+      "key": "o",
+      "label": "O",
+      "heading": "客观资料",
       "fields": [
-        { "key": "consciousness", "type": "single", "label": "神志",
-          "options": ["清楚", "嗜睡", "意识模糊"] },
-        { "key": "affected_side", "type": "single", "label": "患肢",
-          "options": ["左侧", "右侧", "双侧"] },
-        { "key": "mmt_upper", "type": "number", "label": "肌力MMT 上肢", "unit": "级" },
-        { "key": "mmt_lower", "type": "number", "label": "肌力MMT 下肢", "unit": "级" },
-        { "key": "ashworth", "type": "single", "label": "肌张力Ashworth",
-          "options": ["0级", "1级", "1+级", "2级", "3级", "4级"] },
-        { "key": "rom", "type": "single", "label": "关节活动度",
-          "options": ["正常", "轻度受限", "中度受限", "重度受限"] },
-        { "key": "sit_balance", "type": "single", "label": "坐位平衡",
-          "options": ["Ⅰ级", "Ⅱ级", "Ⅲ级"] },
-        { "key": "stand_balance", "type": "single", "label": "站立平衡",
-          "options": ["无法站立", "Ⅰ级", "Ⅱ级", "Ⅲ级"] },
-        { "key": "transfer", "type": "single", "label": "转移能力",
-          "options": ["完全辅助", "部分辅助", "监护下独立", "完全独立"] },
-        { "key": "gait", "type": "single", "label": "步行能力",
-          "options": ["无步行能力", "辅助步行", "独立步行"] },
-        { "key": "fall_risk", "type": "single", "label": "跌倒风险等级",
-          "options": ["高风险", "中风险", "低风险"] },
-        { "key": "vital_signs", "type": "single", "label": "生命体征",
-          "options": ["平稳", "波动"] }
+        {
+          "key": "consciousness",
+          "type": "single",
+          "label": "神志",
+          "options": [
+            "清楚",
+            "嗜睡",
+            "意识模糊"
+          ]
+        },
+        {
+          "key": "affected_side",
+          "type": "single",
+          "label": "患肢",
+          "options": [
+            "左侧",
+            "右侧",
+            "双侧"
+          ]
+        },
+        {
+          "key": "mmt_upper",
+          "type": "number",
+          "label": "肌力MMT 上肢",
+          "unit": "级"
+        },
+        {
+          "key": "mmt_lower",
+          "type": "number",
+          "label": "肌力MMT 下肢",
+          "unit": "级"
+        },
+        {
+          "key": "ashworth",
+          "type": "single",
+          "label": "肌张力Ashworth",
+          "options": [
+            "0级",
+            "1级",
+            "1+级",
+            "2级",
+            "3级",
+            "4级"
+          ]
+        },
+        {
+          "key": "rom",
+          "type": "single",
+          "label": "关节活动度",
+          "options": [
+            "正常",
+            "轻度受限",
+            "中度受限",
+            "重度受限"
+          ]
+        },
+        {
+          "key": "sit_balance",
+          "type": "single",
+          "label": "坐位平衡",
+          "options": [
+            "Ⅰ级",
+            "Ⅱ级",
+            "Ⅲ级"
+          ]
+        },
+        {
+          "key": "stand_balance",
+          "type": "single",
+          "label": "站立平衡",
+          "options": [
+            "无法站立",
+            "Ⅰ级",
+            "Ⅱ级",
+            "Ⅲ级"
+          ]
+        },
+        {
+          "key": "transfer",
+          "type": "single",
+          "label": "转移能力",
+          "options": [
+            "完全辅助",
+            "部分辅助",
+            "监护下独立",
+            "完全独立"
+          ]
+        },
+        {
+          "key": "gait",
+          "type": "single",
+          "label": "步行能力",
+          "options": [
+            "无步行能力",
+            "辅助步行",
+            "独立步行"
+          ]
+        },
+        {
+          "key": "fall_risk",
+          "type": "single",
+          "label": "跌倒风险等级",
+          "options": [
+            "高风险",
+            "中风险",
+            "低风险"
+          ]
+        },
+        {
+          "key": "vital_signs",
+          "type": "single",
+          "label": "生命体征",
+          "options": [
+            "平稳",
+            "波动"
+          ]
+        }
       ]
     },
     {
-      "key": "a", "label": "A", "heading": "评估分析",
+      "key": "a",
+      "label": "A",
+      "heading": "评估分析",
       "fields": [
-        { "key": "diagnosis", "type": "multi", "label": "功能诊断", "required": true,
-          "options": ["偏瘫运动功能障碍", "平衡功能障碍", "重心转移障碍", "移动能力下降", "跌倒高风险"] },
-        { "key": "impairment", "type": "single", "label": "障碍程度",
-          "options": ["重度受损", "中度受损", "轻度受损"] },
-        { "key": "core_problem", "type": "multi", "label": "核心功能问题",
-          "options": ["肌力不足", "躯干核心差", "平衡稳定性差", "患侧负重不足", "异常步态模式"] },
-        { "key": "potential", "type": "single", "label": "康复潜力",
-          "options": ["良好", "一般", "较差"] },
-        { "key": "goal_long", "type": "text", "label": "长期目标",
-          "hint": "例：出院可独立室内短距离步行，自主完成床椅转移，跌倒风险降至低风险" },
-        { "key": "goal_short", "type": "text", "label": "短期目标（2周）",
-          "hint": "例：坐位平衡达Ⅲ级，辅助站立平衡维持≥60s，可部分辅助完成床椅转移" }
+        {
+          "key": "diagnosis",
+          "type": "multi",
+          "label": "功能诊断",
+          "required": true,
+          "options": [
+            "偏瘫运动功能障碍",
+            "平衡功能障碍",
+            "重心转移障碍",
+            "移动能力下降",
+            "跌倒高风险"
+          ]
+        },
+        {
+          "key": "impairment",
+          "type": "single",
+          "label": "障碍程度",
+          "options": [
+            "重度受损",
+            "中度受损",
+            "轻度受损"
+          ]
+        },
+        {
+          "key": "core_problem",
+          "type": "multi",
+          "label": "核心功能问题",
+          "options": [
+            "肌力不足",
+            "躯干核心差",
+            "平衡稳定性差",
+            "患侧负重不足",
+            "异常步态模式"
+          ]
+        },
+        {
+          "key": "potential",
+          "type": "single",
+          "label": "康复潜力",
+          "options": [
+            "良好",
+            "一般",
+            "较差"
+          ]
+        },
+        {
+          "key": "goal_long",
+          "type": "text",
+          "label": "长期目标",
+          "hint": "例：出院可独立室内短距离步行，自主完成床椅转移，跌倒风险降至低风险"
+        },
+        {
+          "key": "goal_short",
+          "type": "text",
+          "label": "短期目标（2周）",
+          "hint": "例：坐位平衡达Ⅲ级，辅助站立平衡维持≥60s，可部分辅助完成床椅转移"
+        }
       ]
     },
     {
-      "key": "p", "label": "P", "heading": "康复计划",
+      "key": "p",
+      "label": "P",
+      "heading": "康复计划",
       "fields": [
-        { "key": "therapy_items", "type": "multi", "label": "本次训练项目", "required": true,
-          "options_source": "therapy_options" },
-        { "key": "plan_items", "type": "multi", "label": "治疗项目",
-          "options": ["偏瘫肢体综合训练", "核心稳定训练", "坐位立位平衡训练", "重心转移训练",
-                      "负重训练", "步态预备训练"] },
-        { "key": "frequency", "type": "single", "label": "频次时长",
-          "options": ["每日1次，每次30min，每周5次", "每日1次，每次25min，每周5次", "每日2次，每次20min"] },
-        { "key": "safety", "type": "multi", "label": "安全要点",
-          "options": ["训练全程监护", "循序渐进负重", "防跌倒", "预防关节过伸"] },
-        { "key": "education", "type": "multi", "label": "健康宣教",
-          "options": ["良肢位摆放", "禁止暴力牵拉患肢", "居家观察肢体痉挛变化"] },
-        { "key": "next_review", "type": "single", "label": "复评计划",
-          "options": ["2周后行阶段性康复复评", "每20次治疗后复评"] }
+        {
+          "key": "therapy_items",
+          "type": "multi",
+          "label": "本次训练项目",
+          "required": true,
+          "options_source": "therapy_options"
+        },
+        {
+          "key": "plan_items",
+          "type": "multi",
+          "label": "治疗项目",
+          "options": [
+            "偏瘫肢体综合训练",
+            "核心稳定训练",
+            "坐位立位平衡训练",
+            "重心转移训练",
+            "负重训练",
+            "步态预备训练"
+          ]
+        },
+        {
+          "key": "frequency",
+          "type": "single",
+          "label": "频次时长",
+          "options": [
+            "每日1次，每次30min，每周5次",
+            "每日1次，每次25min，每周5次",
+            "每日2次，每次20min"
+          ]
+        },
+        {
+          "key": "safety",
+          "type": "multi",
+          "label": "安全要点",
+          "options": [
+            "训练全程监护",
+            "循序渐进负重",
+            "防跌倒",
+            "预防关节过伸"
+          ]
+        },
+        {
+          "key": "education",
+          "type": "multi",
+          "label": "健康宣教",
+          "options": [
+            "良肢位摆放",
+            "禁止暴力牵拉患肢",
+            "居家观察肢体痉挛变化"
+          ]
+        },
+        {
+          "key": "next_review",
+          "type": "single",
+          "label": "复评计划",
+          "options": [
+            "2周后行阶段性康复复评",
+            "每20次治疗后复评"
+          ]
+        },
+        {
+          "key": "extra_note",
+          "type": "text",
+          "label": "备注",
+          "hint": "选填。留空则记录里不显示这一项。"
+        }
       ]
     }
   ],
-
-  "footer": ["治疗师签名：__________"]
+  "footer": [
+    "治疗师签名：__________"
+  ]
 }

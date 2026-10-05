@@ -87,8 +87,15 @@ def main() -> int:
 
     print()
     print("=" * 78)
-    print("三、触发规则（该用哪种形态）")
+    print("三、触发规则")
     print("=" * 78)
+    print("  ★ 只有日常记录计入次数：「评定并不占用日常训练的次数，第一次首评后，")
+    print("    当天还是要有一个日常记录用来记录当天的训练。复评和出院小结也是。」")
+    print()
+    for kind in rt.KINDS:
+        mark = "计入次数" if rt.counts_as_session(kind) else "不计次（独立文书）"
+        print(f"  {kind:<13} {rt.KIND_LABELS[kind]:<8} {mark}")
+    print()
     expected = {1: "initial", 2: "daily", 20: "daily", 21: "reassessment",
                 40: "daily", 41: "reassessment", 61: "reassessment"}
     for seq, want in expected.items():
@@ -96,7 +103,25 @@ def main() -> int:
         mark = OK if got == want else BAD
         if got != want:
             failures.append(f"kind_for_seq({seq}) = {got}，期望 {want}")
-        print(f"{mark} 第 {seq:>3} 次 → {got:<13}（距下次复评还差 {rt.sessions_until_reassessment(seq)} 次）")
+        docs = rt.pending_documents(seq)
+        doc_txt = f"需补 {docs}" if docs else "只需日常记录"
+        print(f"{mark} 第 {seq:>3} 次日常 → {doc_txt:<20}"
+              f"（距下次复评还差 {rt.sessions_until_reassessment(seq)} 次）")
+
+    # 评估文书不得显示序号 —— 否则「出院小结 第 21 次」会被误读成第 21 次治疗记录
+    print()
+    _probe = rt.render(all_t["PT"]["discharge"], rt.blank_answers(all_t["PT"]["discharge"]),
+                       record_date="2026-11-30", seq_no=21, total_sessions=21)
+    if "第 21 次" in _probe:
+        failures.append("出院小结不该显示「第 N 次」（评估文书不计次）")
+    else:
+        print(f"{OK} 出院小结不显示序号，只显示「共治疗 N 次」")
+    _probe2 = rt.render(all_t["PT"]["initial"], rt.blank_answers(all_t["PT"]["initial"]),
+                        record_date="2026-10-05", seq_no=1)
+    if "第 1 次" in _probe2:
+        failures.append("首评不该显示「第 N 次」（评估文书不计次）")
+    else:
+        print(f"{OK} 首评不显示序号")
 
     print()
     print("=" * 78)
@@ -138,7 +163,7 @@ def main() -> int:
     })
     print()
     print("---------- 首评（第 1 次，强制）----------")
-    print(rt.render(pt_initial, a, record_date="2026-10-05", seq_no=1))
+    print(rt.render(pt_initial, a, record_date="2026-10-05"))
     print()
     print(f"  [必填校验] 空答案时缺：{rt.validate_answers(pt_initial, rt.blank_answers(pt_initial))}")
 
@@ -147,7 +172,7 @@ def main() -> int:
     d = rt.apply_prefill(pt_daily, d, last_daily={"therapy_items": ["偏瘫肢体综合训练", "平衡功能训练"]})
     print()
     print("---------- 日常记录：刚打开时（只预填了『本次训练项目』）----------")
-    print(rt.render(pt_daily, d, record_date="2026-10-06", seq_no=2))
+    print(rt.render(pt_daily, d, record_date="2026-10-05", seq_no=1))
     d.update({
         "mental": "良好", "complaint": ["乏力"], "vas": 2, "dizziness": "无", "compliance": "良好",
         "vital_signs": "平稳", "completed": ["坐位重心转移", "辅助站立负重训练"],
@@ -157,7 +182,7 @@ def main() -> int:
     })
     print()
     print("---------- 日常记录：填完之后 ----------")
-    print(rt.render(pt_daily, d, record_date="2026-10-06", seq_no=2))
+    print(rt.render(pt_daily, d, record_date="2026-10-05", seq_no=1))
 
     # ---- 复评（预填上一次评估）----
     r = rt.blank_answers(pt_reassess)
@@ -182,7 +207,7 @@ def main() -> int:
     })
     print()
     print("---------- 复评（第 21 次，自动触发；进来时已带出上次评估值）----------")
-    print(rt.render(pt_reassess, r, record_date="2026-11-10", seq_no=21))
+    print(rt.render(pt_reassess, r, record_date="2026-11-10"))
 
     # ---- 出院（自动汇总 + 治疗师补几段）----
     x = rt.blank_answers(pt_discharge)
@@ -227,14 +252,15 @@ def main() -> int:
             "performance": "较前改善", "existing_problem": ["患侧负重不足"],
             "plan_effect": "有效", "next_step": "继续维持原方案",
             "safety": ["继续落实防跌倒宣教"],
+            "extra_note": "训练后无不适，家属在场",
         })
         ans.update(extra)
         return rt.render(pt_daily, ans, record_date=day, seq_no=seq)
 
     print("\n\n".join([
-        one_day("2026-10-05", 2, {}),
-        one_day("2026-10-06", 3, {"stand_sec": 45, "vas": 1}),
-        one_day("2026-10-07", 4, {"stand_sec": 50, "vas": 1, "performance": "维持稳定"}),
+        one_day("2026-10-05", 1, {}),
+        one_day("2026-10-06", 2, {"stand_sec": 45, "vas": 1}),
+        one_day("2026-10-07", 3, {"stand_sec": 50, "vas": 1, "performance": "维持稳定"}),
     ]))
     print()
 
