@@ -414,6 +414,55 @@
   - **验收**：实测 `start → stop → start` 与连续 `start` 多轮，确认端口能干净释放、进程不堆积；并用 headless Edge 走通"打开登录页 → 用脚本生成的密码登录 → 进入总览页"，无异常、无 console 错误。
 
 ### 决策
+- **【业务决策】2026-10-05：治疗记录改为 SOAP 模板驱动（参数表格整体下线）**
+  - **用户的原始理由（逐字）**：「当前app端功能过剩…太过于繁琐，需要点多次，不容易使用」、
+    「改成类似模板这样，输出时也用类似格式，**避免现有的表格方式**」、
+    「**使用json格式保存模板，不进数据库**，以便以后我手动修改」。
+  - **改成了什么**：记录模板变成仓库根的 `templates/<大类>/<形态>.json`（**16 份** = 4 大类 × 4 形态，
+    外加 `schema.json` / `disciplines.json` / `README.md`）；一条记录只存两样内容 ——
+    `body_json`（`{field_key: value}` 结构化答案）与 **`rendered_text`（生成那一刻渲染出的
+    SOAP 纯文本，冻结保存）**。**改模板不需要迁移、不需要重新发后端**，这是"不进数据库"换来的。
+    > 冻结而不是每次重算，是因为用户以后会手改模板，而**病历是法律文书**，
+    > 旧病历的措辞不该跟着变。
+  - **四大类分开记录**：`discipline` ∈ `PT`（运动）/ `OT`（生活技能）/ `ST_SW`（吞咽）/
+    `ST_SP`（言语）。理由（用户原话）：「**考虑到可能是不同的治疗师操作**」，所以分开记录。
+  - **评估文书不占日常训练次数**（用户纠正的原话）：
+    「**评定并不占用日常训练的次数**，比如第一次首评后，当天还是要有一个日常记录用来记录当天的训练。
+    **复评和出院小结也是**。」
+    → 只有 `kind='daily'` 计入 `seq_no`；首评/复评用 `span_seq` 挂靠（首评挂 1、复评挂 21/41/61…），
+    出院小结两者都为 NULL。库层用 `CHECK ((kind='daily') = (seq_no IS NOT NULL))` 兜底。
+  - **三种评估文书都是硬阻断**（用户原话，三个选项依次回答）：「**1A。2不能。3不能。**」
+    → 点开大类后**先弹评估文书**（`GET /records/form` 返回的 `kind` 就是那份文书），
+    填完才进当天的日常记录；缺首评 / 缺复评就记日常 → **409 `MISSING_ASSESSMENT`**。
+    实现只有一处：`services/record_template.py`，在线接口与离线推送共用。
+  - **每 20 次日常后复评**（第 21、41、61… 次日常，`REASSESS_EVERY = 20`）；
+    **首评不能后补**；**同一天同一大类至多 2 条**（用户：「去掉半日约束，同一天同一大类只允许至多2条」）。
+  - **排版与输出**：**用 SOAP 纯文本、不要表格**；每个 SOAP 段输出成一行
+    （「段名 + 冒号 + 字段用 `；` 连接」，多选值内部用 `/` 连接），**没填的字段整条不出现**；
+    选填备注 `extra_note`（label「备注」）；**多日按时间顺序往下排，不分页、不一天一张**。
+  - **出院流程 + 权限口径变更**：任何治疗师可发起出院（`POST /patients/{no}/discharge`，
+    必须指向**已提交**的出院小结）→ 患者置 `pending_discharge`（**从治疗师白板消失、
+    不能再记新记录**，目的是「**防止患者突然取消出院意愿**」）→ 管理员确认
+    （`.../discharge/confirm`）**或满 7 天自动出院**（`app.cli auto-discharge --days 7`）→
+    管理员可取消（`.../discharge/cancel`）。
+    ⚠ **这是权限口径的变更**：原口径是「只有管理员能改患者主数据」，现在**治疗师可发起出院** ——
+    因为治疗师才是填小结的人；但**确认 / 取消仍归管理员**。
+  - **代价（实测）**：
+    - 后端测试 **454 → 334**（原 454 里大量用例断言的是字典/选项集/反应定义/两层快照）；
+    - 迁移 **10 → 13**：新增 `011_record_soap_model.sql`、`012_drop_dictionary.sql`、
+      `013_patient_pending_discharge.sql`，末个即 `013_patient_pending_discharge.sql`；
+    - **有效表 17 → 8 张**（`audit_log` / `auth_session` / `change_log` / `patient` /
+      `patient_assignment_history` / `schema_migrations` / `treatment_record` / `user`），**视图 2 个**；
+    - 接口 **70 → 45 个操作 / 37 个路径**；
+    - **安卓端需重写**：`app/` 的记录页与离线 payload 仍是旧契约
+      （`items` / `session_period` / `patient_response`），**91 个本地测试当前会失败**，
+      本次**未适配 —— 待适配**；
+    - 端到端验收项数随脚本重写而变化（阶段 3 由 35 → 56 项，合计 **228 项**）。
+  - **落点**：迁移 011/012/013；`services/record_template.py`（新增，模板加载/门禁/渲染的唯一实现）、
+    `services/records.py`（`GET /records/form` 的表单组装）、`api/v1/records.py`、
+    `models/treatment.py`、`schemas/records.py`、`api/v1/patients.py`（三个出院接口）、
+    `models/patient.py`（`pending_discharge`）；`设计.md` V1.4、`开发计划.md` V0.8。
+
 - **【业务决策】2026-10-05：删除 `visibility_state` 死列与 `cli periods` 的"到期时点"输出**（迁移 `010`）
   - **背景**：上一条决策删掉临时指派后，留下两处"还能跑、但没有消费者"的残留。
     复查后确认两者都可安全删除，于是收尾清理。
@@ -640,6 +689,23 @@
   - 影响面：模型、接口、迁移、种子数据。
 
 ### 变更
+- **治疗记录模板进入仓库结构：`templates/`（16 份 JSON，不进数据库）**（2026-10-05）
+  - `templates/schema.json`（字段规范）、`templates/disciplines.json`（四大类 + 疗法清单）、
+    `templates/README.md`，以及 `PT/`、`OT/`、`ST_SW/`、`ST_SP/` 各 4 份
+    （`initial` / `daily` / `reassessment` / `discharge`），**共 16 份模板**。
+  - 疗法（「本次训练项目」候选值）条数：**运动 58 / 生活技能 5 / 吞咽 4 / 言语 13**；
+    模板里用 `"options_source": "therapy_options"` 占位，加载时展成该大类的真实清单（只改一处）。
+  - **`GET /api/v1/records/form` 成为记录页的唯一数据源**：参数 `patient_no`（必填）、
+    `discipline`（必填）、`date`（可选）、`kind`（可选，**出院小结必须显式传 `kind=discharge`**）；
+    返回 `kind` / `next_seq` / `pending_document` / `soap` 字段定义 / `prefill` / `existing`。
+  - **`POST /records` 请求体改为**
+    `{patient_no, record_date, discipline, kind, body:{field_key:value}, status, note, client_uuid, therapist_id}`；
+    `seq_no` / `span_seq` / `rendered_text` 由服务端算，客户端不要自己填。
+  - **离线同步 payload 同步换成 SOAP 契约**（`body` 而不是 `items`），
+    且**硬阻断在离线推送时同样生效**（服务端会 409 拒绝，详见 `docs/sync-protocol.md` §4.3.1）。
+  - **`app.cli seed` 与 `backend/seed/` 四类种子已废弃**（字典/选项集/反应定义/模板），
+    承载它们的六张表已由迁移 012 删除。
+
 - 仓库状态从"仅 `设计.md`"变为"设计文档 + 开发计划 + 变更日志"，进入可开工状态。
 
 ### 修复
@@ -839,6 +905,28 @@
 - 无。
 
 ### 移除
+- **删除参数表格模型：字典 / 选项集 / 患者反应定义 / 科室模板（迁移 011 / 012）**（2026-10-05）
+  - **删掉的表（9 张）**：
+    - 迁移 `011_record_soap_model.sql`：`record_item`（记录明细）、`record_template`、
+      `record_template_item`（科室/个人模板）；
+    - 迁移 `012_drop_dictionary.sql`：`main_item`、`sub_item`、`sub_item_param_def`（参数字典）、
+      `option_set`、`option_item`（选项集）、`response_def`（患者反应定义）。
+  - **删掉的列**：`treatment_record.session_period`（半日）、`duration_min`（时长）、
+    `patient_response_json`（患者反应）、以及旧的 `items` 明细结构
+    （`treatment_record` 由迁移 011 重建为 **19 列**）。
+  - **删掉的接口**：`/dict/**`（字典只读与字典管理两个模块）、`/templates*`（科室/个人模板）、
+    `/option-sets*`（选项集）、`/response-defs*`（患者反应定义），以及 `scope=temp` 筛选入口。
+  - **删掉的文件**：`app/api/v1/dictionary.py`、`app/api/v1/dictionary_admin.py`、
+    `app/api/v1/templates.py`、`app/api/v1/option_sets.py`、`app/api/v1/response_defs.py`；
+    `app/schemas/` 与 `app/models/` 下对应的模板/选项集/反应定义模块一并移除。
+  - **废弃的种子**：`backend/seed/dictionary.py`、`options.py`、`responses.py`、`templates.py`
+    与 `seed/dict_seed.json`、`seed/option_seed.json`、`seed/response_seed.json`
+    —— `app.cli seed` **不再导入任何数据**（文件保留但不再被调用）。
+  - **顺带删掉的概念**：两层参数快照（`params_json` / `params_snapshot_json`）、
+    参数选项集三层解析（个人 → 科室 → 全局 → 内置）、`last_period_rank` 排序键。
+  - ⚠ **保留不动**：记录级的 `is_temporary` 标记（查询时推导，PDF / 汇总 / 后台在用）、
+    `v_patient_visibility` 与 `v_patient_last_treated` 两个视图、`patient_assignment_history`。
+
 - **死代码清理：删除 `patient_model.covers_patient()`，并同步清掉陈旧注释（2026-10-05）**
   - **删了什么**：`covers_patient()`（原名 `can_schedule`）—— 它做"该治疗师当前是否有权开展/记录
     这个患者"的单体判定，**唯一的生产调用方是已删除的 `api/v1/schedule.py`**，排期下线后全仓只剩

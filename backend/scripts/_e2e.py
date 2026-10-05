@@ -11,13 +11,21 @@
 
 ## 依赖顺序（子表 → 父表）
 
-    record_item → treatment_record ┐
-    patient_assignment_history     ┘→ patient
+    treatment_record ┐
+    patient_assignment_history ┘→ patient
 
 `change_log` 用实体名+字符串 id 记录，没有外键，可以最后按 entity_id 清。
 
+## 历史
+
 > 2026-10-05：`appointment` / `rest_block` / `leave_record` 三张表随排期功能下线删除（迁移 008），
-> `temporary_assignment` 随后也被彻底删除（迁移 009），本文件的清理顺序里不再包含它们。
+> `temporary_assignment` 随后也被彻底删除（迁移 009）。
+>
+> 2026-10-05（SOAP 改造）：`record_item` 随迁移 011 删除（记录只存 `body_json` +
+> `rendered_text`），字典/选项集/反应定义六张表随迁移 012 删除。
+> 曾经在本文件里的 `purge_option_sets()` 与 `purge_templates()` 也随之**删除** ——
+> 它们要删的表已经不存在了，留着只会在运行时报 `no such table`。
+> 记录模板现在是 `templates/*.json` **文件**，不进数据库，所以没有任何"清理模板"的需求。
 """
 
 from __future__ import annotations
@@ -33,12 +41,7 @@ def purge_patients(conn: sqlite3.Connection, patient_nos: Iterable[str]) -> None
         return
     marks = ", ".join("?" for _ in nos)
 
-    # 治疗记录与明细
-    conn.execute(
-        "DELETE FROM record_item WHERE record_id IN"
-        f" (SELECT id FROM treatment_record WHERE patient_no IN ({marks}))",
-        nos,
-    )
+    # 治疗记录（SOAP 模型：一条记录一行，不再有 record_item 子表）
     record_ids = [
         str(row["id"])
         for row in conn.execute(
@@ -48,7 +51,6 @@ def purge_patients(conn: sqlite3.Connection, patient_nos: Iterable[str]) -> None
     conn.execute(f"DELETE FROM treatment_record WHERE patient_no IN ({marks})", nos)
 
     # 归属历史
-    #（`temporary_assignment` 表已于 2026-10-05 随临时指派功能删除（迁移 009），不再需要清理）
     conn.execute(f"DELETE FROM patient_assignment_history WHERE patient_no IN ({marks})", nos)
 
     # 变更日志（无外键，按实体名 + 字符串 id 清）
@@ -63,57 +65,12 @@ def purge_patients(conn: sqlite3.Connection, patient_nos: Iterable[str]) -> None
     conn.execute(f"DELETE FROM patient WHERE inpatient_no IN ({marks})", nos)
 
 
-def purge_option_sets(
-    conn: sqlite3.Connection, *, scope: str, owner_user_id: int | None = None
-) -> None:
-    """删除某个范围（通常是某人的 personal）的选项集。
-
-    **必须先删 option_item**：它有外键指向 option_set，
-    直接删 option_set 会 `FOREIGN KEY constraint failed`（重跑验收脚本时踩到过）。
-    """
-    where = ["scope = ?"]
-    params: list[object] = [scope]
-    if owner_user_id is not None:
-        where.append("owner_user_id = ?")
-        params.append(owner_user_id)
-    clause = " AND ".join(where)
-    conn.execute(
-        f"DELETE FROM option_item WHERE option_set_id IN"
-        f" (SELECT id FROM option_set WHERE {clause})",
-        params,
-    )
-    conn.execute(f"DELETE FROM option_set WHERE {clause}", params)
-
-
-def purge_templates(conn: sqlite3.Connection, names: Iterable[str] | None = None) -> None:
-    """删除模板（先子表后父表）。``names`` 为空则清空全部模板。"""
-    if names is None:
-        conn.execute("DELETE FROM record_template_item")
-        conn.execute("DELETE FROM record_template")
-        return
-    wanted = [str(n) for n in names]
-    if not wanted:
-        return
-    marks = ", ".join("?" for _ in wanted)
-    ids = [
-        str(row["id"])
-        for row in conn.execute(
-            f"SELECT id FROM record_template WHERE name IN ({marks})", wanted
-        ).fetchall()
-    ]
-    if not ids:
-        return
-    id_marks = ", ".join("?" for _ in ids)
-    conn.execute(f"DELETE FROM record_template_item WHERE template_id IN ({id_marks})", ids)
-    conn.execute(f"DELETE FROM record_template WHERE id IN ({id_marks})", ids)
-
-
 def purge_users(conn: sqlite3.Connection, employee_nos: Iterable[str]) -> None:
     """删除用户及其会话等关联行（按外键顺序）。
 
     验收脚本一般不删用户（改为重置密码），保留此函数供特殊场景使用。
     """
-    nos = [str(no) for no in employee_nos]
+    nos = [str(n) for n in employee_nos]
     if not nos:
         return
     marks = ", ".join("?" for _ in nos)
@@ -125,8 +82,7 @@ def purge_users(conn: sqlite3.Connection, employee_nos: Iterable[str]) -> None:
         return
     id_marks = ", ".join("?" for _ in ids)
     conn.execute(f"DELETE FROM auth_session WHERE user_id IN ({id_marks})", ids)
-    # `rest_block` / `leave_record` / `appointment` 三张表已于 2026-10-05 随排期功能下线删除。
     conn.execute(f"DELETE FROM user WHERE id IN ({id_marks})", ids)
 
 
-__all__ = ["purge_option_sets", "purge_patients", "purge_templates", "purge_users"]
+__all__ = ["purge_patients", "purge_users"]

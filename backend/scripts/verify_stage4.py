@@ -3,6 +3,15 @@
 场景：治疗师断网期间攒下一批变更 → 恢复网络后一次推送 → 另一端按游标增量拉取。
 另外验证：幂等重试、整批重推、冲突分层（草稿客户端优先 / 已提交服务端优先）。
 
+## 2026-10-05：payload 换成 SOAP 契约，并补上「离线不是后门」
+
+治疗记录改成 SOAP 模板驱动后，离线 payload 里的 `items`（主项目/子项目/参数）换成了
+`body`（`{field_key: value}`），多出 `discipline` 与 `kind`。更重要的是：**服务端推送入口
+`app/services/sync.py::_push_treatment_record` 直接调用 `treatment_model.create_record()`** ——
+在线接口的**三条硬阻断**（缺首评 / 缺复评 / 待出院）在离线通道上**同样生效**。
+本脚本因此新增一项：把一个"没有首评的日常记录"推进来，必须被 409 拦下，
+否则离线就成了绕过门禁的后门。
+
     cd backend
     python scripts/verify_stage4.py
 """
@@ -27,6 +36,10 @@ from _e2e import purge_patients  # noqa: E402
 HOST = "127.0.0.1"
 ADMIN_PW = "Admin#2026pass"
 THERAPIST_PW = "Ther#2026pass"
+
+DISC = "PT"
+INITIAL_BODY = {"diagnosis": ["偏瘫运动功能障碍"], "therapy_items": ["偏瘫肢体综合训练"]}
+DAILY_BODY = {"therapy_items": ["偏瘫肢体综合训练"], "mental": "良好"}
 
 failures: list[str] = []
 
@@ -73,7 +86,6 @@ def main() -> int:
     from app.main import create_app
     from app.models import patient as patient_model
     from app.models import user as user_model
-    from seed.dictionary import seed_dictionary
 
     settings = get_settings()
     if not settings.db_path.exists():
@@ -83,7 +95,6 @@ def main() -> int:
     conn = storage.connect(settings)
     try:
         storage.migrate(conn, storage.discover_migrations(settings=settings))
-        seed_dictionary(conn)
         ids: dict[str, int] = {}
         for employee_no, name, role, pw in (
             ("A001", "科室管理员", user_model.ROLE_ADMIN, ADMIN_PW),
@@ -100,18 +111,14 @@ def main() -> int:
                 ids[employee_no] = int(created["id"])
 
         # 清理上次运行遗留（保证可重复执行）
-        purge_patients(conn, ["S4A"])
+        purge_patients(conn, ["S4A", "S4B"])
         conn.execute("DELETE FROM change_log")
         patient_model.create_patient(
             conn, inpatient_no="S4A", name="阶段四患者", assigned_therapist_id=ids["T001"]
         )
-        motor_main = int(
-            conn.execute("SELECT id FROM main_item WHERE code = 'motor_function'").fetchone()["id"]
-        )
-        motor_sub = int(
-            conn.execute(
-                "SELECT id FROM sub_item WHERE main_item_id = ? ORDER BY sort", (motor_main,)
-            ).fetchone()["id"]
+        # S4B 故意**不建首评**：用来验证离线通道同样受硬阻断约束
+        patient_model.create_patient(
+            conn, inpatient_no="S4B", name="阶段四患者乙", assigned_therapist_id=ids["T001"]
         )
     finally:
         conn.close()
@@ -129,45 +136,79 @@ def main() -> int:
         return 2
     print(f"uvicorn 已启动：{BASE}\n")
 
-    def record_payload(day: str, note: str, status: str = "draft") -> dict:
+    def record_payload(
+        day: str, note: str, *, kind: str = "daily", status: str = "draft",
+        patient_no: str = "S4A",
+    ) -> dict:
+        """离线端攒下来的那条变更的 payload（SOAP 新契约）。"""
         return {
-            "patient_no": "S4A",
+            "patient_no": patient_no,
             "record_date": day,
-            "session_period": "am",
-            "note": note,
+            "discipline": DISC,
+            "kind": kind,
+            "body": INITIAL_BODY if kind == "initial" else DAILY_BODY,
             "status": status,
-            "items": [{"main_item_id": motor_main, "sub_item_id": motor_sub, "params": {"side": "左"}}],
+            "note": note,
         }
 
     try:
         _, login = request("/api/v1/auth/login", "POST", {"employee_no": "T001", "password": THERAPIST_PW})
         h = login["access_token"]
 
+        # ---------------------------------------------------------------- #
         # 1) 同步契约
+        # ---------------------------------------------------------------- #
         code, info = request("/api/v1/sync/info", token=h)
         check("同步契约可获取", code == 200, str(code))
-        check("只允许治疗记录离线写（排期已于 2026-10-05 下线）",
+        check("只允许治疗记录离线写",
               info["pushable_entities"] == ["treatment_record"], str(info["pushable_entities"]))
+        check("可拉取实体只有患者与治疗记录（字典/选项集/模板已删除）",
+              info["pullable_entities"] == ["patient", "treatment_record"],
+              str(info["pullable_entities"]))
         check("冲突策略已声明",
               info["conflict_policy"]["treatment_record:draft"] == "client_wins"
               and info["conflict_policy"]["treatment_record:submitted"] == "server_wins",
               str(info["conflict_policy"]))
+        check("冲突策略覆盖治疗记录的三种状态",
+              {"treatment_record:draft", "treatment_record:submitted",
+               "treatment_record:locked"} <= set(info["conflict_policy"]),
+              str(sorted(info["conflict_policy"])))
+        # ⚠ 已核实的**残留**：`SyncInfoOut.conflict_policy` 里还剩一个 `"dictionary"` 键
+        #   （schemas/sync.py），而字典类表与外键在迁移 011/012 之后**已经不存在**，
+        #   既不可推也不可拉。这里用"只允许这一个已知残留"锁住，避免再冒出新实体；
+        #   清理它要动 `backend/app/**` 行为代码，已按约定**报告**而非就地修改。
+        check("冲突策略里除已知残留 dictionary 外没有字典实体",
+              set(info["conflict_policy"]) - {"dictionary"}
+              == {"treatment_record:draft", "treatment_record:submitted", "treatment_record:locked"},
+              str(sorted(info["conflict_policy"])))
 
+        # ---------------------------------------------------------------- #
         # 2) 初始游标
+        # ---------------------------------------------------------------- #
         code, start = request("/api/v1/sync/pull" + q(cursor=0), token=h)
         check("初始拉取为空", code == 200 and start["changes"] == [], str(start)[:140])
         base_cursor = start["cursor"]
 
-        # 3) 模拟断网期间攒下 5 条记录
-        #    （排期已于 2026-10-05 下线，不再往队列里塞 appointment）
+        # ---------------------------------------------------------------- #
+        # 3) 模拟断网期间攒下 5 条文书：首评 + 4 条日常
+        #    （第 1 次日常前必须先有首评 —— 离线也一样，见第 10 节）
+        # ---------------------------------------------------------------- #
         offline = [
             {
                 "entity": "treatment_record",
-                "client_uuid": f"e2e-rec-{index:04d}",
+                "client_uuid": "e2e-rec-0000",
                 "op": "insert",
-                "payload": record_payload(f"2027-06-0{index + 1}", f"离线第{index + 1}条"),
-            }
-            for index in range(5)
+                "payload": record_payload("2027-06-01", "离线首评", kind="initial"),
+            },
+            *[
+                {
+                    "entity": "treatment_record",
+                    "client_uuid": f"e2e-rec-{index:04d}",
+                    "op": "insert",
+                    "payload": record_payload(f"2027-06-0{index + 1}", f"离线第{index}条日常"),
+                }
+                for index in range(1, 5)
+            ],
         ]
         code, pushed = request("/api/v1/sync/push", "POST", {"changes": offline}, h)
         check("离线批量推送全部应用",
@@ -175,47 +216,71 @@ def main() -> int:
         check("推送无冲突", pushed["conflicts"] == [], str(pushed["conflicts"])[:160])
         cursor_after_push = pushed["cursor"]
 
+        # ---------------------------------------------------------------- #
         # 4) 另一端按游标增量拉取
+        # ---------------------------------------------------------------- #
         code, pulled = request("/api/v1/sync/pull" + q(cursor=base_cursor), token=h)
         check("增量拉取拿到全部 5 条变更",
               code == 200 and len(pulled["changes"]) == 5, str(len(pulled.get("changes", []))))
         entities = [c["entity"] for c in pulled["changes"]]
-        check("变更全部是治疗记录（排期已下线）",
+        check("变更全部是治疗记录",
               entities.count("treatment_record") == 5 and "appointment" not in entities, str(entities))
         check("拉取游标与推送返回一致", pulled["cursor"] == cursor_after_push,
               f"{pulled['cursor']} vs {cursor_after_push}")
-        check("记录变更带 items 快照",
-              all(c["payload"] and "items" in c["payload"]
+        check("记录变更带 body（{field_key: value}）而不是旧的 items",
+              all(c["payload"] and "body" in c["payload"] and "items" not in c["payload"]
                   for c in pulled["changes"] if c["entity"] == "treatment_record"),
-              "客户端需据此在本地重建记录")
+              "客户端据此在本地重建记录")
+        check("记录变更带大类与形态",
+              all(c["payload"].get("discipline") == DISC and c["payload"].get("kind")
+                  in ("initial", "daily")
+                  for c in pulled["changes"] if c["entity"] == "treatment_record"),
+              "")
 
+        # ---------------------------------------------------------------- #
         # 5) 游标不再前进
+        # ---------------------------------------------------------------- #
         code, again = request("/api/v1/sync/pull" + q(cursor=pulled["cursor"]), token=h)
         check("再拉取为空且游标不前移",
               again["changes"] == [] and again["cursor"] == pulled["cursor"], str(again)[:140])
 
+        # ---------------------------------------------------------------- #
         # 6) 幂等：整批重推（模拟"服务端已写入但响应丢失"）
+        # ---------------------------------------------------------------- #
         code, retried = request("/api/v1/sync/push", "POST", {"changes": offline}, h)
         check("整批重推不产生冲突", retried["conflicts"] == [], str(retried["conflicts"])[:160])
         conn = storage.connect(settings)
         try:
-            total = conn.execute("SELECT COUNT(*) FROM treatment_record WHERE patient_no = 'S4A'").fetchone()[0]
+            total = conn.execute(
+                "SELECT COUNT(*) FROM treatment_record WHERE patient_no = 'S4A'"
+            ).fetchone()[0]
+            kinds = dict(
+                conn.execute(
+                    "SELECT kind, COUNT(*) FROM treatment_record WHERE patient_no = 'S4A'"
+                    " GROUP BY kind"
+                ).fetchall()
+            )
         finally:
             conn.close()
         check("重推后记录数仍为 5（幂等）", total == 5, str(total))
+        check("离线推上来的 5 条由服务端算出了序号（1 条首评 + 4 条日常）",
+              kinds.get("initial") == 1 and kinds.get("daily") == 4, str(kinds))
 
+        # ---------------------------------------------------------------- #
         # 7) 冲突：草稿 → 客户端优先
+        # ---------------------------------------------------------------- #
         conn = storage.connect(settings)
         try:
             row = conn.execute(
-                "SELECT id, revision FROM treatment_record WHERE patient_no = 'S4A' ORDER BY id LIMIT 1"
+                "SELECT id, revision FROM treatment_record WHERE patient_no = 'S4A'"
+                " AND kind = 'initial' ORDER BY id LIMIT 1"
             ).fetchone()
             draft_id, draft_rev = int(row["id"]), int(row["revision"])
         finally:
             conn.close()
         # 服务端侧改动草稿（版本前进），但仍是草稿
         code, edited = request(
-            f"/api/v1/records/{draft_id}", "PUT", {"note": "服务端改的草稿"}, h
+            f"/api/v1/records/{draft_id}", "PUT", {"body": {**INITIAL_BODY, "vas": 5}}, h
         )
         check("服务端改动草稿", code == 200, str(code))
         server_rev = edited["revision"]
@@ -226,7 +291,7 @@ def main() -> int:
             {"changes": [{
                 "entity": "treatment_record", "client_uuid": "e2e-rec-0000", "op": "update",
                 "base_revision": draft_rev,
-                "payload": record_payload("2027-06-01", "客户端较新（离线期间写的）"),
+                "payload": record_payload("2027-06-01", "客户端较新（离线期间写的）", kind="initial"),
             }]},
             h,
         )
@@ -235,12 +300,17 @@ def main() -> int:
               f"{code} {str(stale)[:200]}")
         conn = storage.connect(settings)
         try:
-            note = conn.execute("SELECT note FROM treatment_record WHERE id = ?", (draft_id,)).fetchone()["note"]
+            body_json = conn.execute(
+                "SELECT body_json FROM treatment_record WHERE id = ?", (draft_id,)
+            ).fetchone()["body_json"]
         finally:
             conn.close()
-        check("客户端内容确实生效", note == "客户端较新（离线期间写的）", note)
+        check("客户端内容确实生效（服务端改的 vas=5 被覆盖）",
+              json.loads(body_json).get("vas") is None, str(body_json)[:160])
 
+        # ---------------------------------------------------------------- #
         # 8) 冲突：已提交 → 服务端优先
+        # ---------------------------------------------------------------- #
         code, submitted = request(f"/api/v1/records/{draft_id}/submit", "POST", {}, h)
         check("提交记录", code == 200 and submitted["status"] == "submitted", str(code))
         submitted_rev = submitted["revision"]
@@ -250,7 +320,7 @@ def main() -> int:
             {"changes": [{
                 "entity": "treatment_record", "client_uuid": "e2e-rec-0000", "op": "update",
                 "base_revision": draft_rev,  # 故意用过期的基线
-                "payload": record_payload("2027-06-01", "试图覆盖已提交"),
+                "payload": record_payload("2027-06-01", "试图覆盖已提交", kind="initial"),
             }]},
             h,
         )
@@ -263,22 +333,25 @@ def main() -> int:
                   str(item))
         conn = storage.connect(settings)
         try:
-            note = conn.execute("SELECT note FROM treatment_record WHERE id = ?", (draft_id,)).fetchone()["note"]
+            note = conn.execute(
+                "SELECT note FROM treatment_record WHERE id = ?", (draft_id,)
+            ).fetchone()["note"]
         finally:
             conn.close()
         check("已提交内容未被覆盖", note != "试图覆盖已提交", note)
 
+        # ---------------------------------------------------------------- #
         # 9) 一条冲突不影响整批
-        #    第二条用"新建一条记录"（不带基线 → 必然 applied），
-        #    排期已于 2026-10-05 下线，不能再拿它来当"正常那一条"。
+        # ---------------------------------------------------------------- #
         code, mixed = request(
             "/api/v1/sync/push", "POST",
             {"changes": [
                 {"entity": "treatment_record", "client_uuid": "e2e-rec-0000", "op": "update",
                  "base_revision": draft_rev,
-                 "payload": record_payload("2027-06-01", "又一条冲突")},
+                 "payload": record_payload("2027-06-01", "又一条冲突", kind="initial")},
                 {"entity": "treatment_record", "client_uuid": "e2e-rec-mixed-0001", "op": "insert",
-                 "payload": record_payload("2027-06-07", "同批的另一条")},
+                 "payload": record_payload("2027-06-07", "同批的另一条"),
+                 },
             ]},
             h,
         )
@@ -286,7 +359,33 @@ def main() -> int:
               len(mixed["conflicts"]) == 1 and len(mixed["applied"]) == 1,
               f"conflicts={len(mixed['conflicts'])} applied={len(mixed['applied'])}")
 
-        # 10) 范围与边界
+        # ---------------------------------------------------------------- #
+        # 10) ★ 离线不是后门：缺首评的日常记录在推送时同样被 409 拦下
+        # ---------------------------------------------------------------- #
+        code, err = request(
+            "/api/v1/sync/push", "POST",
+            {"changes": [{
+                "entity": "treatment_record", "client_uuid": "e2e-nogate-0001", "op": "insert",
+                "payload": record_payload("2027-06-10", "没有首评就想推日常", patient_no="S4B"),
+            }]},
+            h,
+        )
+        check("离线推送缺首评的日常 → 409 MISSING_ASSESSMENT（与在线同一套门禁）",
+              code == 409 and err.get("code") == "MISSING_ASSESSMENT"
+              and err["details"]["missing_document"] == "initial",
+              f"{code} {str(err)[:200]}")
+        conn = storage.connect(settings)
+        try:
+            smuggled = conn.execute(
+                "SELECT COUNT(*) FROM treatment_record WHERE patient_no = 'S4B'"
+            ).fetchone()[0]
+        finally:
+            conn.close()
+        check("被拒的变更没有落库（S4B 仍然 0 条记录）", smuggled == 0, str(smuggled))
+
+        # ---------------------------------------------------------------- #
+        # 11) 范围与边界
+        # ---------------------------------------------------------------- #
         code, err = request(
             "/api/v1/sync/push", "POST",
             {"changes": [{"entity": "patient", "client_uuid": "e2e-pat-0001", "op": "insert",
@@ -319,7 +418,9 @@ def main() -> int:
         code, _ = request("/api/v1/sync/pull" + q(cursor=0), None)
         check("未认证不能拉取", code == 401, str(code))
 
-        # 11) OpenAPI 收录
+        # ---------------------------------------------------------------- #
+        # 12) OpenAPI 收录
+        # ---------------------------------------------------------------- #
         code, schema = request("/openapi.json")
         wanted = {"/api/v1/sync/push", "/api/v1/sync/pull", "/api/v1/sync/info"}
         check("OpenAPI 收录同步接口", wanted <= set(schema["paths"]),

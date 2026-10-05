@@ -7,9 +7,9 @@
 > ✅ **2026-10-05（SOAP 改造）：本端已适配完成。**
 > 治疗记录从「参数表格」改成 **SOAP 模板驱动**（后端迁移 011/012/013）后，本端同步换了契约：
 > 记录页按 `GET /records/form` 返回的 `soap[]` 渲染**一屏 chip**（点一下就是选中）、
-> 提交体换成 `body`，Drift 本地库 **schemaVersion 4 → 5**（**已删除** `RecordItems` 表与
-> `session_period` / `duration_min` / `patient_response_json` 三列），时间轴/汇总改用
-> `rendered_text`（SOAP 纯文本，不再拼表格）。详见下文「记录页：SOAP 模板驱动」。
+> 提交体换成 `body`，Drift 本地库 **schemaVersion 4 → 5**（**删除** `RecordItems` 表与
+> `session_period` / `duration_min` / `patient_response_json` 三列 —— 均随旧模型一并删除），
+> 时间轴/汇总改用 `rendered_text`（SOAP 纯文本，不再拼表格）。详见下文「记录页：SOAP 模板驱动」。
 
 ---
 

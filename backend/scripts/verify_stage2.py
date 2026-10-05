@@ -7,14 +7,23 @@
 **"患者列表怎么排序"这件事完全没有验收覆盖** —— 而那正是取代排期的核心行为：
 治疗师打开列表是为了**接着记今天做过的患者**，所以排序必须反映"我刚治过谁"。
 
-所以这个脚本改为验证新排序语义：
+## 2026-10-05 第二步：排序依据再收窄
 
-1. 组内按"我最近一次**已提交**治疗"的日期**降序**（越近越前）；
+治疗记录改成 SOAP 模板驱动后，一条记录有了 `kind`（首评/日常/复评/出院小结）。
+**评估文书不占日常训练次数**（用户：「评定并不占用日常训练的次数…复评和出院小结也是」），
+所以排序视图 `v_patient_last_treated` 现在只算 `kind='daily'`：
+
+    WHERE r.status = 'submitted' AND r.kind = 'daily'
+
+本脚本因此验证：
+
+1. 组内按"我最近一次**已提交日常**治疗"的日期**降序**（越近越前）；
 2. **草稿不算** —— 否则"写了一半没提交"会把患者顶到最前，而那条记录在汇总/时间轴
    里还不存在，看起来像系统错乱；
-3. 从没被我治过的患者排在有记录的**后面**；
-4. 归属分组仍然优先于治疗时间：我的患者 → 未分配 → 其他；
-5. 换一个治疗师看，排序按**他自己的**治疗历史（不是全局最近）。
+3. **评估文书不算** —— 给某患者单独记一份复评，不该把它顶到"我最近做过日常"的前面；
+4. 从没被我治过的患者排在有记录的**后面**；
+5. 归属分组仍然优先于治疗时间：我的患者 → 未分配 → 其他；
+6. 排期与字典两批已下线接口都真的不在了。
 
     cd backend
     python scripts/verify_stage2.py
@@ -45,6 +54,11 @@ THERAPIST_PW = "Ther#2026pass"
 D_OLD = "2027-03-01"
 D_MID = "2027-03-05"
 D_NEW = "2027-03-09"
+
+# 模板里的必填项（`templates/PT/initial.json` 的 A 段 `diagnosis` 与 P 段 `therapy_items`；
+# 日常记录只需要 `therapy_items`）。缺了会被 422 拦下，所以这里必须给全。
+INITIAL_BODY = {"diagnosis": ["偏瘫运动功能障碍"], "therapy_items": ["偏瘫肢体综合训练"]}
+DAILY_BODY = {"therapy_items": ["偏瘫肢体综合训练"]}
 
 failures: list[str] = []
 
@@ -95,17 +109,20 @@ def order_of(payload: dict, only: tuple[str, ...] = ("S2A", "S2B", "S2C", "S2D")
     return [str(i["inpatient_no"]) for i in (items or []) if str(i["inpatient_no"]) in only]
 
 
-def create_record(token: str, patient_no: str, day: str, *, status: str) -> tuple[int, object]:
-    """建一条治疗记录（带一个最小明细，走真实参数校验）。"""
+def post_record(
+    token: str, patient_no: str, day: str, kind: str, body: dict, *, status: str
+) -> tuple[int, object]:
+    """建一条 SOAP 记录（新契约：`body` 而不是 `items`，也不再有 `session_period`）。"""
     return request(
         "/api/v1/records",
         "POST",
         {
             "patient_no": patient_no,
             "record_date": day,
-            "session_period": "am",
+            "discipline": "PT",
+            "kind": kind,
+            "body": body,
             "status": status,
-            "items": [{"main_item_id": 1, "sub_item_id": 1, "params": {"reps": 10}}],
         },
         token,
     )
@@ -179,29 +196,41 @@ def main() -> int:
                 {"inpatient_no": "S2D", "name": "阶段二患者丁"}, at)
 
         # ---------------------------------------------------------------- #
-        # 1) 排期相关接口已下线
+        # 1) 两批已下线接口都不再存在（排期/请假 + 字典/选项集/模板）
         # ---------------------------------------------------------------- #
-        for path in ("/api/v1/schedule", "/api/v1/rest-blocks", "/api/v1/leave"):
+        for path in ("/api/v1/schedule", "/api/v1/rest-blocks", "/api/v1/leave",
+                     "/api/v1/dict/tree", "/api/v1/option-sets/resolve", "/api/v1/templates"):
             code, _ = request(path, token=h1)
             check(f"已下线接口不再存在：{path}", code == 404, f"HTTP {code}")
 
         # ---------------------------------------------------------------- #
         # 2) 治疗历史 → 排序（用 scope=dept 全科列表，才能同时看到三种归属分组）
         # ---------------------------------------------------------------- #
-        # 张三是 S2A / S2B 的归属人。给 S2B 记一条较早的、给 S2A 记一条较近的。
-        code, _ = create_record(h1, "S2B", D_OLD, status="submitted")
-        check("给 S2B 建已提交记录", code == 201, f"HTTP {code}")
-        code, _ = create_record(h1, "S2A", D_MID, status="submitted")
-        check("给 S2A 建已提交记录", code == 201, f"HTTP {code}")
-        # 未分配患者 S2D 也由张三记一条**最近**的
-        code, _ = create_record(h1, "S2D", D_NEW, status="submitted")
-        check("给未分配患者 S2D 建已提交记录", code == 201, f"HTTP {code}")
+        # ★ 硬阻断：记日常之前必须先有首评（首评不占次数）。
+        #   所以下面每位患者都是"首评 + 当天日常"两条文书。
+        code, init_b = post_record(h1, "S2B", D_OLD, "initial", INITIAL_BODY, status="submitted")
+        check("给 S2B 建首评（不占日常次数）",
+              code == 201 and init_b["seq_no"] is None and init_b["span_seq"] == 1,
+              f"{code} {str(init_b)[:160]}")
+        code, _ = post_record(h1, "S2B", D_OLD, "daily", DAILY_BODY, status="submitted")
+        check("给 S2B 建已提交日常（第 1 次）", code == 201, f"HTTP {code}")
+
+        code, init_a = post_record(h1, "S2A", D_MID, "initial", INITIAL_BODY, status="submitted")
+        check("给 S2A 建首评", code == 201 and init_a["span_seq"] == 1, f"HTTP {code}")
+        code, daily_a = post_record(h1, "S2A", D_MID, "daily", DAILY_BODY, status="submitted")
+        check("给 S2A 建已提交日常（第 1 次）", code == 201 and daily_a["seq_no"] == 1,
+              f"{code} {str(daily_a)[:160]}")
+
+        code, init_d = post_record(h1, "S2D", D_NEW, "initial", INITIAL_BODY, status="submitted")
+        check("给未分配患者 S2D 建首评", code == 201, f"HTTP {code}")
+        code, _ = post_record(h1, "S2D", D_NEW, "daily", DAILY_BODY, status="submitted")
+        check("给未分配患者 S2D 建已提交日常", code == 201, f"HTTP {code}")
 
         code, dept = request(f"/api/v1/patients{q(scope='dept', page_size=200)}", token=h1)
         check("取全科患者列表", code == 200, f"HTTP {code}")
         order = order_of(dept)
 
-        check("组内按我最近一次已提交治疗降序（S2A 晚于 S2B → S2A 在前）",
+        check("组内按我最近一次已提交日常降序（S2A 晚于 S2B → S2A 在前）",
               len(order) >= 2 and order.index("S2A") < order.index("S2B"), str(order))
         check("我的患者排在未分配之前（分组优先于治疗时间）",
               "S2D" in order and order.index("S2A") < order.index("S2D"), str(order))
@@ -211,10 +240,10 @@ def main() -> int:
         # ---------------------------------------------------------------- #
         # 3) 草稿不算
         # ---------------------------------------------------------------- #
-        # 给 S2B 补一条**日期更新但仍是草稿**的记录。如果草稿参与排序，
+        # 给 S2B 补一条**日期更新但仍是草稿**的日常。如果草稿参与排序，
         # S2B 会被顶到 S2A 前面；正确行为是 S2B 仍按它那条已提交的 D_OLD 排在后面。
-        code, _ = create_record(h1, "S2B", D_NEW, status="draft")
-        check("给 S2B 建草稿（日期更新但未提交）", code == 201, f"HTTP {code}")
+        code, _ = post_record(h1, "S2B", D_NEW, "daily", DAILY_BODY, status="draft")
+        check("给 S2B 建草稿日常（日期更新但未提交）", code == 201, f"HTTP {code}")
 
         code, dept2 = request(f"/api/v1/patients{q(scope='dept', page_size=200)}", token=h1)
         order2 = order_of(dept2)
@@ -222,13 +251,41 @@ def main() -> int:
               order2.index("S2A") < order2.index("S2B"), str(order2))
 
         # ---------------------------------------------------------------- #
-        # 4) 分组优先于治疗历史：张三给"别人的患者"记过，它仍在最后一组
+        # 4) 评估文书不算：复评不能把患者顶到我最近一次**日常**的前面
+        # ---------------------------------------------------------------- #
+        # S2B 只有 D_OLD 那次日常；给它补一份 D_NEW 的**复评**（评估类文书，不计数）。
+        # 若视图按"任何已提交记录"取 MAX(record_date)，S2B 会跳到 S2A 前面 —— 那正是本次
+        # 要防住的回归（`v_patient_last_treated` 必须带 `AND r.kind = 'daily'`）。
+        #
+        # 刻意**不用出院小结**：提交出院小结会把患者置为 `pending_discharge`（用户要求），
+        # 患者随即从治疗师白板上消失，后面的排序断言就没对象了。
+        code, reassess_b = post_record(
+            h1, "S2B", D_NEW, "reassessment",
+            {"therapy_items": ["偏瘫肢体综合训练"], "mmt_lower": 3},
+            status="submitted",
+        )
+        check("给 S2B 建复评（评估文书，不占日常次数）",
+              code == 201 and reassess_b["seq_no"] is None and reassess_b["span_seq"] is not None,
+              f"{code} {str(reassess_b)[:160]}")
+
+        code, dept2b = request(f"/api/v1/patients{q(scope='dept', page_size=200)}", token=h1)
+        order2b = order_of(dept2b)
+        check("评估文书不参与排序（S2B 仍在 S2A 之后）",
+              order2b.index("S2A") < order2b.index("S2B"), str(order2b))
+
+        # ---------------------------------------------------------------- #
+        # 5) 分组优先于治疗历史：张三给"别人的患者"记过，它仍在最后一组
         # ---------------------------------------------------------------- #
         # 全科白板下张三可以给 S2C（李四的患者）做记录（D10 已放开）。
         # 但排序的**第一关键字是归属分组**，所以 S2C 仍排在最后 ——
         # 否则"我偶尔替别人做了一次"会把它顶到我自己的患者前面，与直觉相反。
-        code, _ = create_record(h1, "S2C", D_NEW, status="submitted")
-        check("张三给别人的患者记一次（全科白板）", code == 201, f"HTTP {code}")
+        code, init_c = post_record(h1, "S2C", D_NEW, "initial", INITIAL_BODY, status="submitted")
+        check("张三给别人的患者建首评（全科白板）", code == 201, f"HTTP {code}")
+        code, daily_c = post_record(h1, "S2C", D_NEW, "daily", DAILY_BODY, status="submitted")
+        check("张三给别人的患者记一次日常（记录人是自己）",
+              code == 201 and daily_c["therapist_id"] == ids["T001"],
+              f"{code} {str(daily_c)[:160]}")
+
         code, dept3 = request(f"/api/v1/patients{q(scope='dept', page_size=200)}", token=h1)
         order3 = order_of(dept3)
         my_group = [x for x in order3 if x in ("S2A", "S2B")]
@@ -239,7 +296,7 @@ def main() -> int:
               str(order3))
 
         # ---------------------------------------------------------------- #
-        # 5) 分页 + 可见性
+        # 6) 分页 + 可见性
         # ---------------------------------------------------------------- #
         code, page1 = request(f"/api/v1/patients{q(scope='dept', page=1, page_size=2)}", token=h1)
         check("分页返回 page/page_size",
@@ -252,7 +309,7 @@ def main() -> int:
         check("治疗师不能用 scope=all（管理员专属）", code == 403, f"HTTP {code}")
 
         # ---------------------------------------------------------------- #
-        # 6) 同步通道只剩治疗记录
+        # 7) 同步通道只剩治疗记录
         # ---------------------------------------------------------------- #
         code, info = request("/api/v1/sync/info", token=h1)
         check("同步信息可读", code == 200, f"HTTP {code}")

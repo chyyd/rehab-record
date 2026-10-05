@@ -24,8 +24,8 @@ $env:VITE_API_TARGET='http://127.0.0.1:9000'; npm run dev
 
 ```powershell
 $py = 'C:\Users\youda\AppData\Local\Programs\Python\Python313\python.exe'
-& $py -m app.cli init
-& $py -m app.cli seed
+& $py -m app.cli init           # 建库 + 迁移 001–013
+# & $py -m app.cli seed         # 已废弃：种子数据随迁移 012 下线，现在没有种子要导
 $env:KB_ADMIN_PASSWORD='Admin#2026pass'; & $py -m app.cli create-admin A001 --name 科室管理员
 & $py -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
@@ -69,30 +69,40 @@ admin/
 
 ## 模块清单
 
+> **当前共 6 个模块**（与 `src/layouts/AppLayout.tsx` 的 `NAV_ITEMS` 及 `src/routes.tsx` 一一对应）。
+
 > **2026-10-05**：「全局排期」与「请假管理」两个页面**随排期功能下线一并删除**
 > （科室确认排班不是本系统的职责，后端 `/schedule`、`/rest-blocks`、`/leave` 接口也已删除）。
-> 下面是当前实际存在的 10 个页面。
+>
+> **2026-10-05（第二步）**：「字典管理」「选项集管理」「患者反应定义」「科室模板」四个页面
+> **已删除** —— 后端承载它们的六张表已随迁移 012 删除，对应接口
+> `/dict/**`、`/option-sets*`、`/response-defs*`、`/templates*` 也**已下线**。
+> 记录模板改由仓库根的 `templates/*.json` **文件**承载（不进数据库），后台**不做模板维护**。
+> `admin/src/pages/` 下已无这四个页面文件，导航与路由也一并移除。
+>
+> > **`npm run build` 的目录清单已核对**：删除四个页面后重新构建 **exit 0**
+> >（`tsc && vite build` 通过，`✓ built in 468ms`）。
 
 | 模块 | 路由 | 说明 |
 |---|---|---|
 | 总览 | `/` | 关键计数 + 系统状态 + 最近操作 |
-| 患者管理 | `/patients` | CRUD、注意事项、归属分配/取消、归属历史 |
-| 治疗记录 | `/records` | 列表筛选、明细（含快照）、锁定；「是否临时治疗」列用的是**记录级 `is_temporary`**（与已删除的临时指派机制无关，见 `设计.md` 3.7） |
-| 汇总与打印 | `/summary` | 按日期/按患者汇总 + 三套 PDF 下载 |
+| 患者管理 | `/patients` | CRUD、注意事项、归属分配/取消、归属历史；**出院确认 / 取消待出院也在这里**（`POST /patients/{no}/discharge/confirm` / `cancel`） |
+| 治疗记录 | `/records` | 列表筛选、明细、锁定；明细展示服务端**冻结的 `rendered_text`（SOAP 纯文本）**，列表用 `rendered_excerpt` 摘要；不再有"参数明细 / 患者反应"列。「是否临时治疗」列用的是**记录级 `is_temporary`**（与已删除的临时指派机制无关，见 `设计.md` 3.7） |
+| 汇总与打印 | `/summary` | 按日期/按患者汇总 + 三套 PDF 下载（正文是 SOAP 纯文本） |
 | 用户管理 | `/users` | CRUD、重置密码、会话查看与踢下线 |
-| 字典管理 | `/dict` | 主项目/子项目/参数三级 CRUD（软删语义见下） |
-| 选项集管理 | `/option-sets` | 科室/全局选项集 + 解析预览 |
-| 患者反应定义 | `/response-defs` | **只读**（后端暂无维护接口） |
-| 科室模板 | `/templates` | 四套标准模板查看/编辑/预览 |
 | 审计日志 | `/audit-logs` | 按人/对象/时间查询 + 变更前后对比 |
+| ~~字典管理~~ | ~~`/dict`~~ | **已删除**（后端接口已下线） |
+| ~~选项集管理~~ | ~~`/option-sets`~~ | **已删除**（后端接口已下线） |
+| ~~患者反应定义~~ | ~~`/response-defs`~~ | **已删除**（后端接口已下线） |
+| ~~科室模板~~ | ~~`/templates`~~ | **已删除**（模板改由 `templates/*.json` 承载） |
 
 > ~~全局排期 `/schedule`~~、~~请假管理 `/leave`~~：**已删除**，不要再加回来。
 
 ## 两处需要留意的实现约定
 
-1. **字典删除是"看情况"的**：子项目被历史记录或模板引用过时，后端**只停用不删除**，
-   并返回 `soft_deleted` 与 `reason`。前端会弹出说明而不是假装删除成功 ——
-   "显示删除成功但列表里还在"会让人以为系统坏了。
-2. **PDF 下载走 fetch 而不是 `<a download>`**：PDF 接口需要 `Authorization` 头，
+1. **PDF 下载走 fetch 而不是 `<a download>`**：PDF 接口需要 `Authorization` 头，
    而 `<a>` / `window.open` 带不上自定义头，直接打开会拿到 401。
    因此用 fetch 取 blob 再触发下载。
+2. **记录页不要自己拼 SOAP 文本**：列表与详情直接用服务端返回的 `rendered_text` /
+   `rendered_excerpt`。服务端存的是**生成那一刻冻结**的文本 ——
+   病历是法律文书，措辞不该因前端模板版本不同而变。

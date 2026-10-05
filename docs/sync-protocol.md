@@ -159,33 +159,60 @@ MAX_PULL_LIMIT    = 500                               # 单次最多 500 条
 
 ### 4.3 各实体的 `payload` 形状
 
-**`treatment_record`**（`sync.py::_push_treatment_record`）：
+**`treatment_record`**（`sync.py::_push_treatment_record` → `models/treatment.py::create_record`）：
 
 ```json
 {
   "patient_no": "ZY001",
   "therapist_id": 2,
   "record_date": "2027-03-01",
-  "session_period": "am",
-  "duration_min": 30,
+  "discipline": "PT",
+  "kind": "daily",
+  "body": {"mental": "良好", "therapy_items": ["偏瘫肢体综合训练"]},
   "note": "备注",
-  "status": "draft",
-  "patient_response": {"tags": ["no_discomfort"],
-                       "items": [{"code":"nrs","label":"疼痛","value_type":"number",
-                                  "value_key":"nrs","value":3,"unit":"分"}]},
-  "items": [
-    {"main_item_id": 1, "sub_item_id": 11, "params": {"side": "左", "position": "坐位"}}
-  ]
+  "status": "draft"
 }
 ```
 
-- `items[].params` 的键**一律是 `param_key`**（英文），不是显示名。
+- **`body` 是 `{field_key: value}`**，键取自 `templates/<大类>/<形态>.json` 里 `soap[].fields[].key`
+  （如 `mental` / `therapy_items` / `diagnosis`）。服务端**不校验取值是否在选项里**，
+  但会校验模板里标了 `required` 的字段是否**填了**（缺 → **422**，`details.missing` 给中文标签）。
+- `discipline` ∈ `PT` / `OT` / `ST_SW` / `ST_SP`（运动 / 生活技能 / 吞咽 / 言语，**四大类分开记录**）；
+  `kind` ∈ `initial` / `daily` / `reassessment` / `discharge`；不传 `kind` 时按 `daily` 处理。
 - `therapist_id` 省略时默认取当前登录人；**传别人 → 403 `RECORD_OTHER_THERAPIST`**。
-- 更新时 `update_record` **只改传入的字段**；`status` **不能**通过 push 流转
-  （提交/锁定走 `POST /records/{id}/submit` 与 `/lock`，见 §4.5）。
+- **序号与渲染文本都由服务端算**：客户端**不要**自己填 `seq_no` / `span_seq` / `rendered_text`，
+  也不要自己渲染后覆盖 —— 拉回来的 `rendered_text` 是服务端**冻结**的权威文本。
+- 更新时 `update_record` **只改传入的字段**；`status` 可以随 push 带上（草稿 → 已提交），
+  但锁定仍走 `POST /records/{id}/lock`（见 §4.5）。
+- 旧模型那批字段**已随迁移 011 删除**，离线端不要再发这些键：
+  `session_period`（半日，已删除）、`duration_min`（时长，已删除）、
+  `patient_response`（患者反应，已删除）、`items`（明细，已删除）。
 - **没有 `appointment` 通道**：排期功能已于 2026-10-05 整体删除，`payload` 里也不需要
   `appointment_id` / `is_temporary` / `original_therapist_id` 三个字段（记录表已删除这三列；
   `is_temporary` 改由服务端**查询时推导**：记录人 ≠ 该患者在记录创建时刻的归属治疗师）。
+
+### 4.3.1 ★ 硬阻断在离线推送时**同样生效**（离线不是后门）
+
+`POST /sync/push` 的新建分支**直接调用** `treatment_model.create_record()` ——
+和在线接口 `POST /records` 是**同一个入口、同一套门禁**。所以下面这些推送**会被服务端拒绝**，
+不是"弱网重试一下就好"：
+
+| 推送内容 | 服务端结果 |
+|---|---|
+| 某大类第 1 次日常，但服务端还没有该大类的**首评** | **409** `code="MISSING_ASSESSMENT"`，`details.missing_document="initial"` |
+| 第 21 / 41 / 61… 次日常，但服务端缺对应区间的**复评** | **409** `code="MISSING_ASSESSMENT"`，`details.missing_document="reassessment"` |
+| 同一天同一大类第 3 条 | **409**（`details.limit=2`） |
+| 患者处于 `pending_discharge`（已提交出院小结） | **409** `code="PATIENT_PENDING_DISCHARGE"` |
+| 模板里的必填字段没填 | **422**，`details.missing` 给中文标签 |
+
+> ⚠ **门禁失败会让整个请求返回 409，而不是一条 `conflict`。**
+> `conflict` 是"乐观锁版本不一致"的正常结果（逐条回报、不影响同批其它条）；
+> 而门禁异常是**领域错误**，会直接从 `apply_push` 抛出去。
+> 因此客户端在把离线队列刷上去之前，应当**先拉一次最新游标**，
+> 并在收到 409 时提示治疗师"先补评估文书"，而不是把这条变更无限重推。
+>
+> 这不是缺陷，而是刻意的设计：**"评估文书不能跳过"是用户明确要求
+> （「1A。2不能。3不能。」）**，离线端不能成为绕过它的通道。
 
 ### 4.4 冲突判定（服务端实现，客户端只需理解）
 
@@ -276,11 +303,15 @@ MAX_PULL_LIMIT    = 500                               # 单次最多 500 条
 
 ### 5.4 payload 是完整快照（不是增量）
 
-- `treatment_record` 的 payload 带上 `items`（**含两层快照**：
-  `sub_item_name_snapshot` 与 `params_snapshot_json`），
-  代码注释明确写了"客户端据此在本地完整重建这条记录"。
+- `treatment_record` 的 payload 带 `discipline` / `kind` / `body` / `rendered_text` / `seq_no` /
+  `span_seq` / `status` / `revision`：
+  - `body`（`{field_key: value}`）是**结构化答案**，用于回显、预填、复查；
+  - `rendered_text` 是**服务端生成那一刻冻结的 SOAP 纯文本**，用于打印与归档。
+    **客户端不得自己重算后覆盖它** —— 病历是法律文书，措辞不该因客户端模板版本不同而变。
 - `op='delete'` 的 payload 可能为 `null` —— 客户端按 `entity` + `entity_id` 删除本地行。
 - **不再有 `appointment` 的 payload**（排期通道已随功能删除）。
+- 旧模型的两层参数快照（`params_json` / `params_snapshot_json`）与 `record_item` 明细
+  **已随迁移 011 删除**，payload 里不再有 `items` 这个键。
 
 因此客户端可以安全地做 **`INSERT ... ON CONFLICT DO UPDATE`（upsert）**，**幂等应用**。
 
@@ -321,15 +352,16 @@ local ──(入队)──> pending ──(push applied)──> synced
 
 | 数据 | 本地形态 | 理由 |
 |---|---|---|
-| `patient` / `treatment_record`（含 items） | **镜像表** | 要支持查询、按游标增量 upsert、离线读写 |
-| 字典树（主/子项目/参数定义） | **整包 JSON 缓存**（`ref_cache`） | 只读；89 个参数定义建成表换不来查询收益，反而多一套迁移 |
-| 选项集解析结果（按 `code`） | 整包 JSON 缓存 | 同上；解析规则在服务端（个人→科室→全局→内置） |
-| 患者反应定义 / 记录模板 | 整包 JSON 缓存 | 同上 |
+| `patient` / `treatment_record` | **镜像表** | 要支持查询、按游标增量 upsert、离线读写 |
+| 记录模板（SOAP 字段定义） | **随 App 发版打包**（也可从 `GET /records/form` 取最新一份） | 模板是 `templates/*.json` **文件**，**不进数据库、也不走同步通道**；本地只需缓存"当前这一份" |
+| 患者反应定义 / 选项集 / 字典树 | —— | **已随迁移 011/012 删除**，服务端没有这些实体，本地也不必再缓存 |
 
-> `ref_cache` 建议字段：`key`（如 `dict_tree` / `options:side` / `templates`）、
-> `payload`（JSON 文本）、`fetched_at`、`etag`（可空）。**整包原子替换**，避免半套数据。
+> 2026-10-05：原来放在 `ref_cache` 里的"字典树 / 选项集解析结果 / 反应定义 / 科室模板"
+> 四类参考数据**全部作废** —— 记录改成 SOAP 模板驱动后，界面要什么字段直接来自模板 JSON，
+> 训练项目的候选值来自 `templates/disciplines.json` 的 `therapy_options`。
+> `ref_cache` 现在只用来缓存**模板版本**（键如 `template:PT:daily`），或者干脆不建。
 
-### 7.2 建议的表（★ 与 `app/lib/data/local/tables.dart` 的实际列逐字对齐）
+### 7.2 建议的表（与 `app/lib/data/local/tables.dart` 对齐）
 
 ```
 patient(inpatient_no PK, name, diagnosis, admin_note, assigned_therapist_id,
@@ -337,21 +369,27 @@ patient(inpatient_no PK, name, diagnosis, admin_note, assigned_therapist_id,
         -- 2026-10-05：`visibility_state` 列**已删除**（本地 schemaVersion 3 → 4）。
         -- 服务端该字段已退化为恒 'assigned'，镜像一个常量没有意义。
 
-treatment_record(id PK, patient_no, therapist_id, record_date, session_period,
-                 duration_min, note, patient_response_json, status, seq_no,
+treatment_record(id PK, patient_no, therapist_id, record_date, discipline, kind,
+                 seq_no, body_json, rendered_text, note, status,
                  edit_count, revision, is_temporary, original_therapist_id,
-                 client_uuid, sync_status, pending_items_json)
-                 -- `is_temporary` / `original_therapist_id` 在本地**保留**，只为与服务端
-                 -- 字段一一对应（2026-10-03 起恒为 false / NULL）；不要再用它做 UI 判断。
-
-record_item(id PK, record_id FK, main_item_id, sub_item_id,
-            sub_item_name_snapshot, params_json, params_snapshot_json, sort)
+                 client_uuid, sync_status)
+                 -- ✅ 2026-10-05：**已落地**（Drift schemaVersion 4 → 5：重建
+                 --   `treatment_records`、删掉 `record_items` 表），payload 换成 `body`；
+                 --   **111 个本地测试全部通过**。
+                 -- ★ 与本地表有**三处刻意的差异**，不是笔误：
+                 --   · 本地**没有** `span_seq` —— 它只服务服务端的评估文书挂靠，
+                 --     客户端从 `/records/form` 拿 `pending_document` 就够，无需本地判断；
+                 --   · 本地**多留** `is_temporary` / `original_therapist_id` 两列 ——
+                 --     旧列的列位，服务端已于迁移 011 删除（`is_temporary` 改为查询时推导）。
+                 --     本地现不再写入有意义的值（恒 false / NULL），保留是为了不动已发出去的
+                 --     表结构；`app/lib/data/local/tables.dart` 的注释里写明了这一点。
+                 --   · 纯服务端的 `created_at` / `submitted_at` / `updated_at` / `locked_at`
+                 --     不在本地镜像。
 
 change_queue(client_uuid PK, entity, op, base_revision, payload_json,
              sync_status, retry_count, last_error, created_at)
 
 sync_state(key PK, value)     -- last_cursor / last_patient_sync_at / last_full_sync_at
-ref_cache(key PK, payload, fetched_at, etag)
 ```
 
 **要点**：
@@ -360,10 +398,12 @@ ref_cache(key PK, payload, fetched_at, etag)
    本地新建时先用临时负数 id 或本地 UUID，服务端确认后回写真实 id。
 2. `client_uuid` 建唯一索引（服务端也有 `ux_record_client_uuid` 对应）。
 3. **不要**在本地复制 `change_log`；只存 `last_cursor`。
-4. 已不可见的患者（出院）**软标记**，不要级联删除本地记录（§2）。
+4. 已不可见的患者（出院 / 待出院）**软标记**，不要级联删除本地记录（§2）。
 5. **不要**再建 `appointments` 镜像表：排期功能已删除，本地库 schemaVersion 由 **2 升到 3**
    （删除整张表 + 删除 `treatment_records.appointment_id` 列）；2026-10-05 再升到 **4**
    （删除 `patients.visibility_state` 列 —— 临时指派删除后该列已退化）。
+   **本轮（SOAP 改造）已升到 5**：`treatment_records` 换成上面的新列、
+   删掉 `record_items` 表 —— 这一步**已落地**（**111 个本地测试全部通过**）。
 6. `scope=temp` **已删除**（2026-10-05）：服务端患者列表的 `Scope` 只剩
    `mine` / `unassigned` / `all` / `visible` / `dept`，记录与时间轴只剩 `mine` / `visible`；
    App 的时间轴枚举也只有 `visible` / `mine` 两个。
@@ -377,8 +417,8 @@ ref_cache(key PK, payload, fetched_at, etag)
 ```
 1. 登录 → 存 access/refresh token（refresh 进安全存储，见下）
 2. GET /sync/info                → 确认 pushable / max_push_batch / limit
-3. 拉参考数据（整包 JSON 缓存）：
-   GET /dict/tree · GET /response-defs/grouped · GET /templates · GET /option-sets
+3. 取"当前该填哪份文书、字段长什么样"（记录模板不进同步通道）：
+   GET /records/form?patient_no=…&discipline=PT[&kind=discharge]
 4. 首次全量同步（按实体过滤，直到 has_more=false）：
    GET /sync/pull?cursor=0&entities=treatment_record&limit=500 × N
 5. 拉患者列表（分页，直到取完）：
@@ -403,6 +443,9 @@ access token 只放内存。自签 CA 用 Dart 层 `SecurityContext` 注入，**
 | 给自己的患者之外的治疗师写记录 | 403 | `RECORD_OTHER_THERAPIST` | 只能以自己名义写 |
 | 记录已锁定 | 403 | `RECORD_LOCKED` | 提示"已锁定，需管理员" |
 | 患者不可见（已出院） | 403 | `PATIENT_NOT_VISIBLE` | 刷新患者列表，提示可能已出院 |
+| 缺评估文书（首评 / 复评）—— **离线推送同样会被拒** | 409 | `MISSING_ASSESSMENT` | 提示治疗师"先补评估文书"（`details.missing_document_label` 给中文名），**不要无限重推** |
+| 同一天同一大类第 3 条 | 409 | `CONFLICT` | 提示"同一天同一大类至多 2 条" |
+| 患者处于待出院（已提交出院小结） | 409 | `PATIENT_PENDING_DISCHARGE` | 提示"该患者已提交出院小结，不能再记新记录" |
 
 > ~~排期命中休息块 / 请假 → 409~~ 这一类错误**已随排期功能删除**（2026-10-05），不会再有。
 
@@ -440,6 +483,30 @@ access token 只放内存。自签 CA 用 Dart 层 `SecurityContext` 注入，**
 4. 本地镜像表：`patients.visibility_state` 列**已删除**（schemaVersion 3 → 4）；
    `change_log` 里 `entity='temporary_assignment'` 的历史游标由 009 **删除**。
 
+### 2026-10-05（第三步）：治疗记录改为 SOAP 模板驱动
+
+**改变了 payload 的形状，而且给离线推送加了一道门禁**：
+
+1. **payload 换成 SOAP 契约**：`items`（主项目 / 子项目 / 参数）与
+   `session_period`（半日，已删除）、`duration_min`（时长，已删除）、
+   `patient_response`（患者反应，已删除）—— 这四个旧字段**全部删除**（迁移 011）——
+   改为 `discipline` / `kind` / `body`（`{field_key: value}`）；
+   `rendered_text`、`seq_no`、`span_seq` 由服务端算（§4.3）。
+2. **★ 硬阻断在离线推送时同样生效**（§4.3.1）：`_push_treatment_record` 直接调用
+   `treatment_model.create_record()`，缺首评 / 缺复评 / 同日至多 2 条 / 待出院
+   **都会被 409 拦下**，而且这个 409 会让**整个请求**失败。离线不是绕过门禁的后门。
+3. **拉取 payload 也换了**：`rendered_text` 是服务端冻结的 SOAP 纯文本，
+   客户端**不得**自己重算后覆盖（§5.4）。
+4. **参考数据不再走同步**：字典 / 选项集 / 反应定义 / 科室模板四类实体
+   **已随迁移 011/012 删除**，模板只是 `templates/*.json` 文件（§7.1）。
+
+**未变**：幂等（`client_uuid`）、游标（`change_log.id`）、冲突分层、批量上限、
+`base_revision` 语义、"患者不走 pull"（§1）。
+
+> ⚠ 已知残留：`GET /sync/info` 的 `conflict_policy` 里**还剩一个 `"dictionary"` 键**
+> （`app/schemas/sync.py`）。字典类实体在迁移 011/012 之后既不可推也不可拉，
+> 这个键已经没有对应实体了；清理它要动 `backend/app/**` 行为代码，本轮**只报告不修改**。
+
 ### 2026-10-03：全科白板
 
 本次"全科白板 + 半日格子不互斥"的变更**改变了**：
@@ -462,3 +529,5 @@ access token 只放内存。自签 CA 用 Dart 层 `SecurityContext` 注入，**
 | 3 | `docs/api.md` / `docs/data-model.md` | 仍未创建；接口契约可直接用 `/openapi.json` 导出 |
 | 4 | 冲突解决 UI 形态 | **已落地**（App 冲突列表 +「保留我的 / 采用服务端」两向裁决，见 `CHANGELOG.md`）；文案与交互仍以现场反馈为准 |
 | 5 | 患者离线认领 | 当前推送 `patient` 会 422；床旁现场认领是否要离线支持待定 |
+| 6 | **安卓端（`app/`）已适配 SOAP 契约 —— 已完成** | 本地 Drift 表升到 **schemaVersion 5**（`treatment_records` 换成 §7.2 的新列、`record_items` 表**删掉**）、同步 payload 换成 `body`、记录页改为一屏 chip；**111 个本地测试全部通过**（`flutter analyze` 无问题、`flutter build apk --debug` 成功） |
+| 7 | `conflict_policy` 里的 `"dictionary"` 残留键 | 见 §10 的 2026-10-05（第三步）说明；需改 `app/schemas/sync.py` |
