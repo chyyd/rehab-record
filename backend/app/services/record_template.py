@@ -244,6 +244,79 @@ def pending_documents(seq_no: int) -> list[str]:
     return [] if kind == "daily" else [kind]
 
 
+def required_document_for_next(seq_no: int) -> str | None:
+    """要记「第 `seq_no` 次日常记录」，**先**必须完成哪份评估文书。
+
+    用户 2026-10-05（三条都选「不能跳过」）：
+      「1A。2不能。3不能。」
+    即点击大类后**先弹评估文书**，填完再填当天的日常记录；三者都是硬阻断。
+
+    评估文书与它对应的日常记录**绑定在同一个序号**上，所以「是否已完成」的判定是
+    「存在区间标识 = 本序号的该形态记录吗」，由调用方查库后把集合传进来。
+
+    - 第 1 次日常 → 必须先有 `initial`（区间标识 1）
+    - 第 21、41、61… 次日常 → 必须先有 `reassessment`（区间标识 21/41/61…）
+    - 其余 → None（直接记日常）
+
+    >>> required_document_for_next(1)
+    'initial'
+    >>> required_document_for_next(2) is None
+    True
+    >>> required_document_for_next(21)
+    'reassessment'
+    """
+    if seq_no <= 1:
+        return "initial"
+    if (seq_no - 1) % REASSESS_EVERY == 0:
+        return "reassessment"
+    return None
+
+
+def assessment_span_seq(seq_no: int) -> int:
+    """评估文书要挂在哪个日常序号上（= 它对应的那一次日常）。
+
+    - 首评 → 1
+    - 复评 → 21 / 41 / 61…（就是触发它的那个日常序号）
+
+    这样「该序号下有没有这份文书」就是一个简单查询，不需要额外状态。
+    """
+    if seq_no <= 1:
+        return 1
+    if (seq_no - 1) % REASSESS_EVERY == 0:
+        return seq_no
+    # 落在两次复评之间：归属到最近一次复评点（唯一的复评点为 21、41、61…）
+    return ((seq_no - 1) // REASSESS_EVERY) * REASSESS_EVERY + 1
+
+
+def next_session_gate(
+    next_seq: int,
+    *,
+    has_initial: bool,
+    reassessment_spans: set[int] | None = None,
+) -> str | None:
+    """记「第 `next_seq` 次日常」之前还缺哪份文书（None = 可以记）。
+
+    `reassessment_spans` 是**已存在的复评**所挂的序号集合
+    （即 `[r.span_seq for r in 该大类的复评记录]`）。
+
+    >>> next_session_gate(1, has_initial=False)
+    'initial'
+    >>> next_session_gate(1, has_initial=True) is None
+    True
+    >>> next_session_gate(21, has_initial=True, reassessment_spans=set())
+    'reassessment'
+    >>> next_session_gate(21, has_initial=True, reassessment_spans={21}) is None
+    True
+    """
+    missing = required_document_for_next(next_seq)
+    if missing is None:
+        return None
+    if missing == "initial":
+        return None if has_initial else "initial"
+    spans = reassessment_spans or set()
+    return None if assessment_span_seq(next_seq) in spans else "reassessment"
+
+
 def sessions_until_reassessment(seq_no: int) -> int:
     """还差几次**日常记录**到下一次复评（已到点则为 0）。界面用来显示「12/20」。"""
     if seq_no < 1:

@@ -125,6 +125,41 @@ def main() -> int:
 
     print()
     print("=" * 78)
+    print("三点五、硬阻断门禁（用户 2026-10-05：「1A。2不能。3不能。」）")
+    print("=" * 78)
+    print("  点大类后先弹评估文书，填完才进当天的日常记录；三份文书都不能跳过。")
+    print()
+    print("  第 N 次日常   还缺哪份文书")
+    _gate_cases = [
+        (1, False, set(), "initial"),
+        (1, True, set(), None),
+        (2, True, set(), None),
+        (20, True, set(), None),
+        (21, True, set(), "reassessment"),
+        (21, True, {21}, None),
+        (22, True, {21}, None),
+        (41, True, {21}, "reassessment"),
+        (41, True, {21, 41}, None),
+        (61, True, {21, 41}, "reassessment"),
+    ]
+    for seq, has_initial, spans, want in _gate_cases:
+        got = rt.next_session_gate(seq, has_initial=has_initial, reassessment_spans=spans)
+        mark = OK if got == want else BAD
+        if got != want:
+            failures.append(
+                f"next_session_gate({seq}, initial={has_initial}, spans={spans}) = {got}，期望 {want}")
+        print(f"{mark} 第 {seq:>3} 次    {got or '（可记）'}")
+
+    # 评估挂在哪个序号上 —— 决定「该序号下有没有这份文书」这个查询
+    _span_cases = {1: 1, 2: 1, 20: 1, 21: 21, 22: 21, 40: 21, 41: 41, 61: 61}
+    for seq, want in _span_cases.items():
+        got = rt.assessment_span_seq(seq)
+        if got != want:
+            failures.append(f"assessment_span_seq({seq}) = {got}，期望 {want}")
+    print(f"{OK} 评估区间标识：首评挂序号 1，复评挂 21/41/61…（便于查『本序号有没有这份文书』）")
+
+    print()
+    print("=" * 78)
     print("四、实际渲染（这才是『输出也用类似格式』的样子）")
     print("=" * 78)
 
