@@ -4,12 +4,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:rehab_app/features/auth/auth_controller.dart';
 import 'package:rehab_app/features/patients/patient_list_page.dart';
 import 'package:rehab_app/features/patients/patients_providers.dart';
+import 'package:rehab_app/features/schedule/schedule_page.dart';
 import 'package:rehab_app/features/settings/settings_page.dart';
 
 /// 主界面外壳：底部导航 + 顶部同步状态。
 ///
-/// 一期只放两个页签（患者 / 我的）。排期页、记录页、汇总页按 `app/README.md`
-/// 的竖切计划逐步加入，不预先塞空占位页——空页签会让人以为功能坏了。
+/// 页签按竖切顺序逐步加：患者 → 排期 → （记录 / 时间轴 / 汇总待做）。
+/// 不预先塞空占位页 —— 空页签会让人以为功能坏了。
 class HomeShell extends ConsumerStatefulWidget {
   const HomeShell({super.key});
 
@@ -20,6 +21,8 @@ class HomeShell extends ConsumerStatefulWidget {
 class _HomeShellState extends ConsumerState<HomeShell> {
   int _index = 0;
 
+  static const _titles = ['患者', '排期', '我的'];
+
   @override
   Widget build(BuildContext context) {
     final sync = ref.watch(patientSyncControllerProvider);
@@ -27,8 +30,9 @@ class _HomeShellState extends ConsumerState<HomeShell> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(_index == 0 ? '患者' : '我的'),
+        title: Text(_titles[_index]),
         actions: [
+          // 患者页的同步按钮只作用于患者与记录；排期页自带刷新（它按周取数）。
           if (_index == 0)
             IconButton(
               tooltip: '同步',
@@ -44,7 +48,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
                   : const Icon(Icons.sync),
             ),
         ],
-        bottom: sync.message == null
+        bottom: _index != 0 || sync.message == null
             ? null
             : PreferredSize(
                 preferredSize: const Size.fromHeight(28),
@@ -58,7 +62,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
       ),
       body: IndexedStack(
         index: _index,
-        children: const [PatientListPage(), SettingsPage()],
+        children: const [PatientListPage(), SchedulePage(), SettingsPage()],
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _index,
@@ -68,6 +72,11 @@ class _HomeShellState extends ConsumerState<HomeShell> {
             icon: Icon(Icons.people_outline),
             selectedIcon: Icon(Icons.people),
             label: '患者',
+          ),
+          const NavigationDestination(
+            icon: Icon(Icons.calendar_month_outlined),
+            selectedIcon: Icon(Icons.calendar_month),
+            label: '排期',
           ),
           NavigationDestination(
             icon: const Icon(Icons.person_outline),

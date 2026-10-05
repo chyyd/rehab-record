@@ -6,6 +6,7 @@ import 'package:rehab_app/data/local/token_store.dart';
 import 'package:rehab_app/data/remote/api_client.dart';
 import 'package:rehab_app/data/remote/auth_service.dart';
 import 'package:rehab_app/data/repo/patient_repository.dart';
+import 'package:rehab_app/data/repo/schedule_repository.dart';
 import 'package:rehab_app/sync/sync_engine.dart';
 
 /// App 启动时构造好的一组长期存活对象。
@@ -22,6 +23,7 @@ class AppServices {
     required this.auth,
     required this.db,
     required this.patients,
+    required this.schedule,
     required this.sync,
   });
 
@@ -31,6 +33,7 @@ class AppServices {
   final AuthService auth;
   final AppDatabase db;
   final PatientRepository patients;
+  final ScheduleRepository schedule;
   final SyncEngine sync;
 
   Future<void> dispose() async {
@@ -78,6 +81,7 @@ Future<AppServices> _buildServices(Ref ref) async {
     refreshToken: () => auth.refresh(),
   );
   auth = AuthService(client: client, tokens: tokens);
+  final sync = SyncEngine(client: client, db: db);
 
   // 自签 CA 必须在第一个请求之前装好。
   await client.loadTrustedCa();
@@ -94,7 +98,8 @@ Future<AppServices> _buildServices(Ref ref) async {
     auth: auth,
     db: db,
     patients: PatientRepository(client: client, db: db),
-    sync: SyncEngine(client: client, db: db),
+    schedule: ScheduleRepository(client: client, db: db, sync: sync),
+    sync: sync,
   );
 }
 
