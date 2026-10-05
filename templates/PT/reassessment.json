@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "discipline": "PT",
+  "kind": "reassessment",
+  "title": "康复阶段性复评记录（PT运动）",
+  "trigger": { "every_n": 20, "mandatory": true },
+
+  "$comment": [
+    "★ 本模板的客观字段（o 段）**与 initial.json 共用同一套 key** ——",
+    "  这是『每 20 次复评』能自动算出功能变化、出院小结能自动汇总",
+    "  『下肢肌力 2级→3级、坐位平衡 Ⅱ→Ⅲ级』的**前提**。",
+    "  改这里的 key 必须同步改 initial.json，否则汇总会静默失效。",
+    "",
+    "★ prefill=last_assessment：进来时自动带出该大类上一次的评估值（首评或上次复评），",
+    "  治疗师只改变化的项 —— 复评从『重填 40 项』变成『改 5-8 项』。"
+  ],
+
+  "soap": [
+    {
+      "key": "s", "label": "S", "heading": "主观资料", "inline": false,
+      "fields": [
+        { "key": "subjective_change", "type": "multi", "label": "患者/家属诉",
+          "options": ["患肢力量较前明显改善", "稍有改善", "无变化",
+                      "站立稳定性变好", "站立稳定性无变化"], "prefill": "last_assessment" },
+        { "key": "fatigue", "type": "single", "label": "训练后疲劳感",
+          "options": ["轻度", "明显", "无"], "prefill": "last_assessment" },
+        { "key": "vas", "type": "number", "label": "疼痛VAS", "unit": "分", "prefill": "last_assessment" },
+        { "key": "dizziness", "type": "single", "label": "有无头晕不适",
+          "options": ["无", "有"], "prefill": "last_assessment" },
+        { "key": "family_demand", "type": "text", "label": "家属诉求",
+          "hint": "例：继续练习步行训练" }
+      ]
+    },
+    {
+      "key": "o", "label": "O", "heading": "客观资料", "inline": false,
+      "fields": [
+        { "key": "mmt_upper", "type": "number", "label": "肌力MMT 上肢", "unit": "级", "prefill": "last_assessment" },
+        { "key": "mmt_lower", "type": "number", "label": "肌力MMT 下肢", "unit": "级", "prefill": "last_assessment" },
+        { "key": "ashworth", "type": "single", "label": "肌张力Ashworth", "prefill": "last_assessment",
+          "options": ["0级", "1级", "1+级", "2级", "3级", "4级"] },
+        { "key": "sit_balance", "type": "single", "label": "坐位平衡", "prefill": "last_assessment",
+          "options": ["Ⅰ级", "Ⅱ级", "Ⅲ级"] },
+        { "key": "stand_balance", "type": "single", "label": "站立平衡", "prefill": "last_assessment",
+          "options": ["无法站立", "Ⅰ级", "Ⅱ级", "Ⅲ级"] },
+        { "key": "transfer", "type": "single", "label": "床椅转移", "prefill": "last_assessment",
+          "options": ["完全辅助", "部分辅助", "监护独立", "完全独立"] },
+        { "key": "fall_risk", "type": "single", "label": "跌倒风险", "prefill": "last_assessment",
+          "options": ["高风险", "中风险", "低风险"] },
+        { "key": "rom", "type": "single", "label": "关节活动度", "prefill": "last_assessment",
+          "options": ["正常", "轻度受限", "中度受限", "重度受限"] },
+        { "key": "gait", "type": "single", "label": "步行能力", "prefill": "last_assessment",
+          "options": ["无步行能力", "辅助步行", "独立步行"] },
+        { "key": "vital_signs", "type": "single", "label": "生命体征",
+          "options": ["平稳", "波动"], "prefill": "last_assessment" }
+      ]
+    },
+    {
+      "key": "a", "label": "A", "heading": "评估分析", "inline": false,
+      "fields": [
+        { "key": "prev_goal", "type": "single", "label": "前期短期目标",
+          "options": ["已完成", "基本完成", "未完成"] },
+        { "key": "impairment", "type": "single", "label": "功能障碍程度", "prefill": "last_assessment",
+          "options": ["重度", "中度", "轻度"] },
+        { "key": "core_problem", "type": "multi", "label": "现存核心问题", "prefill": "last_assessment",
+          "options": ["下肢负重耐力不足", "站立稳定性欠佳", "步态异常",
+                      "肌力不足", "躯干核心差", "患侧负重不足"] },
+        { "key": "potential", "type": "single", "label": "康复潜力",
+          "options": ["持续良好", "一般", "较差"], "prefill": "last_assessment" },
+        { "key": "goal_long", "type": "text", "label": "更新长期目标",
+          "hint": "例：出院可监护下室内独立步行，自主完成转移，居家安全活动" },
+        { "key": "goal_short", "type": "text", "label": "更新短期目标（下2周）",
+          "hint": "例：监护下独立站立，可辅助短距离步行" }
+      ]
+    },
+    {
+      "key": "p", "label": "P", "heading": "康复计划", "inline": false,
+      "fields": [
+        { "key": "therapy_items", "type": "multi", "label": "本次训练项目", "required": true,
+          "options_source": "therapy_options", "prefill": "last_daily" },
+        { "key": "adjustment", "type": "text", "label": "调整训练方案",
+          "hint": "例：保留肌力平衡训练，新增踏步/步态预备训练" },
+        { "key": "frequency", "type": "single", "label": "频次时长",
+          "options": ["每日1次，30min，每周5次", "每日1次，25min，每周5次"] },
+        { "key": "safety", "type": "multi", "label": "安全要点",
+          "options": ["步行训练全程陪护", "严防跌倒", "控制训练负荷", "避免异常拖拽步态"] },
+        { "key": "education", "type": "multi", "label": "宣教",
+          "options": ["纠正站立姿势", "家属训练时做好防护", "良肢位摆放"] },
+        { "key": "next_review", "type": "single", "label": "下次复评",
+          "options": ["2周后", "再20次治疗后"], "prefill": "last_assessment" }
+      ]
+    }
+  ],
+
+  "footer": ["治疗师签名：__________"]
+}

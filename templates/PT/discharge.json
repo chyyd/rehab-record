@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "discipline": "PT",
+  "kind": "discharge",
+  "title": "康复出院小结（PT运动）",
+  "trigger": { "mandatory": true },
+
+  "$comment": [
+    "★ 按用户 2026-10-05 的决定：『B 生成时自动汇总，治疗师通过选项补充「出院指导」等几段』。",
+    "  所以那份范文里的『患者自诉肢体力量明显恢复…』**不由治疗师手打**，",
+    "  而是由系统从首评 → 历次复评 → 末次日常自动汇总（auto: latest_vs_initial）。",
+    "  治疗师只补：出院时功能状态（少数几项）、遗留问题、出院指导 4 段。",
+    "",
+    "★ o 段仍然**共用 initial/reassessment 的 key**，出院时再评一次，便于与首评对比。",
+    "",
+    "★ 本表由『出院』按钮进入；提交后患者置 pending_discharge（对普通治疗师不可见），",
+    "  管理员确认或满 7 天后真正出院（用户要求：防止患者临时反悔）。"
+  ],
+
+  "soap": [
+    {
+      "key": "s", "label": "S", "heading": "主观资料", "inline": false,
+      "fields": [
+        { "key": "summary", "type": "text", "label": "治疗过程汇总", "auto": "latest_vs_initial",
+          "hint": "自动生成，只读：住院期间共治疗 N 次、首评→最近复评的功能变化" },
+        { "key": "subjective_change", "type": "multi", "label": "出院时患者自诉",
+          "options": ["肢体力量明显恢复", "站立行走稳定性改善", "无明显变化",
+                      "活动耐力提升", "活动耐力一般", "无持续肢体疼痛"] },
+        { "key": "vas", "type": "number", "label": "疼痛VAS", "unit": "分" },
+        { "key": "home_activity", "type": "single", "label": "居家活动能力",
+          "options": ["可在家属监护下室内活动", "可独立室内活动", "需轮椅辅助"] }
+      ]
+    },
+    {
+      "key": "o", "label": "O", "heading": "客观资料", "inline": false,
+      "fields": [
+        { "key": "mmt_upper", "type": "number", "label": "患肢肌力MMT 上肢", "unit": "级" },
+        { "key": "mmt_lower", "type": "number", "label": "患肢肌力MMT 下肢", "unit": "级" },
+        { "key": "sit_balance", "type": "single", "label": "坐位平衡",
+          "options": ["Ⅰ级", "Ⅱ级", "Ⅲ级"] },
+        { "key": "stand_balance", "type": "single", "label": "站立平衡",
+          "options": ["无法站立", "Ⅰ级", "Ⅱ级", "Ⅲ级"] },
+        { "key": "transfer", "type": "single", "label": "床椅、坐站转移",
+          "options": ["完全辅助", "部分辅助", "监护独立", "完全独立"] },
+        { "key": "gait", "type": "single", "label": "移动能力",
+          "options": ["监护下独立室内步行", "辅助步行", "独立步行", "无步行能力"] },
+        { "key": "fall_risk", "type": "single", "label": "跌倒风险",
+          "options": ["高风险", "中风险", "低风险"] }
+      ]
+    },
+    {
+      "key": "a", "label": "A", "heading": "评估分析", "inline": false,
+      "fields": [
+        { "key": "goal_achieved", "type": "single", "label": "本次住院康复长期目标",
+          "options": ["基本达成", "部分达成", "未达成"] },
+        { "key": "improvement", "type": "multi", "label": "功能改善情况",
+          "options": ["运动能力显著改善", "平衡能力显著改善", "转移能力显著改善", "日常生活能力提升"] },
+        { "key": "residual", "type": "multi", "label": "遗留问题",
+          "options": ["步行耐力不足，长时间活动易疲劳", "精细动作仍需辅助",
+                      "平衡稳定性仍需巩固", "肌力未完全恢复"] },
+        { "key": "discharge_goal", "type": "text", "label": "出院康复目标",
+          "hint": "例：维持现有运动功能，逐步提升步行耐力，安全进行居家活动" }
+      ]
+    },
+    {
+      "key": "p", "label": "P", "heading": "出院指导", "inline": false,
+      "fields": [
+        { "key": "home_training", "type": "multi", "label": "1.居家训练项目",
+          "options": ["肌力训练", "平衡训练", "步态训练", "关节活动度训练", "耐力训练"] },
+        { "key": "home_frequency", "type": "single", "label": "1.1 居家训练频次",
+          "options": ["每日2次，每次20min", "每日1次，每次30min", "每日1次，每次20min"] },
+        { "key": "safety_note", "type": "multi", "label": "2.安全注意",
+          "options": ["起身、转身动作缓慢", "避免劳累", "避免快速变换体位", "家属陪同训练"] },
+        { "key": "home_management", "type": "multi", "label": "3.居家管理",
+          "options": ["坚持良肢位摆放", "监测肢体痉挛情况", "防跌倒环境改造", "规律作息"] },
+        { "key": "follow_up", "type": "single", "label": "4.复诊建议",
+          "options": ["康复科门诊定期复诊评估功能", "1个月后康复科门诊复查", "2周后门诊复查"] }
+      ]
+    }
+  ],
+
+  "footer": ["治疗师签名：__________"]
+}

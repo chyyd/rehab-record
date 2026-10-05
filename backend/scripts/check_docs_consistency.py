@@ -15,7 +15,8 @@
 | 视图 `v_patient_next_appointment` | 视图 `v_patient_last_treated`（只统计 `submitted`） |
 | `treatment_record` 的 `is_temporary` / `appointment_id` 列 | 三列已删；`is_temporary` 改为查询时推导 |
 | "设计.md 两条半日不变量" | 这两条不变量在文档里**不得再作为现行规则**出现 |
-| —— | **新增**：`设计.md` / `README.md` / `开发计划.md` 里**不得出现**已删死代码 `covers_patient`（连"已删除"留痕也不写名字 —— 按"标记行"放行的旧断言抓不住"直接当现行函数写"的漂移） |
+| —— | **新增**：`设计.md` / `README.md` / `开发计划.md` 里**不得出现**已删死代码 `covers_patient` |
+|  | （连"已删除"留痕也不写名字 —— 按"标记行"放行的旧断言抓不住"直接当现行函数写"的漂移） |
 | 接口数 / 待办数字 | 直接数路由注册与验收脚本，与文档里的数字对账 |
 
 ## 2026-10-05（第二步）：临时指派（`temporary_assignment`）彻底删除
@@ -35,7 +36,8 @@
 | 唯一索引 `ux_temp_assign_open` 仍在 | 该索引随表在 009 消失（001 里的定义是历史事实） |
 | 视图 `v_open_temporary_assignment` 存在 | 009 删掉它；`v_patient_visibility` 保留（简化版） |
 | 迁移枚举 `temp status` | —— 该枚举已无任何现行存储列承载 |
-| —— | **新增**：`visibility_from()` 里不再有 `temp` scope；`Scope` Literal 不含 `temp`；`patient.py` 的 `VISIBILITY_VIEW_SQL` 与 009 逐字一致 |
+| —— | **新增**：`visibility_from()` 里不再有 `temp` scope；`Scope` Literal 不含 `temp`； |
+|  | `patient.py` 的 `VISIBILITY_VIEW_SQL` 与 010 逐字一致 |
 
 > ⚠ **文档已同步（2026-10-05 收尾）**：`设计.md` / `开发计划.md` / `README.md` /
 > `docs/sync-protocol.md` / `docs/setup.md` / `app/README.md` 里"`temporary_assignment` 保留"

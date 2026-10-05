@@ -1,0 +1,221 @@
+{
+  "$comment": [
+    "康复记录模板格式定义（JSON Schema，draft-07 子集）。",
+    "",
+    "一份模板 = 一个大类 × 一种形态。四大类 × 四形态 = 16 份。",
+    "",
+    "★ 设计原则：**同一份 JSON 既驱动『填』也驱动『印』**。",
+    "  表单从 fields 渲染，SOAP 文本也从同样的 fields 渲染 ——",
+    "  这样不可能出现『界面改了、打印没跟上』的漂移（这是旧表格方案最大的隐患）。",
+    "",
+    "★ 历史病历不随模板变：记录落库时把渲染好的文本**冻结**存下来（rendered_text）。",
+    "  否则你以后手改模板，会把旧病历的措辞一起改掉 —— 病历是法律文书，不行。"
+  ],
+
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "康复记录模板",
+  "type": "object",
+  "required": ["version", "discipline", "kind", "title", "soap"],
+  "additionalProperties": false,
+
+  "properties": {
+    "version": {
+      "type": "integer",
+      "description": "模板版本。改内容时递增；记录会存下当时用的版本号，便于追溯。"
+    },
+    "discipline": {
+      "type": "string",
+      "enum": ["PT", "OT", "ST_SW", "ST_SP"],
+      "description": "大类：PT运动 / OT生活技能 / ST_SW吞咽 / ST_SP言语。必须存在于 disciplines.json。"
+    },
+    "kind": {
+      "type": "string",
+      "enum": ["initial", "daily", "reassessment", "discharge"],
+      "description": [
+        "形态。触发规则：",
+        "  initial       该大类第 1 次治疗，**强制**（首评不能后补，见下）",
+        "  daily         其余每一次",
+        "  reassessment  该大类每满 20 次后的一次（第 21、41、61… 次）",
+        "  discharge     点『出院』时"
+      ]
+    },
+    "title": {
+      "type": "string",
+      "description": "打印/输出的标题，如『康复治疗记录（PT运动）』。"
+    },
+    "subtitle": {
+      "type": "string",
+      "description": "可选副标题，出现在标题下方。"
+    },
+
+    "trigger": {
+      "type": "object",
+      "description": "触发条件（仅 reassessment 需要显式写；由后端与 App 共同读取）。",
+      "additionalProperties": false,
+      "properties": {
+        "every_n": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "每 N 次之后触发一次。复评填 20。"
+        },
+        "mandatory": {
+          "type": "boolean",
+          "description": "true = 必须填（首评、复评、出院小结都为 true）。"
+        }
+      }
+    },
+
+    "soap": {
+      "type": "array",
+      "minItems": 1,
+      "description": [
+        "SOAP 四段。顺序即输出顺序。",
+        "输出时每段渲染成【S 主观资料】这样的行首标签，后面跟各字段。"
+      ],
+      "items": {
+        "type": "object",
+        "required": ["key", "label", "heading", "fields"],
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "type": "string",
+            "enum": ["s", "o", "a", "p"],
+            "description": "段标识。s/o/a/p 各只应出现一次。"
+          },
+          "label": {
+            "type": "string",
+            "description": "输出用的短标签，如『S』『O』『A』『P』。"
+          },
+          "heading": {
+            "type": "string",
+            "description": "输出用的中文段名，如『主观资料』『客观资料』。"
+          },
+          "inline": {
+            "type": "boolean",
+            "default": false,
+            "description": [
+              "true = 该段输出成**一行**（用『；』连接字段），用于日常记录的 S/O/A/P；",
+              "false = 该段输出成**多行**（每个字段一行），用于首评/复评/出院的完整版。",
+              "日常记录很短，一行更好读；完整版字段多，一行会挤成一大坨。"
+            ]
+          },
+          "fields": {
+            "type": "array",
+            "minItems": 1,
+            "items": { "$ref": "#/definitions/field" }
+          }
+        }
+      }
+    },
+
+    "footer": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": [
+        "输出末尾的固定行，如『治疗师签名：__________』。",
+        "★ 签名由独立签字系统承担（用户 2026-10-05：『时长和具体时间在独立的签字系统里，不在本系统中考虑』），",
+        "  所以这里只出占位符，本系统不采集签名。"
+      ]
+    }
+  },
+
+  "definitions": {
+    "field": {
+      "type": "object",
+      "required": ["key", "type", "label"],
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "description": [
+            "字段标识，进 body_json 的键。",
+            "★ **首评与复评的客观字段必须用同一套 key** —— 这是『每 20 次复评』能自动算出",
+            "  功能变化、出院小结能自动汇总『肌力 2 级→3 级』的前提。"
+          ]
+        },
+        "type": {
+          "type": "string",
+          "enum": ["single", "multi", "number", "text"],
+          "description": [
+            "single  单选项，一行 chip，点一下选中（模板里的『清晰/嗜睡/意识模糊』）",
+            "multi   多选项，可多选（『本次训练项目』『核心功能问题』）",
+            "number  数值填空（『疼痛VAS：__分』『上肢__级』）",
+            "text    自由文字（『长期目标』这种一句话）"
+          ]
+        },
+        "label": {
+          "type": "string",
+          "description": "字段名，出现在输出里，如『疼痛VAS』。"
+        },
+        "unit": {
+          "type": "string",
+          "description": "数值单位，输出时贴在数字后面（『分』『级』『s』『min』）。"
+        },
+        "options": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": [
+            "single/multi 的候选值。",
+            "★ multi 的选项若来自 disciplines.json 的疗法清单，写 \"$therapy_options\" 占位符，",
+            "  由加载器替换 —— 这样改疗法清单只需改 disciplines.json 一处。",
+            "★ 后端会按『所有治疗师在所有患者中用过的次数』返回热度排序，App 据此把常用项排前。"
+          ]
+        },
+        "options_source": {
+          "type": "string",
+          "enum": ["therapy_options"],
+          "description": "从 disciplines.json 取该大类的疗法清单作为选项（替代内联 options）。"
+        },
+        "required": {
+          "type": "boolean",
+          "default": false,
+          "description": [
+            "true = 提交时必填。",
+            "★ 只给真正关键的项加（如功能诊断、训练项目），加太多会拖慢床旁录入。"
+          ]
+        },
+        "visible_in": {
+          "type": "array",
+          "items": { "type": "string", "enum": ["initial", "daily", "reassessment", "discharge"] },
+          "description": [
+            "可选：把该字段限制在某几种形态里出现。",
+            "用于『首评/复评共用同一个字段定义文件』的场景 —— 正常情况不用写。"
+          ]
+        },
+        "hint": {
+          "type": "string",
+          "description": "给治疗师的填写提示（只显示在界面上，不进输出文本）。"
+        },
+        "auto": {
+          "type": "string",
+          "enum": ["seq_no", "record_date", "total_sessions", "latest_vs_initial"],
+          "description": [
+            "自动填充来源（只读，治疗师改不了）：",
+            "  seq_no              第几次",
+            "  record_date         记录日期",
+            "  total_sessions      该大类累计次数",
+            "  latest_vs_initial   首评 vs 最近一次复评的功能变化（出院小结用，自动汇总）"
+          ]
+        },
+        "prefill": {
+          "type": "string",
+          "enum": ["last_assessment", "last_daily", "same_day_first"],
+          "description": [
+            "预填策略（用户 2026-10-05 确定）：",
+            "  last_assessment   取该大类**上一次的评估**（首评或上次复评）——复评/出院小结用",
+            "  last_daily        取该大类上一次日常记录的**本次训练项目**——日常记录只预填这一项",
+            "  same_day_first    取**同一天同大类第 1 条**的内容——第 2 条自动预填（用户要求）",
+            "★ 日常记录**只**预填训练项目：『自觉症状/疼痛VAS/配合度』这些每天都该重新判断，",
+            "  预填会变成『顺手不改』的假数据，损害病历质量。"
+          ]
+        },
+        "allow_other": {
+          "type": "boolean",
+          "default": false,
+          "description": "允许在选项之外自行填写（如『其他』）。"
+        }
+      }
+    }
+  }
+}

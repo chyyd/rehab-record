@@ -163,9 +163,7 @@ def main() -> int:
                            {"employee_no": "A001", "password": ADMIN_PW})
         _, t1_login = request("/api/v1/auth/login", "POST",
                               {"employee_no": "T001", "password": THERAPIST_PW})
-        _, t2_login = request("/api/v1/auth/login", "POST",
-                              {"employee_no": "T002", "password": THERAPIST_PW})
-        at, h1, h2 = admin["access_token"], t1_login["access_token"], t2_login["access_token"]
+        at, h1 = admin["access_token"], t1_login["access_token"]
 
         # 四名患者：S2A/S2B 归张三，S2C 归李四，S2D 未分配
         request("/api/v1/patients", "POST",
