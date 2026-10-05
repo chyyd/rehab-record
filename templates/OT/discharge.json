@@ -1,0 +1,190 @@
+{
+  "version": 1,
+  "discipline": "OT",
+  "kind": "discharge",
+  "title": "康复出院小结（OT生活技能）",
+  "trigger": {
+    "mandatory": true
+  },
+  "soap": [
+    {
+      "key": "s",
+      "label": "S",
+      "heading": "主观资料",
+      "fields": [
+        {
+          "key": "summary",
+          "type": "text",
+          "label": "治疗过程汇总",
+          "auto": "latest_vs_initial",
+          "hint": "自动生成，只读：共治疗 N 次、首评→最近复评的 ADL 变化"
+        },
+        {
+          "key": "subjective_change",
+          "type": "multi",
+          "label": "出院时患者自诉",
+          "options": [
+            "可独立完成进食",
+            "可独立完成穿衣",
+            "可独立完成洗漱",
+            "如厕可监护下完成",
+            "自理能力明显提高",
+            "疲劳感较轻"
+          ]
+        },
+        {
+          "key": "family_note",
+          "type": "text",
+          "label": "家属情况",
+          "hint": "例：家属掌握居家照护要点"
+        }
+      ]
+    },
+    {
+      "key": "o",
+      "label": "O",
+      "heading": "客观资料",
+      "fields": [
+        {
+          "key": "hand_function",
+          "type": "single",
+          "label": "手精细功能",
+          "options": [
+            "基本恢复",
+            "轻度受损",
+            "中度受损"
+          ],
+          "prefill": "last_assessment"
+        },
+        {
+          "key": "adl_level",
+          "type": "single",
+          "label": "基础ADL",
+          "options": [
+            "基本自理",
+            "少量辅助",
+            "部分辅助"
+          ]
+        },
+        {
+          "key": "complex_adl",
+          "type": "single",
+          "label": "复杂洗澡、外出活动",
+          "options": [
+            "独立",
+            "少量辅助",
+            "部分辅助"
+          ]
+        },
+        {
+          "key": "fim",
+          "type": "number",
+          "label": "FIM总分",
+          "unit": "分"
+        }
+      ]
+    },
+    {
+      "key": "a",
+      "label": "A",
+      "heading": "评估分析",
+      "fields": [
+        {
+          "key": "goal_achieved",
+          "type": "single",
+          "label": "住院OT康复目标",
+          "options": [
+            "基本达成",
+            "部分达成",
+            "未达成"
+          ]
+        },
+        {
+          "key": "improvement",
+          "type": "multi",
+          "label": "功能改善情况",
+          "options": [
+            "日常生活独立性明显提升",
+            "可适应居家环境"
+          ]
+        },
+        {
+          "key": "residual",
+          "type": "multi",
+          "label": "遗留短板",
+          "options": [
+            "长时间精细动作易疲劳",
+            "需居家持续练习维持功能"
+          ]
+        },
+        {
+          "key": "discharge_goal",
+          "type": "text",
+          "label": "出院康复目标",
+          "hint": "例：维持现有自理能力，持续强化手部精细动作"
+        }
+      ]
+    },
+    {
+      "key": "p",
+      "label": "P",
+      "heading": "出院指导",
+      "fields": [
+        {
+          "key": "home_training",
+          "type": "multi",
+          "label": "1.居家训练",
+          "options": [
+            "每日手部精细训练",
+            "生活化自理练习"
+          ]
+        },
+        {
+          "key": "home_frequency",
+          "type": "single",
+          "label": "1.1 居家训练频次",
+          "options": [
+            "每日2次，每次20min",
+            "每日1次，每次30min"
+          ]
+        },
+        {
+          "key": "life_education",
+          "type": "multi",
+          "label": "2.生活宣教",
+          "options": [
+            "日常起居尽量自主完成",
+            "减少家属代劳"
+          ]
+        },
+        {
+          "key": "precaution",
+          "type": "multi",
+          "label": "3.注意事项",
+          "options": [
+            "避免手部长时间负重",
+            "防止肌肉疲劳僵硬"
+          ]
+        },
+        {
+          "key": "follow_up",
+          "type": "single",
+          "label": "4.复诊建议",
+          "options": [
+            "定期康复科门诊复查手功能及ADL能力",
+            "1个月后门诊复查"
+          ]
+        },
+        {
+          "key": "extra_note",
+          "type": "text",
+          "label": "备注",
+          "hint": "选填。留空则记录里不显示这一项。"
+        }
+      ]
+    }
+  ],
+  "footer": [
+    "治疗师签名：__________"
+  ]
+}

@@ -1,0 +1,228 @@
+{
+  "version": 1,
+  "discipline": "ST_SW",
+  "kind": "discharge",
+  "title": "康复出院小结（吞咽）",
+  "trigger": {
+    "mandatory": true
+  },
+  "soap": [
+    {
+      "key": "s",
+      "label": "S",
+      "heading": "主观资料",
+      "fields": [
+        {
+          "key": "summary",
+          "type": "text",
+          "label": "治疗过程汇总",
+          "auto": "latest_vs_initial",
+          "hint": "自动生成，只读：共治疗 N 次、首评→最近复评的吞咽功能变化"
+        },
+        {
+          "key": "subjective_change",
+          "type": "multi",
+          "label": "出院时患者情况",
+          "options": [
+            "糊状半流质进食无呛咳",
+            "温水吞咽基本安全",
+            "无咽喉异物感",
+            "进食后无痰多胸闷"
+          ]
+        },
+        {
+          "key": "family_note",
+          "type": "multi",
+          "label": "家属",
+          "options": [
+            "掌握居家进食护理要点"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "o",
+      "label": "O",
+      "heading": "客观资料",
+      "fields": [
+        {
+          "key": "oral_motor",
+          "type": "single",
+          "label": "唇舌软腭运动",
+          "options": [
+            "基本正常",
+            "轻度异常",
+            "中度异常"
+          ]
+        },
+        {
+          "key": "swallow_reflex",
+          "type": "single",
+          "label": "吞咽反射",
+          "options": [
+            "灵敏",
+            "延迟",
+            "消失"
+          ],
+          "prefill": "last_assessment"
+        },
+        {
+          "key": "kubota",
+          "type": "single",
+          "label": "洼田饮水试验",
+          "options": [
+            "Ⅰ级",
+            "Ⅱ级",
+            "Ⅲ级",
+            "Ⅳ级",
+            "Ⅴ级"
+          ],
+          "prefill": "last_assessment"
+        },
+        {
+          "key": "oral_intake",
+          "type": "single",
+          "label": "经口进食情况",
+          "options": [
+            "可完全经口进食",
+            "部分经口+部分鼻饲",
+            "仍需鼻饲"
+          ]
+        },
+        {
+          "key": "tube",
+          "type": "single",
+          "label": "胃管",
+          "options": [
+            "已拔除胃管",
+            "保留胃管"
+          ]
+        },
+        {
+          "key": "residue",
+          "type": "single",
+          "label": "食物残留",
+          "options": [
+            "无残留",
+            "少量残留"
+          ]
+        },
+        {
+          "key": "aspiration_risk",
+          "type": "single",
+          "label": "误吸风险",
+          "options": [
+            "低风险",
+            "中风险",
+            "高风险"
+          ],
+          "prefill": "last_assessment"
+        }
+      ]
+    },
+    {
+      "key": "a",
+      "label": "A",
+      "heading": "评估分析",
+      "fields": [
+        {
+          "key": "goal_achieved",
+          "type": "single",
+          "label": "住院吞咽康复目标",
+          "options": [
+            "基本达成",
+            "部分达成",
+            "未达成"
+          ]
+        },
+        {
+          "key": "risk_change",
+          "type": "single",
+          "label": "误吸风险",
+          "options": [
+            "降至低风险",
+            "维持中风险",
+            "仍为高风险"
+          ]
+        },
+        {
+          "key": "residual",
+          "type": "multi",
+          "label": "远期注意",
+          "options": [
+            "需维持训练",
+            "不当进食仍存在呛咳复发可能"
+          ]
+        },
+        {
+          "key": "discharge_goal",
+          "type": "text",
+          "label": "出院康复目标",
+          "hint": "例：维持安全经口进食，规避误吸风险"
+        }
+      ]
+    },
+    {
+      "key": "p",
+      "label": "P",
+      "heading": "出院指导",
+      "fields": [
+        {
+          "key": "home_training",
+          "type": "multi",
+          "label": "1.居家训练",
+          "options": [
+            "每日坚持空吞咽",
+            "舌肌维持训练"
+          ]
+        },
+        {
+          "key": "home_frequency",
+          "type": "single",
+          "label": "1.1 居家训练频次",
+          "options": [
+            "每日2次，每次20min",
+            "每日1次，每次20min"
+          ]
+        },
+        {
+          "key": "diet_manage",
+          "type": "multi",
+          "label": "2.饮食管理",
+          "options": [
+            "循序渐进过渡饮食",
+            "细嚼慢咽",
+            "短期内忌坚硬、过烫食物"
+          ]
+        },
+        {
+          "key": "safety_tip",
+          "type": "multi",
+          "label": "3.安全提示",
+          "options": [
+            "进食保持端坐体位",
+            "出现反复呛咳及时就诊"
+          ]
+        },
+        {
+          "key": "follow_up",
+          "type": "single",
+          "label": "4.复诊建议",
+          "options": [
+            "1个月后康复科门诊复查吞咽功能",
+            "2周后门诊复查"
+          ]
+        },
+        {
+          "key": "extra_note",
+          "type": "text",
+          "label": "备注",
+          "hint": "选填。留空则记录里不显示这一项。"
+        }
+      ]
+    }
+  ],
+  "footer": [
+    "治疗师签名：__________"
+  ]
+}

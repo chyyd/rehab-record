@@ -1,0 +1,207 @@
+{
+  "version": 1,
+  "discipline": "ST_SP",
+  "kind": "discharge",
+  "title": "康复出院小结（言语）",
+  "trigger": {
+    "mandatory": true
+  },
+  "soap": [
+    {
+      "key": "s",
+      "label": "S",
+      "heading": "主观资料",
+      "fields": [
+        {
+          "key": "summary",
+          "type": "text",
+          "label": "治疗过程汇总",
+          "auto": "latest_vs_initial",
+          "hint": "自动生成，只读：共治疗 N 次、首评→最近复评的言语功能变化"
+        },
+        {
+          "key": "subjective_change",
+          "type": "multi",
+          "label": "出院时患者情况",
+          "options": [
+            "可主动开口交流",
+            "发音清晰",
+            "可表达饮食、不适等日常需求",
+            "可听懂家属日常对话",
+            "复杂长句理解仍稍费力"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "o",
+      "label": "O",
+      "heading": "客观资料",
+      "fields": [
+        {
+          "key": "articulation_organ",
+          "type": "single",
+          "label": "构音器官运动协调",
+          "options": [
+            "基本正常",
+            "轻度不协调",
+            "中度不协调"
+          ]
+        },
+        {
+          "key": "speech_clarity",
+          "type": "single",
+          "label": "单字、短句发音",
+          "options": [
+            "清晰",
+            "部分含糊",
+            "含糊"
+          ]
+        },
+        {
+          "key": "repetition",
+          "type": "single",
+          "label": "复述",
+          "options": [
+            "基本正常",
+            "部分障碍",
+            "完全不能复述"
+          ],
+          "prefill": "last_assessment"
+        },
+        {
+          "key": "naming",
+          "type": "single",
+          "label": "命名",
+          "options": [
+            "基本正常",
+            "部分障碍",
+            "完全不能命名"
+          ],
+          "prefill": "last_assessment"
+        },
+        {
+          "key": "comprehension",
+          "type": "single",
+          "label": "基础听理解",
+          "options": [
+            "基本正常",
+            "轻度障碍",
+            "中度障碍"
+          ],
+          "prefill": "last_assessment"
+        },
+        {
+          "key": "complex_expression",
+          "type": "single",
+          "label": "复杂长句表达",
+          "options": [
+            "存在卡顿",
+            "基本流畅"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "a",
+      "label": "A",
+      "heading": "评估分析",
+      "fields": [
+        {
+          "key": "goal_achieved",
+          "type": "single",
+          "label": "住院言语康复目标",
+          "options": [
+            "基本达成",
+            "部分达成",
+            "未达成"
+          ]
+        },
+        {
+          "key": "improvement",
+          "type": "multi",
+          "label": "功能改善情况",
+          "options": [
+            "基础沟通功能满足居家生活交流"
+          ]
+        },
+        {
+          "key": "residual",
+          "type": "multi",
+          "label": "遗留问题",
+          "options": [
+            "复杂语句表达仍需持续居家巩固训练",
+            "防止功能倒退"
+          ]
+        },
+        {
+          "key": "discharge_goal",
+          "type": "text",
+          "label": "出院康复目标",
+          "hint": "例：维持现有沟通能力，逐步提升长句表达能力"
+        }
+      ]
+    },
+    {
+      "key": "p",
+      "label": "P",
+      "heading": "出院指导",
+      "fields": [
+        {
+          "key": "home_training",
+          "type": "multi",
+          "label": "1.居家训练",
+          "options": [
+            "每日情景对话",
+            "朗读训练巩固言语功能"
+          ]
+        },
+        {
+          "key": "home_frequency",
+          "type": "single",
+          "label": "1.1 居家训练频次",
+          "options": [
+            "每日2次，每次20min",
+            "每日1次，每次30min"
+          ]
+        },
+        {
+          "key": "communication",
+          "type": "multi",
+          "label": "2.沟通宣教",
+          "options": [
+            "家属多主动交流",
+            "鼓励患者独立表达"
+          ]
+        },
+        {
+          "key": "precaution",
+          "type": "multi",
+          "label": "3.注意事项",
+          "options": [
+            "控制语速",
+            "循序渐进练习复杂表达"
+          ]
+        },
+        {
+          "key": "follow_up",
+          "type": "single",
+          "label": "4.复诊建议",
+          "options": [
+            "1个月后康复科门诊复查言语功能",
+            "2周后门诊复查"
+          ]
+        },
+        {
+          "key": "extra_note",
+          "type": "text",
+          "label": "备注",
+          "hint": "选填。留空则记录里不显示这一项。"
+        }
+      ]
+    }
+  ],
+  "footer": [
+    "治疗师签名：__________"
+  ]
+}

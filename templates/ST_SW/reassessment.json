@@ -1,0 +1,227 @@
+{
+  "version": 1,
+  "discipline": "ST_SW",
+  "kind": "reassessment",
+  "title": "康复阶段性复评记录（吞咽）",
+  "trigger": {
+    "every_n": 20,
+    "mandatory": true
+  },
+  "soap": [
+    {
+      "key": "s",
+      "label": "S",
+      "heading": "主观资料",
+      "fields": [
+        {
+          "key": "subjective_change",
+          "type": "multi",
+          "label": "患者及家属诉",
+          "options": [
+            "糊状食物进食无呛咳",
+            "饮水偶有呛咳",
+            "饮水无呛咳",
+            "吞咽费力感减轻",
+            "吞咽费力感无变化"
+          ],
+          "prefill": "last_assessment"
+        },
+        {
+          "key": "sputum",
+          "type": "single",
+          "label": "进食后痰多",
+          "options": [
+            "无",
+            "少量",
+            "较多"
+          ],
+          "prefill": "last_assessment"
+        }
+      ]
+    },
+    {
+      "key": "o",
+      "label": "O",
+      "heading": "客观资料",
+      "fields": [
+        {
+          "key": "lip_closure",
+          "type": "single",
+          "label": "口唇闭合",
+          "options": [
+            "正常",
+            "欠佳"
+          ],
+          "prefill": "last_assessment"
+        },
+        {
+          "key": "tongue",
+          "type": "single",
+          "label": "舌体运动",
+          "options": [
+            "灵活",
+            "减弱",
+            "活动差"
+          ],
+          "prefill": "last_assessment"
+        },
+        {
+          "key": "soft_palate",
+          "type": "single",
+          "label": "软腭上抬",
+          "options": [
+            "正常",
+            "无力",
+            "差"
+          ],
+          "prefill": "last_assessment"
+        },
+        {
+          "key": "swallow_reflex",
+          "type": "single",
+          "label": "吞咽反射",
+          "options": [
+            "灵敏",
+            "延迟",
+            "消失"
+          ],
+          "prefill": "last_assessment"
+        },
+        {
+          "key": "kubota",
+          "type": "single",
+          "label": "洼田饮水试验",
+          "options": [
+            "Ⅰ级",
+            "Ⅱ级",
+            "Ⅲ级",
+            "Ⅳ级",
+            "Ⅴ级"
+          ],
+          "prefill": "last_assessment"
+        },
+        {
+          "key": "silent_aspiration",
+          "type": "single",
+          "label": "隐匿性误吸",
+          "options": [
+            "无",
+            "有"
+          ]
+        },
+        {
+          "key": "lung_auscultation",
+          "type": "single",
+          "label": "肺部听诊",
+          "options": [
+            "清晰",
+            "有啰音"
+          ],
+          "prefill": "last_assessment"
+        }
+      ]
+    },
+    {
+      "key": "a",
+      "label": "A",
+      "heading": "评估分析",
+      "fields": [
+        {
+          "key": "prev_goal",
+          "type": "single",
+          "label": "前期短期目标",
+          "options": [
+            "已完成",
+            "基本完成",
+            "未完成"
+          ]
+        },
+        {
+          "key": "improvement",
+          "type": "single",
+          "label": "吞咽功能",
+          "options": [
+            "改善",
+            "无变化",
+            "退步"
+          ]
+        },
+        {
+          "key": "existing_limitation",
+          "type": "multi",
+          "label": "现存短板",
+          "options": [
+            "清水流质耐受差",
+            "快速饮水仍存在呛咳风险"
+          ],
+          "prefill": "last_assessment"
+        },
+        {
+          "key": "goal_short",
+          "type": "text",
+          "label": "更新短期目标",
+          "hint": "例：实现少量流质安全吞咽，消除自发性呛咳"
+        }
+      ]
+    },
+    {
+      "key": "p",
+      "label": "P",
+      "heading": "康复计划",
+      "fields": [
+        {
+          "key": "therapy_items",
+          "type": "multi",
+          "label": "本次训练项目",
+          "required": true,
+          "options_source": "therapy_options",
+          "prefill": "last_daily"
+        },
+        {
+          "key": "adjustment",
+          "type": "text",
+          "label": "调整方案",
+          "hint": "例：增加梯度食物适应性吞咽训练、喉上抬强化训练"
+        },
+        {
+          "key": "frequency",
+          "type": "single",
+          "label": "频次时长",
+          "options": [
+            "每日1次，25min，每周5次",
+            "每日1次，30min，每周5次"
+          ]
+        },
+        {
+          "key": "education",
+          "type": "multi",
+          "label": "安全宣教",
+          "options": [
+            "禁止大口快速饮水",
+            "避免躺卧进食",
+            "预防反流误吸"
+          ]
+        },
+        {
+          "key": "next_review",
+          "type": "single",
+          "label": "下次复评",
+          "options": [
+            "2周后",
+            "再20次治疗后"
+          ],
+          "prefill": "last_assessment"
+        },
+        {
+          "key": "extra_note",
+          "type": "text",
+          "label": "备注",
+          "hint": "选填。留空则记录里不显示这一项。"
+        }
+      ]
+    }
+  ],
+  "footer": [
+    "治疗师签名：__________"
+  ]
+}

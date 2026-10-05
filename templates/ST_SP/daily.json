@@ -1,0 +1,172 @@
+{
+  "version": 1,
+  "discipline": "ST_SP",
+  "kind": "daily",
+  "title": "康复治疗记录（言语）",
+  "soap": [
+    {
+      "key": "s",
+      "label": "S",
+      "heading": "主观资料",
+      "fields": [
+        {
+          "key": "willingness",
+          "type": "single",
+          "label": "今日沟通意愿",
+          "options": [
+            "良好",
+            "一般",
+            "差"
+          ]
+        },
+        {
+          "key": "effort_change",
+          "type": "single",
+          "label": "自觉发音费力",
+          "options": [
+            "减轻",
+            "无变化",
+            "加重"
+          ]
+        },
+        {
+          "key": "compliance",
+          "type": "single",
+          "label": "训练配合度",
+          "options": [
+            "良好",
+            "一般",
+            "差"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "o",
+      "label": "O",
+      "heading": "客观资料",
+      "fields": [
+        {
+          "key": "therapy_items",
+          "type": "multi",
+          "label": "训练项目",
+          "required": true,
+          "options_source": "therapy_options",
+          "prefill": "last_daily"
+        },
+        {
+          "key": "completed",
+          "type": "multi",
+          "label": "训练内容",
+          "options": [
+            "唇舌构音训练",
+            "单字词语复述",
+            "听理解训练"
+          ]
+        },
+        {
+          "key": "clarity",
+          "type": "single",
+          "label": "单字发音清晰度",
+          "options": [
+            "提升",
+            "持平",
+            "下降"
+          ]
+        },
+        {
+          "key": "instruction",
+          "type": "single",
+          "label": "简单指令执行",
+          "options": [
+            "准确",
+            "部分准确",
+            "不能执行"
+          ]
+        },
+        {
+          "key": "mood",
+          "type": "single",
+          "label": "训练过程情绪",
+          "options": [
+            "无烦躁抵触",
+            "轻度烦躁",
+            "明显抵触"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "a",
+      "label": "A",
+      "heading": "评估分析",
+      "fields": [
+        {
+          "key": "performance",
+          "type": "single",
+          "label": "构音协调性、基础言语理解表达能力",
+          "options": [
+            "改善",
+            "稳定",
+            "退步"
+          ]
+        },
+        {
+          "key": "plan_effect",
+          "type": "single",
+          "label": "训练方案",
+          "options": [
+            "有效",
+            "基本合适",
+            "需调整"
+          ]
+        },
+        {
+          "key": "existing_problem",
+          "type": "multi",
+          "label": "短板",
+          "options": [
+            "长句表达仍存在卡顿",
+            "复杂语句理解仍困难",
+            "命名仍有障碍"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "p",
+      "label": "P",
+      "heading": "康复计划",
+      "fields": [
+        {
+          "key": "next_step",
+          "type": "single",
+          "label": "后续安排",
+          "options": [
+            "继续巩固基础构音训练，逐步增加短句复述练习",
+            "维持现有训练方案",
+            "调整训练项目"
+          ]
+        },
+        {
+          "key": "education",
+          "type": "multi",
+          "label": "宣教",
+          "options": [
+            "嘱家属日常多进行生活化简单沟通",
+            "鼓励患者主动表达"
+          ]
+        },
+        {
+          "key": "extra_note",
+          "type": "text",
+          "label": "备注",
+          "hint": "选填。留空则记录里不显示这一项。"
+        }
+      ]
+    }
+  ],
+  "footer": [
+    "治疗师签名：__________"
+  ]
+}

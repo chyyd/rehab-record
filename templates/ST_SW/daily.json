@@ -1,0 +1,170 @@
+{
+  "version": 1,
+  "discipline": "ST_SW",
+  "kind": "daily",
+  "title": "康复治疗记录（吞咽）",
+  "soap": [
+    {
+      "key": "s",
+      "label": "S",
+      "heading": "主观资料",
+      "fields": [
+        {
+          "key": "throat_discomfort",
+          "type": "single",
+          "label": "今日咽喉不适",
+          "options": [
+            "无",
+            "有"
+          ]
+        },
+        {
+          "key": "spontaneous_choke",
+          "type": "single",
+          "label": "有无自发呛咳",
+          "options": [
+            "无",
+            "偶发",
+            "频繁"
+          ]
+        },
+        {
+          "key": "compliance",
+          "type": "single",
+          "label": "训练配合度",
+          "options": [
+            "良好",
+            "一般",
+            "差"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "o",
+      "label": "O",
+      "heading": "客观资料",
+      "fields": [
+        {
+          "key": "therapy_items",
+          "type": "multi",
+          "label": "本次训练",
+          "required": true,
+          "options_source": "therapy_options",
+          "prefill": "last_daily"
+        },
+        {
+          "key": "completed",
+          "type": "multi",
+          "label": "训练内容",
+          "options": [
+            "口腔感觉刺激",
+            "咽部冰刺激",
+            "舌肌训练",
+            "空吞咽训练"
+          ]
+        },
+        {
+          "key": "nausea",
+          "type": "single",
+          "label": "训练过程",
+          "options": [
+            "无恶心",
+            "轻度恶心"
+          ]
+        },
+        {
+          "key": "choke_in_training",
+          "type": "single",
+          "label": "训练中呛咳",
+          "options": [
+            "无呛咳发作",
+            "有呛咳发作"
+          ]
+        },
+        {
+          "key": "larynx_lift",
+          "type": "single",
+          "label": "喉上抬幅度",
+          "options": [
+            "改善",
+            "稳定"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "a",
+      "label": "A",
+      "heading": "评估分析",
+      "fields": [
+        {
+          "key": "performance",
+          "type": "single",
+          "label": "吞咽协调性",
+          "options": [
+            "较前改善",
+            "维持稳定",
+            "退步"
+          ]
+        },
+        {
+          "key": "risk_change",
+          "type": "single",
+          "label": "误吸风险",
+          "options": [
+            "下降",
+            "无变化",
+            "上升"
+          ]
+        },
+        {
+          "key": "plan_effect",
+          "type": "single",
+          "label": "训练方案",
+          "options": [
+            "合适",
+            "基本合适",
+            "需调整"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "p",
+      "label": "P",
+      "heading": "康复计划",
+      "fields": [
+        {
+          "key": "next_step",
+          "type": "single",
+          "label": "后续安排",
+          "options": [
+            "维持现有吞咽训练方案",
+            "调整训练强度",
+            "调整训练内容"
+          ]
+        },
+        {
+          "key": "education",
+          "type": "multi",
+          "label": "宣教",
+          "options": [
+            "严格管控食物性状",
+            "进食体位",
+            "进食后保持坐位30分钟"
+          ]
+        },
+        {
+          "key": "extra_note",
+          "type": "text",
+          "label": "备注",
+          "hint": "选填。留空则记录里不显示这一项。"
+        }
+      ]
+    }
+  ],
+  "footer": [
+    "治疗师签名：__________"
+  ]
+}

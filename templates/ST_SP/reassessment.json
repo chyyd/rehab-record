@@ -1,0 +1,204 @@
+{
+  "version": 1,
+  "discipline": "ST_SP",
+  "kind": "reassessment",
+  "title": "康复阶段性复评记录（言语）",
+  "trigger": {
+    "every_n": 20,
+    "mandatory": true
+  },
+  "soap": [
+    {
+      "key": "s",
+      "label": "S",
+      "heading": "主观资料",
+      "fields": [
+        {
+          "key": "subjective_change",
+          "type": "multi",
+          "label": "家属诉",
+          "options": [
+            "主动开口增多",
+            "发音清晰度明显好转",
+            "可听懂大部分家常对话",
+            "长句表达仍费力"
+          ],
+          "prefill": "last_assessment"
+        }
+      ]
+    },
+    {
+      "key": "o",
+      "label": "O",
+      "heading": "客观资料",
+      "fields": [
+        {
+          "key": "articulation_organ",
+          "type": "single",
+          "label": "构音器官运动",
+          "options": [
+            "灵活度改善",
+            "无变化"
+          ],
+          "prefill": "last_assessment"
+        },
+        {
+          "key": "spontaneous_speech",
+          "type": "single",
+          "label": "单字、词语发音",
+          "options": [
+            "清晰",
+            "部分含糊",
+            "含糊"
+          ],
+          "prefill": "last_assessment"
+        },
+        {
+          "key": "repetition",
+          "type": "single",
+          "label": "短句复述",
+          "options": [
+            "基本准确",
+            "部分错误",
+            "不能复述"
+          ],
+          "prefill": "last_assessment"
+        },
+        {
+          "key": "comprehension",
+          "type": "single",
+          "label": "听理解",
+          "options": [
+            "改善",
+            "无变化",
+            "退步"
+          ],
+          "prefill": "last_assessment"
+        },
+        {
+          "key": "complex_comprehension",
+          "type": "single",
+          "label": "复杂语句理解",
+          "options": [
+            "改善",
+            "仍存在困难"
+          ],
+          "prefill": "last_assessment"
+        },
+        {
+          "key": "naming",
+          "type": "single",
+          "label": "命名能力",
+          "options": [
+            "正常",
+            "部分障碍",
+            "完全不能命名"
+          ],
+          "prefill": "last_assessment"
+        }
+      ]
+    },
+    {
+      "key": "a",
+      "label": "A",
+      "heading": "评估分析",
+      "fields": [
+        {
+          "key": "prev_goal",
+          "type": "single",
+          "label": "前期短期目标",
+          "options": [
+            "已完成",
+            "基本完成",
+            "未完成"
+          ]
+        },
+        {
+          "key": "improvement",
+          "type": "single",
+          "label": "基础沟通功能",
+          "options": [
+            "恢复",
+            "部分恢复",
+            "无明显改善"
+          ]
+        },
+        {
+          "key": "existing_limitation",
+          "type": "multi",
+          "label": "现存短板",
+          "options": [
+            "复杂语句理解不足",
+            "长句连续表达能力不足"
+          ],
+          "prefill": "last_assessment"
+        },
+        {
+          "key": "goal_short",
+          "type": "text",
+          "label": "更新短期目标",
+          "hint": "例：熟练完成短句对话，提升复杂语句理解与表达能力"
+        }
+      ]
+    },
+    {
+      "key": "p",
+      "label": "P",
+      "heading": "康复计划",
+      "fields": [
+        {
+          "key": "therapy_items",
+          "type": "multi",
+          "label": "本次训练项目",
+          "required": true,
+          "options_source": "therapy_options",
+          "prefill": "last_daily"
+        },
+        {
+          "key": "adjustment",
+          "type": "text",
+          "label": "调整方案",
+          "hint": "例：减少基础构音训练，增加情景对话、长句听理解、物品命名训练"
+        },
+        {
+          "key": "frequency",
+          "type": "single",
+          "label": "频次时长",
+          "options": [
+            "每日1次，25min，每周5次",
+            "每日1次，30min，每周5次"
+          ]
+        },
+        {
+          "key": "education",
+          "type": "multi",
+          "label": "宣教",
+          "options": [
+            "日常多生活化对话",
+            "减少机械重复训练",
+            "提升实用沟通能力"
+          ]
+        },
+        {
+          "key": "next_review",
+          "type": "single",
+          "label": "下次复评",
+          "options": [
+            "2周后",
+            "再20次治疗后"
+          ],
+          "prefill": "last_assessment"
+        },
+        {
+          "key": "extra_note",
+          "type": "text",
+          "label": "备注",
+          "hint": "选填。留空则记录里不显示这一项。"
+        }
+      ]
+    }
+  ],
+  "footer": [
+    "治疗师签名：__________"
+  ]
+}

@@ -1,0 +1,243 @@
+{
+  "version": 1,
+  "discipline": "ST_SP",
+  "kind": "initial",
+  "title": "康复初始评定（言语）",
+  "trigger": {
+    "mandatory": true
+  },
+  "soap": [
+    {
+      "key": "s",
+      "label": "S",
+      "heading": "主观资料",
+      "fields": [
+        {
+          "key": "symptom",
+          "type": "multi",
+          "label": "言语症状",
+          "options": [
+            "发音含糊",
+            "说话费力",
+            "自发语少",
+            "听理解差",
+            "无法对话"
+          ]
+        },
+        {
+          "key": "communication",
+          "type": "single",
+          "label": "沟通状态",
+          "options": [
+            "完全不能交流",
+            "部分交流",
+            "基本正常"
+          ]
+        },
+        {
+          "key": "compliance",
+          "type": "single",
+          "label": "配合度",
+          "options": [
+            "良好",
+            "一般",
+            "较差"
+          ]
+        },
+        {
+          "key": "expectation",
+          "type": "multi",
+          "label": "康复期望",
+          "options": [
+            "改善发音清晰度",
+            "提升听理解能力",
+            "恢复日常短句对话"
+          ],
+          "allow_other": true
+        }
+      ]
+    },
+    {
+      "key": "o",
+      "label": "O",
+      "heading": "客观资料",
+      "fields": [
+        {
+          "key": "spontaneous_speech",
+          "type": "single",
+          "label": "自发语",
+          "options": [
+            "清晰",
+            "含糊",
+            "少语",
+            "失语"
+          ]
+        },
+        {
+          "key": "comprehension",
+          "type": "single",
+          "label": "听理解",
+          "options": [
+            "正常",
+            "轻度障碍",
+            "中度障碍",
+            "重度障碍"
+          ]
+        },
+        {
+          "key": "repetition",
+          "type": "single",
+          "label": "复述能力",
+          "options": [
+            "正常",
+            "部分准确",
+            "完全不能复述"
+          ]
+        },
+        {
+          "key": "naming",
+          "type": "single",
+          "label": "命名能力",
+          "options": [
+            "正常",
+            "部分障碍",
+            "完全不能命名"
+          ]
+        },
+        {
+          "key": "articulation_organ",
+          "type": "single",
+          "label": "构音器官运动",
+          "options": [
+            "灵活",
+            "不协调",
+            "活动差"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "a",
+      "label": "A",
+      "heading": "评估分析",
+      "fields": [
+        {
+          "key": "diagnosis",
+          "type": "multi",
+          "label": "功能诊断",
+          "options": [
+            "构音障碍",
+            "运动性失语",
+            "感觉性失语",
+            "混合性失语"
+          ],
+          "required": true
+        },
+        {
+          "key": "impairment",
+          "type": "single",
+          "label": "障碍程度",
+          "options": [
+            "轻度",
+            "中度",
+            "重度"
+          ]
+        },
+        {
+          "key": "core_problem",
+          "type": "multi",
+          "label": "核心障碍",
+          "options": [
+            "构音肌群肌力不足",
+            "语言理解受损",
+            "语言表达输出障碍"
+          ]
+        },
+        {
+          "key": "potential",
+          "type": "single",
+          "label": "康复潜力",
+          "options": [
+            "良好",
+            "一般"
+          ]
+        },
+        {
+          "key": "goal_long",
+          "type": "text",
+          "label": "长期目标",
+          "hint": "例：可流畅完成日常短句对话，准确表达生活需求"
+        },
+        {
+          "key": "goal_short",
+          "type": "text",
+          "label": "短期目标（2周）",
+          "hint": "例：改善构音器官运动，可准确复述常用字词"
+        }
+      ]
+    },
+    {
+      "key": "p",
+      "label": "P",
+      "heading": "康复计划",
+      "fields": [
+        {
+          "key": "therapy_items",
+          "type": "multi",
+          "label": "本次训练项目",
+          "required": true,
+          "options_source": "therapy_options"
+        },
+        {
+          "key": "plan_items",
+          "type": "multi",
+          "label": "治疗项目",
+          "options": [
+            "构音训练",
+            "唇舌运动训练",
+            "发音矫正",
+            "听理解训练",
+            "复述命名训练"
+          ]
+        },
+        {
+          "key": "frequency",
+          "type": "single",
+          "label": "频次时长",
+          "options": [
+            "每日1次，25min，每周5次",
+            "每日1次，30min，每周5次"
+          ]
+        },
+        {
+          "key": "education",
+          "type": "multi",
+          "label": "宣教",
+          "options": [
+            "家属多进行简单对话",
+            "耐心倾听",
+            "鼓励患者主动表达"
+          ]
+        },
+        {
+          "key": "next_review",
+          "type": "single",
+          "label": "复评计划",
+          "options": [
+            "2周后言语功能复评",
+            "每20次治疗后复评"
+          ]
+        },
+        {
+          "key": "extra_note",
+          "type": "text",
+          "label": "备注",
+          "hint": "选填。留空则记录里不显示这一项。"
+        }
+      ]
+    }
+  ],
+  "footer": [
+    "治疗师签名：__________"
+  ]
+}

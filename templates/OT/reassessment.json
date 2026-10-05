@@ -1,0 +1,233 @@
+{
+  "version": 1,
+  "discipline": "OT",
+  "kind": "reassessment",
+  "title": "康复阶段性复评记录（OT生活技能）",
+  "trigger": {
+    "every_n": 20,
+    "mandatory": true
+  },
+  "soap": [
+    {
+      "key": "s",
+      "label": "S",
+      "heading": "主观资料",
+      "fields": [
+        {
+          "key": "subjective_change",
+          "type": "multi",
+          "label": "患者/家属诉",
+          "options": [
+            "手部抓握稳定性改善",
+            "穿衣进食较前轻松",
+            "主动尝试自理动作增多"
+          ],
+          "prefill": "last_assessment"
+        },
+        {
+          "key": "hand_fatigue",
+          "type": "single",
+          "label": "训练后手部疲劳",
+          "options": [
+            "轻度",
+            "无"
+          ],
+          "prefill": "last_assessment"
+        },
+        {
+          "key": "family_feedback",
+          "type": "text",
+          "label": "家属反馈",
+          "hint": "例：患者主动尝试自理动作增多"
+        }
+      ]
+    },
+    {
+      "key": "o",
+      "label": "O",
+      "heading": "客观资料",
+      "fields": [
+        {
+          "key": "hand_function",
+          "type": "single",
+          "label": "患侧手精细协调性",
+          "options": [
+            "改善",
+            "无变化"
+          ],
+          "prefill": "last_assessment"
+        },
+        {
+          "key": "coordination",
+          "type": "single",
+          "label": "上肢协调能力",
+          "options": [
+            "良好",
+            "一般",
+            "差"
+          ],
+          "prefill": "last_assessment"
+        },
+        {
+          "key": "feeding",
+          "type": "single",
+          "label": "进食",
+          "options": [
+            "独立",
+            "监护独立",
+            "部分辅助",
+            "完全辅助"
+          ],
+          "prefill": "last_assessment"
+        },
+        {
+          "key": "dressing",
+          "type": "single",
+          "label": "穿衣",
+          "options": [
+            "独立",
+            "监护独立",
+            "部分辅助",
+            "完全辅助"
+          ],
+          "prefill": "last_assessment"
+        },
+        {
+          "key": "washing",
+          "type": "single",
+          "label": "洗漱",
+          "options": [
+            "独立",
+            "监护独立",
+            "部分辅助",
+            "完全辅助"
+          ],
+          "prefill": "last_assessment"
+        },
+        {
+          "key": "toileting",
+          "type": "single",
+          "label": "如厕",
+          "options": [
+            "独立",
+            "监护独立",
+            "部分辅助",
+            "完全辅助"
+          ],
+          "prefill": "last_assessment"
+        },
+        {
+          "key": "fim",
+          "type": "number",
+          "label": "FIM总分",
+          "unit": "分",
+          "prefill": "last_assessment"
+        }
+      ]
+    },
+    {
+      "key": "a",
+      "label": "A",
+      "heading": "评估分析",
+      "fields": [
+        {
+          "key": "prev_goal",
+          "type": "single",
+          "label": "前期短期目标",
+          "options": [
+            "已完成",
+            "基本完成",
+            "未完成"
+          ]
+        },
+        {
+          "key": "dependency",
+          "type": "single",
+          "label": "依赖程度",
+          "options": [
+            "重度依赖",
+            "中度依赖",
+            "轻度依赖",
+            "基本独立"
+          ],
+          "prefill": "last_assessment"
+        },
+        {
+          "key": "existing_limitation",
+          "type": "multi",
+          "label": "现存不足",
+          "options": [
+            "精细扣纽扣",
+            "洗澡",
+            "如厕擦拭"
+          ],
+          "prefill": "last_assessment"
+        },
+        {
+          "key": "goal_short",
+          "type": "text",
+          "label": "更新短期目标",
+          "hint": "例：提升手部精细控制，实现大部分日常生活动作监护独立"
+        }
+      ]
+    },
+    {
+      "key": "p",
+      "label": "P",
+      "heading": "康复计划",
+      "fields": [
+        {
+          "key": "therapy_items",
+          "type": "multi",
+          "label": "本次训练项目",
+          "required": true,
+          "options_source": "therapy_options",
+          "prefill": "last_daily"
+        },
+        {
+          "key": "adjustment",
+          "type": "text",
+          "label": "调整方案",
+          "hint": "例：增加手部精细训练、如厕、洗澡专项分解训练"
+        },
+        {
+          "key": "frequency",
+          "type": "single",
+          "label": "频次时长",
+          "options": [
+            "每日1次，25min，每周5次",
+            "每日1次，30min，每周5次"
+          ]
+        },
+        {
+          "key": "education",
+          "type": "multi",
+          "label": "宣教",
+          "options": [
+            "日常生活尽量自主完成",
+            "家属仅在危险时提供辅助"
+          ]
+        },
+        {
+          "key": "next_review",
+          "type": "single",
+          "label": "下次复评",
+          "options": [
+            "2周后",
+            "再20次治疗后"
+          ],
+          "prefill": "last_assessment"
+        },
+        {
+          "key": "extra_note",
+          "type": "text",
+          "label": "备注",
+          "hint": "选填。留空则记录里不显示这一项。"
+        }
+      ]
+    }
+  ],
+  "footer": [
+    "治疗师签名：__________"
+  ]
+}

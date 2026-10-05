@@ -1,0 +1,278 @@
+{
+  "version": 1,
+  "discipline": "ST_SW",
+  "kind": "initial",
+  "title": "康复初始评定（吞咽）",
+  "trigger": {
+    "mandatory": true
+  },
+  "soap": [
+    {
+      "key": "s",
+      "label": "S",
+      "heading": "主观资料",
+      "fields": [
+        {
+          "key": "symptom",
+          "type": "multi",
+          "label": "吞咽症状",
+          "options": [
+            "饮水呛咳",
+            "进食呛咳",
+            "吞咽费力",
+            "食物口腔残留",
+            "无明显异常"
+          ]
+        },
+        {
+          "key": "intake_route",
+          "type": "single",
+          "label": "进食途径",
+          "options": [
+            "鼻饲管进食",
+            "糊状经口进食",
+            "半流质经口进食",
+            "普食"
+          ]
+        },
+        {
+          "key": "choke_freq",
+          "type": "single",
+          "label": "呛咳频率",
+          "options": [
+            "频繁",
+            "偶尔",
+            "无"
+          ]
+        },
+        {
+          "key": "sputum",
+          "type": "single",
+          "label": "进食后痰液增多",
+          "options": [
+            "是",
+            "否"
+          ]
+        },
+        {
+          "key": "expectation",
+          "type": "multi",
+          "label": "康复期望",
+          "options": [
+            "安全经口进食",
+            "拔除胃管",
+            "消除呛咳"
+          ],
+          "allow_other": true
+        }
+      ]
+    },
+    {
+      "key": "o",
+      "label": "O",
+      "heading": "客观资料",
+      "fields": [
+        {
+          "key": "lip_closure",
+          "type": "single",
+          "label": "口唇闭合",
+          "options": [
+            "正常",
+            "欠佳"
+          ]
+        },
+        {
+          "key": "tongue",
+          "type": "single",
+          "label": "舌体运动",
+          "options": [
+            "灵活",
+            "减弱",
+            "活动差"
+          ]
+        },
+        {
+          "key": "soft_palate",
+          "type": "single",
+          "label": "软腭上抬",
+          "options": [
+            "正常",
+            "无力",
+            "差"
+          ]
+        },
+        {
+          "key": "swallow_reflex",
+          "type": "single",
+          "label": "吞咽反射",
+          "options": [
+            "灵敏",
+            "延迟",
+            "消失"
+          ]
+        },
+        {
+          "key": "kubota",
+          "type": "single",
+          "label": "洼田饮水试验分级",
+          "options": [
+            "Ⅰ级",
+            "Ⅱ级",
+            "Ⅲ级",
+            "Ⅳ级",
+            "Ⅴ级"
+          ]
+        },
+        {
+          "key": "aspiration_risk",
+          "type": "single",
+          "label": "误吸风险",
+          "options": [
+            "高风险",
+            "中风险",
+            "低风险"
+          ]
+        },
+        {
+          "key": "lung_auscultation",
+          "type": "single",
+          "label": "肺部听诊",
+          "options": [
+            "无啰音",
+            "有啰音"
+          ]
+        }
+      ]
+    },
+    {
+      "key": "a",
+      "label": "A",
+      "heading": "评估分析",
+      "fields": [
+        {
+          "key": "diagnosis",
+          "type": "multi",
+          "label": "功能诊断",
+          "options": [
+            "口腔期吞咽障碍",
+            "咽期吞咽障碍",
+            "混合型吞咽障碍"
+          ],
+          "required": true
+        },
+        {
+          "key": "safety",
+          "type": "single",
+          "label": "进食安全性",
+          "options": [
+            "不安全",
+            "基本安全",
+            "安全"
+          ]
+        },
+        {
+          "key": "core_problem",
+          "type": "multi",
+          "label": "核心障碍",
+          "options": [
+            "吞咽启动延迟",
+            "舌肌力量不足",
+            "喉上抬幅度不足",
+            "食团转运差"
+          ]
+        },
+        {
+          "key": "potential",
+          "type": "single",
+          "label": "康复潜力",
+          "options": [
+            "良好",
+            "一般"
+          ]
+        },
+        {
+          "key": "goal_long",
+          "type": "text",
+          "label": "长期目标",
+          "hint": "例：安全经口进食糊状/半流质食物，无呛咳，拔除鼻饲管，无误吸"
+        },
+        {
+          "key": "goal_short",
+          "type": "text",
+          "label": "短期目标（2周）",
+          "hint": "例：改善唇舌运动，吞咽反射启动加快，洼田饮水等级提升"
+        }
+      ]
+    },
+    {
+      "key": "p",
+      "label": "P",
+      "heading": "康复计划",
+      "fields": [
+        {
+          "key": "therapy_items",
+          "type": "multi",
+          "label": "本次训练项目",
+          "required": true,
+          "options_source": "therapy_options"
+        },
+        {
+          "key": "plan_items",
+          "type": "multi",
+          "label": "治疗项目",
+          "options": [
+            "口腔感觉刺激",
+            "冰刺激",
+            "舌肌力量训练",
+            "空吞咽训练",
+            "代偿吞咽手法训练"
+          ]
+        },
+        {
+          "key": "intake_manage",
+          "type": "multi",
+          "label": "进食管理",
+          "options": [
+            "端坐位进食",
+            "少量多餐",
+            "暂时禁食清水流质",
+            "禁食坚硬食物"
+          ]
+        },
+        {
+          "key": "safety_plan",
+          "type": "text",
+          "label": "安全预案",
+          "hint": "例：训练中剧烈呛咳立即停止，清理气道，观察呼吸"
+        },
+        {
+          "key": "education",
+          "type": "multi",
+          "label": "宣教",
+          "options": [
+            "家属掌握进食体位",
+            "拍背排痰方法"
+          ]
+        },
+        {
+          "key": "next_review",
+          "type": "single",
+          "label": "复评计划",
+          "options": [
+            "2周后吞咽功能复评",
+            "每20次治疗后复评"
+          ]
+        },
+        {
+          "key": "extra_note",
+          "type": "text",
+          "label": "备注",
+          "hint": "选填。留空则记录里不显示这一项。"
+        }
+      ]
+    }
+  ],
+  "footer": [
+    "治疗师签名：__________"
+  ]
+}

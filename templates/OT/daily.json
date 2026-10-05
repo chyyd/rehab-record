@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "discipline": "OT",
+  "kind": "daily",
+  "title": "康复治疗记录（OT生活技能）",
+  "trigger": { "mandatory": false },
+
+  "$comment": [
+    "字段与选项取自用户模板 2.2 节。日常记录只预填『本次训练项目』（prefill: last_daily），",
+    "其余留空 —— 那些项每天都该重新判断，预填会变成『顺手不改』的假数据。"
+  ],
+
+  "soap": [
+    {
+      "key": "s", "label": "S", "heading": "主观资料",
+      "fields": [
+        { "key": "compliance", "type": "single", "label": "今日训练配合",
+          "options": ["良好", "一般", "差"] },
+        { "key": "dexterity", "type": "single", "label": "自诉手部灵活度",
+          "options": ["提升", "无变化"] },
+        { "key": "hand_fatigue", "type": "single", "label": "有无手部疲劳酸痛",
+          "options": ["无", "有"] }
+      ]
+    },
+    {
+      "key": "o", "label": "O", "heading": "客观资料",
+      "fields": [
+        { "key": "therapy_items", "type": "multi", "label": "训练项目", "required": true,
+          "options_source": "therapy_options", "prefill": "last_daily" },
+        { "key": "completed", "type": "multi", "label": "可完成动作",
+          "options": ["抓握练习", "对捏练习", "辅助穿脱上衣", "进食模拟", "洗漱动作"] },
+        { "key": "proficiency", "type": "single", "label": "动作熟练度",
+          "options": ["提升", "持平"] },
+        { "key": "adverse", "type": "single", "label": "训练过程有无不适",
+          "options": ["无", "有"] }
+      ]
+    },
+    {
+      "key": "a", "label": "A", "heading": "评估分析",
+      "fields": [
+        { "key": "performance", "type": "single", "label": "上肢精细控制、自理动作协调性",
+          "options": ["改善", "稳定", "退步"] },
+        { "key": "plan_effect", "type": "single", "label": "当前训练方案",
+          "options": ["有效", "基本合适", "需调整"] },
+        { "key": "existing_problem", "type": "multi", "label": "短板",
+          "options": ["精细纽扣仍需辅助", "复杂动作仍需辅助", "洗澡如厕仍需辅助"] }
+      ]
+    },
+    {
+      "key": "p", "label": "P", "heading": "康复计划",
+      "fields": [
+        { "key": "next_step", "type": "single", "label": "后续安排",
+          "options": ["继续强化生活化ADL训练，逐步减少辅助量", "维持现有训练方案", "调整训练项目"] },
+        { "key": "education", "type": "multi", "label": "宣教",
+          "options": ["嘱家属日常鼓励患者自主完成简单自理动作", "减少家属代劳"] },
+        { "key": "extra_note", "type": "text", "label": "备注",
+          "hint": "选填。留空则记录里不显示这一项。" }
+      ]
+    }
+  ],
+
+  "footer": ["治疗师签名：__________"]
+}

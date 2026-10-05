@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "discipline": "OT",
+  "kind": "initial",
+  "title": "康复初始评定（OT生活技能）",
+  "trigger": { "mandatory": true },
+
+  "$comment": [
+    "字段与选项取自用户 2026-10-05 给的模板『模块2 OT日常生活技能（ADL）』的 2.1 节。",
+    "★ O 段字段 key 与 reassessment.json 共用（fim / hand_function / coordination /",
+    "  feeding / dressing / washing / toileting），否则出院小结无法自动汇总『FIM 40→65』。"
+  ],
+
+  "soap": [
+    {
+      "key": "s", "label": "S", "heading": "主观资料",
+      "fields": [
+        { "key": "selfcare", "type": "single", "label": "自理现状",
+          "options": ["完全依赖", "部分依赖", "少量依赖", "基本自理"] },
+        { "key": "complaint", "type": "multi", "label": "主观感受",
+          "options": ["手部无力", "动作笨拙", "自理动作费力", "无明显不适"] },
+        { "key": "compliance", "type": "single", "label": "配合度",
+          "options": ["良好", "一般", "较差"] },
+        { "key": "expectation", "type": "multi", "label": "康复期望",
+          "options": ["恢复独立穿衣", "独立进食", "独立洗漱", "独立如厕", "实现基本生活自理"],
+          "allow_other": true }
+      ]
+    },
+    {
+      "key": "o", "label": "O", "heading": "客观资料",
+      "fields": [
+        { "key": "hand_function", "type": "single", "label": "手精细功能",
+          "options": ["正常", "轻度受损", "中度受损", "重度受损"] },
+        { "key": "coordination", "type": "single", "label": "上肢协调能力",
+          "options": ["良好", "一般", "差"] },
+        { "key": "feeding", "type": "single", "label": "进食",
+          "options": ["独立", "监护独立", "部分辅助", "完全辅助"] },
+        { "key": "dressing", "type": "single", "label": "穿衣",
+          "options": ["独立", "监护独立", "部分辅助", "完全辅助"] },
+        { "key": "washing", "type": "single", "label": "洗漱",
+          "options": ["独立", "监护独立", "部分辅助", "完全辅助"] },
+        { "key": "toileting", "type": "single", "label": "如厕",
+          "options": ["独立", "监护独立", "部分辅助", "完全辅助"] },
+        { "key": "fim", "type": "number", "label": "FIM总分", "unit": "分" }
+      ]
+    },
+    {
+      "key": "a", "label": "A", "heading": "评估分析",
+      "fields": [
+        { "key": "diagnosis", "type": "multi", "label": "功能诊断", "required": true,
+          "options": ["上肢精细功能障碍", "日常生活活动能力下降"] },
+        { "key": "dependency", "type": "single", "label": "依赖程度",
+          "options": ["重度依赖", "中度依赖", "轻度依赖", "基本独立"] },
+        { "key": "core_problem", "type": "multi", "label": "核心障碍",
+          "options": ["手抓握力量不足", "手眼协调差", "动作分解困难", "自理动作熟练度不足"] },
+        { "key": "potential", "type": "single", "label": "康复潜力",
+          "options": ["良好", "一般"] },
+        { "key": "goal_long", "type": "text", "label": "长期目标",
+          "hint": "例：实现大部分日常生活自理，减轻家属照护负担" },
+        { "key": "goal_short", "type": "text", "label": "短期目标（2周）",
+          "hint": "例：可辅助完成进食、简单穿脱上衣动作" }
+      ]
+    },
+    {
+      "key": "p", "label": "P", "heading": "康复计划",
+      "fields": [
+        { "key": "therapy_items", "type": "multi", "label": "本次训练项目", "required": true,
+          "options_source": "therapy_options" },
+        { "key": "plan_items", "type": "multi", "label": "治疗项目",
+          "options": ["手精细功能训练", "ADL分解训练", "进食训练", "穿衣洗漱专项作业训练"] },
+        { "key": "training_mode", "type": "multi", "label": "训练方式",
+          "options": ["动作分解训练", "重复强化训练", "生活化场景训练"] },
+        { "key": "frequency", "type": "single", "label": "频次时长",
+          "options": ["每日1次，25min，每周5次", "每日1次，30min，每周5次", "每日2次，每次20min"] },
+        { "key": "education", "type": "multi", "label": "宣教",
+          "options": ["减少家属包办代替", "鼓励患者主动尝试自理动作"] },
+        { "key": "next_review", "type": "single", "label": "复评计划",
+          "options": ["2周后复评ADL功能", "每20次治疗后复评"] },
+        { "key": "extra_note", "type": "text", "label": "备注",
+          "hint": "选填。留空则记录里不显示这一项。" }
+      ]
+    }
+  ],
+
+  "footer": ["治疗师签名：__________"]
+}
