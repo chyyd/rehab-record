@@ -1,9 +1,11 @@
 # 环境搭建与运行（setup）
 
-**当前状态**：阶段 0–5 后端、管理后台与安卓 App 均已交付并验证（**470 个测试通过、0 skip**；
-端到端 182 项、跨文档一致性由 `check_docs_consistency.py` 自报、浏览器 UI 验收 60 项）。
+**当前状态**：阶段 0–5 后端、管理后台与安卓 App 均已交付并验证（**457 个测试通过、0 skip**；
+端到端 182 项、跨文档一致性由 `check_docs_consistency.py` 自报（231 项）、浏览器 UI 验收 60 项）。
 **排期、休息块、请假三项功能已于 2026-10-05 整体下线**（科室确认排班不是本系统的职责），
-`appointment`/`rest_block`/`leave_record` 三张表已由迁移 008 删除。
+`appointment`/`rest_block`/`leave_record` 三张表已由迁移 008 删除；
+**临时指派（`temporary_assignment`）与 `scope=temp` 筛选也已删除**（迁移 009），
+可见归属现在恒等于 `assigned_therapist_id`。
 
 ---
 
@@ -28,7 +30,7 @@ DSH 自带的 `dsh-primary-runtime` Python 3.12 **不要用** —— 那个环�
 | 包 | 用途 | 未装时的兜底 |
 |---|---|---|
 | `argon2-cffi` 25.1.0 | 密码哈希 | 标准库 `hashlib.scrypt` / `pbkdf2_hmac` |
-| `APScheduler` 3.11.3 | 临时指派到期清理、每日备份（也可用系统计划任务） | 标准库 `threading.Timer` 或系统计划任务 |
+| `APScheduler` 3.11.3 | 每日备份（也可用系统计划任务）；**曾用于临时指派到期清理，该功能已删除** | 标准库 `threading.Timer` 或系统计划任务 |
 
 需要重装或换机器时：
 
@@ -47,7 +49,7 @@ $py = "C:\Users\youda\AppData\Local\Programs\Python\Python313\python.exe"
 & $py -m app.cli init      # 建库 + 迁移到最新 + 健康检查
 & $py -m app.cli seed      # 导入全部种子（字典/反应定义/选项集/四大高频模板，幂等）
 & $py -m app.cli health    # 健康检查（JSON）
-& $py -m app.cli periods   # 半日制作息（Q11：决定记录的 session_period 与临时指派到期时点）
+& $py -m app.cli periods   # 半日制作息（Q11：只决定记录的 session_period）
 & $py -m app.cli tables    # 列出表与行数
 ```
 
@@ -63,7 +65,7 @@ $py = "C:\Users\youda\AppData\Local\Programs\Python\Python313\python.exe"
 
 ```powershell
 cd backend
-& $py -m unittest discover -s tests -t . -v      # 470 个测试
+& $py -m unittest discover -s tests -t . -v      # 457 个测试
 & $py scripts\verify_http.py                     # 阶段 0 HTTP 端到端（14 项）
 & $py scripts\verify_stage1.py                   # 阶段 1 认证与患者（25 项）
 & $py scripts\verify_stage2.py                   # 患者列表排序：我最近一次已提交治疗（22 项）
@@ -130,8 +132,8 @@ cd backend
 
 系统 Python 3.13 已具备 FastAPI / SQLAlchemy / Alembic / PyJWT / reportlab / pypdf，
 阶段 0–5 后端、管理后台 Web 与安卓 App 均已交付并验证完毕。
-**排期、休息块、请假已整体下线**（2026-10-05），当前没有排期相关待办，
-见 `README.md` 进度表与 `开发计划.md` 末尾的下一步。
+**排期、休息块、请假与临时指派已整体下线**（2026-10-05，迁移 008 与 009），
+当前没有排期/临时指派相关待办，见 `README.md` 进度表与 `开发计划.md` 末尾的下一步。
 
 **不建议**为本项目另建 venv：当前系统 Python 已装好全部所需包，另建 venv 需要重新下载安装，
 反而引入不必要的失败点。如果后续要隔离，再迁到 venv 也不影响仓库内容。

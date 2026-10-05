@@ -50,11 +50,11 @@
 ### 为什么不"补上"患者变更日志
 
 `change_log` 的一行对**所有客户端是同一行**，没有"按人可见性"维度。
-而患者可见性是有状态、会变化的（在院/暂停/出院、归属与临时释放）。
+而患者可见性是有状态、会变化的（在院/暂停/出院、归属变更）。
 若把患者写进 `change_log`：
 
 1. 客户端会拉到本无权看到的患者（**数据泄露**）；
-2. 单日假临时释放/恢复会让可见性频繁变化，`change_log` 语义被污染。
+2. 患者状态与归属变更会让可见性频繁变化，`change_log` 语义被污染。
 
 **结论**：一期**不把患者写进 `change_log`**。"统一游标"的代价大于收益；
 患者量小（科室百级），整表分页拉取的代价可接受。二期若要做，需要先给 `change_log`
@@ -329,15 +329,20 @@ local ──(入队)──> pending ──(push applied)──> synced
 > `ref_cache` 建议字段：`key`（如 `dict_tree` / `options:side` / `templates`）、
 > `payload`（JSON 文本）、`fetched_at`、`etag`（可空）。**整包原子替换**，避免半套数据。
 
-### 7.2 建议的表
+### 7.2 建议的表（★ 与 `app/lib/data/local/tables.dart` 的实际列逐字对齐）
 
 ```
 patient(inpatient_no PK, name, diagnosis, admin_note, assigned_therapist_id,
-        visible_therapist_id, visibility_state, status, revision, fetched_at)
+        visible_therapist_id, status, revision, visible, fetched_at)
+        -- 2026-10-05：`visibility_state` 列**已删除**（本地 schemaVersion 3 → 4）。
+        -- 服务端该字段已退化为恒 'assigned'，镜像一个常量没有意义。
 
 treatment_record(id PK, patient_no, therapist_id, record_date, session_period,
                  duration_min, note, patient_response_json, status, seq_no,
-                 edit_count, revision, client_uuid, sync_status)
+                 edit_count, revision, is_temporary, original_therapist_id,
+                 client_uuid, sync_status, pending_items_json)
+                 -- `is_temporary` / `original_therapist_id` 在本地**保留**，只为与服务端
+                 -- 字段一一对应（2026-10-03 起恒为 false / NULL）；不要再用它做 UI 判断。
 
 record_item(id PK, record_id FK, main_item_id, sub_item_id,
             sub_item_name_snapshot, params_json, params_snapshot_json, sort)
@@ -356,10 +361,14 @@ ref_cache(key PK, payload, fetched_at, etag)
 2. `client_uuid` 建唯一索引（服务端也有 `ux_record_client_uuid` 对应）。
 3. **不要**在本地复制 `change_log`；只存 `last_cursor`。
 4. 已不可见的患者（出院）**软标记**，不要级联删除本地记录（§2）。
-5. **不要**再建 `appointments` 镜像表：排期功能已删除，本地库 schemaVersion 也由 2 升到 3
-   （删除整张表 + 删除 `treatment_records.appointment_id` 列）。
-6. `is_temporary` / `original_therapist_id` **不再是本地列**（服务端记录表已删这两列，
-   `is_temporary` 由服务端查询时推导，需要时随记录一起拉取）。
+5. **不要**再建 `appointments` 镜像表：排期功能已删除，本地库 schemaVersion 由 **2 升到 3**
+   （删除整张表 + 删除 `treatment_records.appointment_id` 列）；2026-10-05 再升到 **4**
+   （删除 `patients.visibility_state` 列 —— 临时指派删除后该列已退化）。
+6. `scope=temp` **已删除**（2026-10-05）：服务端患者列表的 `Scope` 只剩
+   `mine` / `unassigned` / `all` / `visible` / `dept`，记录与时间轴只剩 `mine` / `visible`；
+   App 的时间轴枚举也只有 `visible` / `mine` 两个。
+   注意**记录级的 `is_temporary` 标记仍然保留**（服务端查询时推导，PDF / 汇总 / 后台在用），
+   它与已删除的 `scope=temp` 筛选、`temporary_assignment` 表**都没有关系**。
 
 ---
 
@@ -416,6 +425,21 @@ access token 只放内存。自签 CA 用 Dart 层 `SecurityContext` 注入，**
 **未变**：幂等（`client_uuid`）、游标（`change_log.id`）、冲突分层、批量上限、`base_revision` 语义、
 "患者不走 pull"（§1）。
 
+### 2026-10-05（第二步）：临时指派与 `scope=temp` 删除
+
+**与同步协议本身无关**（推送实体、游标、冲突策略一行未动），但影响可见归属与"范围筛选"的语义：
+
+1. **`temporary_assignment` 表、`v_open_temporary_assignment` 视图与触发器已删除**（迁移 009；
+   该迁移文件即 `009_drop_temporary_assignment.sql`，**删除**表、视图与触发器），
+   `v_patient_visibility` 简化为"可见归属 = 原归属"；
+   `scope=mine` 因此等价于"归属是我"，`scope=unassigned` 等价于"归属为 NULL"。
+2. **`scope=temp` 两处筛选都已删除**：患者列表（`Scope` 白名单）与记录/时间轴
+   （`api/v1/records.py` 现在只接受 `mine` / `visible`）。
+3. **`is_temporary` 记录级标记保留**：它是服务端查询时推导的，与已删除的表没有依赖关系，
+   PDF / 患者每日汇总 / 后台记录列表三个消费方都还在用它（§7.2 要点 6）。
+4. 本地镜像表：`patients.visibility_state` 列**已删除**（schemaVersion 3 → 4）；
+   `change_log` 里 `entity='temporary_assignment'` 的历史游标由 009 **删除**。
+
 ### 2026-10-03：全科白板
 
 本次"全科白板 + 半日格子不互斥"的变更**改变了**：
@@ -424,7 +448,8 @@ access token 只放内存。自签 CA 用 Dart 层 `SecurityContext` 注入，**
 2. ~~**排期冲突**：从三条减为两条~~（**已随排期删除**）；
 3. **`scope` 取值**：新增 `dept`（治疗师默认），`visible` 保留为同义兼容值，`all` 仍仅管理员；
 4. ~~**`is_temporary` / `original_therapist_id`**：字段保留但新写入恒为 `false`/`NULL`~~
-   —— **2026-10-05 已直接删除这两列**，不要再依赖它们。
+   —— **2026-10-05 服务端已直接删除这两列**，不要再依赖它们（本地镜像表仍留着列位做字段对齐，
+   值恒为 `false` / `NULL`，见 §7.2 要点）。
 
 ---
 
@@ -435,5 +460,5 @@ access token 只放内存。自签 CA 用 Dart 层 `SecurityContext` 注入，**
 | 1 | `patient` 不进 `change_log` | 见 §1；二期若要做需给 `change_log` 加可见性维度 |
 | 2 | 变更日志无归档 | 一期不清理；长期运行后 `change_log` 会持续增长 |
 | 3 | `docs/api.md` / `docs/data-model.md` | 仍未创建；接口契约可直接用 `/openapi.json` 导出 |
-| 4 | 冲突解决 UI 形态未定 | 文档只要求"提示 + 可留痕重提"，具体文案与交互待与科室确认 |
+| 4 | 冲突解决 UI 形态 | **已落地**（App 冲突列表 +「保留我的 / 采用服务端」两向裁决，见 `CHANGELOG.md`）；文案与交互仍以现场反馈为准 |
 | 5 | 患者离线认领 | 当前推送 `patient` 会 422；床旁现场认领是否要离线支持待定 |

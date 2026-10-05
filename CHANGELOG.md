@@ -414,6 +414,78 @@
   - **验收**：实测 `start → stop → start` 与连续 `start` 多轮，确认端口能干净释放、进程不堆积；并用 headless Edge 走通"打开登录页 → 用脚本生成的密码登录 → 进入总览页"，无异常、无 console 错误。
 
 ### 决策
+- **【业务决策】2026-10-05：删除临时指派（`temporary_assignment`）与 `scope=temp` 筛选**
+  - **用户的原始理由（决定的唯一依据）**："**`scope=temp` 不需要了**"——
+    顺着排期下线（上一条决策）继续做减法：临时指派这条路已经没有用户，留着只会让后来的人
+    以为"归属还有一套状态机"。
+  - **证据（都来自开发库实测，不是推测）**：
+
+    | 观察 | 实测值 | 说明 |
+    |---|---|---|
+    | `temporary_assignment` 行数 | **0 行** | 表建了，从来没有任何一行 |
+    | `patient_assignment_history` 里的 `temp_claim` / `temp_release` | **各 0 条** | 这两种变更类型从未被写入过 |
+    | 患者归属 | **16 位患者全部 `assigned`** | 没有任何一位处于"临时释放/临时认领" |
+    | 可见归属 vs 原归属 | **恒相等** | `v_patient_visibility` 的三层解析从来没有生效过 |
+    | `scope=temp` 的返回条数 | **永远 0 条** | App 时间轴那个可见页签一直是空的 |
+
+  - **三层理由（为什么它已经没用了）**：
+    1. **它唯一的产生来源已经不存在**：临时指派当年由"单日请假"自动产生
+       （请假 → 可见归属置 NULL → 他人可认领），而请假已随排期功能**删除**（008），
+       自动来源消失；
+    2. **它从来没有 API / CLI 入口**：`/patients/{no}/temp-release`、`/patients/{no}/temp-claim`
+       两个接口**从未实现**（设计里有、代码里没有），`close-expired` 只是清理任务，
+       也没有任何地方能**创建**一条临时指派；
+    3. **2026-10-03 改成"全科白板"后它不改变任何权限**：任何治疗师本来就能查看/记录任何在院患者，
+       所以"临时把患者从甲转给乙"只影响 `scope=mine` 的筛选与排序分组 ——
+       而那完全可以用 `assigned_therapist_id` 直接表达。
+  - **删除范围（后端 + 管理后台 + 安卓，一次删干净）**：
+
+    | 层 | 删除内容 |
+    |---|---|
+    | 数据库 | 迁移 `009_drop_temporary_assignment.sql`：**删除** `temporary_assignment` 表（唯一索引 `ux_temp_assign_open` 随表消失）、视图 `v_open_temporary_assignment`、触发器 `trg_temp_assign_updated_at`；**重建** `v_patient_visibility` 为"可见归属 = `assigned_therapist_id`"（`visibility_state` 列保留但恒为 `'assigned'`，仅为兼容既有客户端）；清掉 `change_log` 里 `entity='temporary_assignment'` 的行 |
+    | 后端 | `app/models/temporary_assignment.py`（整文件）；`app/cli.py` 的 `close-expired` 子命令；`app/core/clock.py::period_expiry()`（它只为临时指派生成到期时点）；`app/models/patient.py` 的 `VISIBILITY_VIEW_SQL` 简化 + `visibility_from()` 的 `temp` 分支 + 认领时的 `temp_released` 分支与 `temp-claim` hint；`app/schemas/patient.py` 的 `temp_assignment_id` / `temp_therapist_id` / `temp_original_therapist_id` 三个字段；**`Scope` 白名单去掉 `temp`**（现为 `mine` / `unassigned` / `all` / `visible` / `dept`）；`api/v1/records.py` 的 `scope=temp`（记录列表与时间轴，现在只接受 `mine` / `visible`）；`tests/test_temporary_and_record_rules.py` 里 13 个临时指派用例 |
+    | 管理后台 | **无需改动**：`admin/src/pages/RecordsPage.tsx` 的"是否临时治疗"列用的是**记录级 `is_temporary`**，与本次删除无关（见下条区分） |
+    | 安卓 | Drift `patients` 表**删除 `visibility_state` 列**（**schemaVersion 3 → 4，需要客户端迁移**）；`TimelineScope` 枚举去掉 `temp`（只剩"全科" / "我写的"）；`temporary_assignment` 本地本来就没有镜像表 |
+    | 保留 | 记录级 **`is_temporary`**（查询时推导）、`v_patient_visibility`（简化版）、`patient.assigned_therapist_id`、`worktime.period_end_datetime()`（`cli periods` 仍在用） |
+
+  - **`scope=temp` 是单独删掉的第二件事**：用户的决定同时包含"临时指派机制不要了"与
+    "`scope=temp` 这个筛选也不需要了"。它有两处入口（患者列表的 `Scope`、记录/时间轴的
+    `?scope=`），本次**都删除**。理由：全科白板下它的返回永远是 0 条（"临时治疗"这个列表
+    在 2026-10-03 之后就没有意义了）。
+  - **★ 必须区分：删除的是「`scope=temp` 筛选」与「临时指派机制」，不是「`is_temporary` 标记」**。
+    `is_temporary` 是**记录级标记**（语义：记录人 ≠ 该患者在**记录创建时刻**的归属治疗师），
+    由 `app/models/treatment.py::temporary_expr()` **查询时推导**，与本次删掉的表**从来没有依赖关系**，
+    **仍然保留且仍在使用**，三个消费方：
+
+    | 消费方 | 用途 |
+    |---|---|
+    | `app/services/pdf.py` | 打印时在治疗师名后标"（临时）" |
+    | `app/services/summary.py` | 患者每日汇总的 `temporary` 标记 |
+    | `admin/src/pages/RecordsPage.tsx` | 后台记录列表的"是否临时治疗"列 |
+
+    安卓本地 Drift 表 `TreatmentRecords.isTemporary` 列也**保留**（服务端记录表早已删掉该存储列，
+    本地留列只为字段一一对应，值恒为 false）。`scripts/check_docs_consistency.py` 为此加了一条
+    "三个消费方都必须在"的断言，防止后来人误删。
+  - **代价（已实际发生，不是估计）**：
+
+    | 项 | 变更前 | 变更后 | 说明 |
+    |---|---|---|---|
+    | 后端测试 | 470 | **457** | 删掉 13 个临时指派用例（`test_temporary_and_record_rules.py`），0 skip |
+    | 安卓 App 本地库 | schemaVersion 3 | **4** | 删 `patients.visibility_state` 列，**需要客户端迁移**（旧客户端升级后自动跑 `onUpgrade`） |
+    | 跨文档一致性 | 216 | **231** | 断言逐条换成新事实（009 删表/删视图/删触发器、简化后的视图逐字比对、`Scope` 无 `temp`、`period_expiry` 已删、`is_temporary` 三消费方、迁移清单） |
+    | 接口数 | 70 操作 / 52 路径 | **不变** | 删的是筛选参数，没有删路由 |
+    | 端到端验收 | 182 项 | **不变** | `verify_stage1.py` / `verify_stage2.py` 改为断言 `mine` / `unassigned` 的可观察行为 |
+
+  - **影响面**：数据模型（一张表 + 一个视图 + 一个触发器 + 一处视图重建）、后端（模型/CLI/时钟/schema/两处 scope）、
+    安卓本地库 schema（3 → 4，**需要客户端迁移**）、
+    `设计.md`（文首修订说明、1.5、3.1、3.3、3.4.1、3.5、4.1.1–4.1.4、4.3、5.1、5.3.2、5.3.4、6.1、9）、
+    `开发计划.md`（1.2 的 P-09/P-28、2.2 的 M06/M08/M09/M12/M18 与表清单、2.3 D10、4.2/4.6/4.7、
+    5 阶段 1 的 T1.4/T1.5 与 DoD、阶段 2 的 T2.5、6、7 的 R8、8.1 的 Q1/Q11、9、10 的 V0.7）、
+    `docs/sync-protocol.md`（§1、§7.2、§10、§11）、`docs/setup.md`、`README.md`、`app/README.md`。
+  - **不破坏兼容的地方**：`v_patient_visibility` 仍然存在且仍输出 `visibility_state`（恒为 `assigned`），
+    `PatientOut` 的字段一个没少；`session_period` 与 Q11 作息保留；幂等推送、游标、冲突分层一行未动。
+  - **实际收益**：多状态机消失 —— "当前谁负责"从"三层解析 + 读时兜底 + 定时清理"变成
+    `assigned_therapist_id` 一个字段；少一个后台清理任务（`close-expired`）与它的漏扫风险（原 R8）。
 - **【业务决策】2026-10-05：取消排期功能（排期 + 休息块 + 请假整体下线）**
   - **用户的原始理由（决定的唯一依据）**："**app功能过剩，违背方便记录的初衷**"。
     展开说：科室确认**排班不是本系统的职责** ——
@@ -427,7 +499,7 @@
     | 后端 | `api/v1/schedule.py`、`api/v1/leave.py`、`models/appointment.py`、`models/rest_block.py`、`models/leave.py`、`schemas/schedule.py`、`tests/test_schedule_and_leave.py`、`tests/test_schedule_constraints.py`、`tests/test_leave_and_response.py`；**接口由 87 个操作（65 路径）减到 70 个（52 路径）** |
     | 管理后台 | `pages/SchedulePage.tsx`、`pages/LeavePage.tsx` 与对应菜单/路由（页面由 12 个减到 10 个） |
     | 安卓 | `features/schedule/`、`schedule_dto.dart`、`schedule_repository.dart`；Drift 的 `Appointments` 表与 `TreatmentRecords.appointmentId` 列，**schemaVersion 2 → 3**；页签由 4 个减为 3 个（患者 / 时间轴 / 我的）；PDF 导出改为**发送给微信 / 系统打印 / 打开**三种去向 |
-    | 保留 | `temporary_assignment`（**它是归属解析，与请假无关**，`v_patient_visibility` 依赖它）与 `v_open_temporary_assignment`；`patient_model.can_schedule` **改名为 `covers_patient`**（行为不变，原名误导后来者以为它与排期有关） |
+    | 保留 | `temporary_assignment`（**它是归属解析，与请假无关**，`v_patient_visibility` 依赖它）与 `v_open_temporary_assignment` —— **后来被推翻**：2026-10-05 第二步把这两者与 `scope=temp` 一并删除，见上方"删除临时指派"决策；`patient_model.can_schedule` **改名为 `covers_patient`**（行为不变，原名误导后来者以为它与排期有关；该函数随后也按死代码删除） |
 
   - **核心功能替代：患者列表排序改为"我最近一次已提交治疗"**。
     旧：我的患者优先 → 未分配 → 其他，组内按**下一个排期日期升序**；
@@ -452,13 +524,19 @@
     `设计.md`（1.1–1.5、2.2、2.3、3.3、3.4、3.5、3.7、3.9、4.1–4.3、5.1–5.5、6.1、6.2、7、9）、
     `开发计划.md`（1.2、2.2 的 S1/M07/M08/M09/M15、2.3 D10、2.4、3、4.2–4.6、5 阶段 2、6、7、8.1、9）、
     `docs/sync-protocol.md`（§0–§11 全篇）、`README.md`、`docs/setup.md`、`app/README.md`。
-  - **不破坏兼容的地方**：`temporary_assignment` 表与 `v_open_temporary_assignment` 视图保留；
-    归属解析语义（`assigned` / `temp_released` / `temp_claimed`）不变；
+  - **不破坏兼容的地方**：~~`temporary_assignment` 表与 `v_open_temporary_assignment` 视图保留~~ ——
+    **2026-10-05 第二步已一并删除**（见上方决策条目）；~~归属解析语义（`assigned` / `temp_released` /
+    `temp_claimed`）不变~~ —— **随后简化为只剩 `assigned`**；
     `session_period`（`am`/`pm`）与 Q11 作息保留 —— 它们现在只表示"这条记录属于哪个半日"。
   - **留下的现状缺口（未擅自补）**：请假删除后，`temporary_assignment` **没有任何登记入口**
     （旧实现里由"单日请假"自动产生），接口层也不再暴露 `/patients/{no}/temp-release`、`/temp-claim`
     （这两个接口从未实现过）；`v_patient_visibility` 与读时兜底照旧工作。需要临时接管时目前只能由管理员直接维护数据。
+    > **该缺口已闭环（2026-10-05 第二步）**：处置方式是**删掉临时指派本身**，而不是补一个录入入口 ——
+    > 全科白板下它不改变任何权限，补入口只是增加录入负担。见上方"删除临时指派"决策条目。
 - **【代码现状】2026-10-05：`core/clock.py::period_expiry()` 目前没有生产调用方（功能缺口，保留该函数）**
+  > **⚠ 本条目已被推翻（同日后一步）**：2026-10-05 决定**删除临时指派**时，`period_expiry()`
+  > 被一并**删除** —— 它存在的唯一目的就是生成临时指派的到期时点，功能没了就没有保留理由
+  > （`worktime.period_end_datetime()` 仍保留，`cli periods` 在用）。见上方"删除临时指派"决策条目。
   - **事实**：它把"临时指派到期时点"按 Q11 作息转成**库格式**（UTC + 毫秒 + `Z`）时间戳，
     底层是 `worktime.period_end_datetime()`（返回本地 naive `datetime`；`cli.py periods` 直接用它打印）。
     全仓只有两个测试文件在调 `period_expiry` 构造"已到期"的临时指派，**生产代码一处也没有**。
@@ -759,6 +837,45 @@
     `check_docs_consistency.py` → **216 项 0 失败**（该数字为脚本自报总项数，后随文档修正条目 +1）。
 
 ### 文档
+- **临时指派删除后的全面文档校订与一致性断言补齐（2026-10-05）** —— 代码侧删掉临时指派与
+  `scope=temp` 之后，全部文档仍按"临时指派保留供归属解析"来写，属于**会把后来人带错方向**的漂移
+  （照文档去 `app/models/temporary_assignment.py` 或 `app.cli close-expired` 找东西，都会扑空）。
+  本次按"**现状描述严格对齐代码；已取消的东西只出现在标了「已删除 / 已下线 / 历史留痕」的段落里**"
+  逐份校订：
+
+  | 文档 | 主要改动 |
+  |---|---|
+  | `设计.md` | **3.5 标题去掉"与临时指派"，删除原 3.5.2 整节**；3.5.1 的伪代码与状态表改写成现状（视图直接投影 `assigned_therapist_id`、`visibility_state` 恒为 `assigned`、仅兼容保留），并**删掉"临时释放期间原归属者反而不能动"这句**（全科白板下他照样能看能记，这句已不成立）；文首修订说明的"`temporary_assignment` 保留"改为"已删除（009）"；1.5 术语表删"临时释放 / 临时认领"两行；3.3 归属变更类型收缩为写入侧实际产生的四类；3.4.1 作息用途由两处减为一处；4.1.1/4.1.2/4.1.3/4.1.4 删表、删视图、删枚举、删触发器说明；4.3 删"临时指派生效期间不修改归属"；5.1 定时任务用途；5.3.2 `scope` 与两个从未实现的接口；5.3.4 时间轴 scope；6.1 时间轴筛选由三个减为两个；第 9 章总结。**版本号保持 V1.2**（只改表述与事实，不改业务语义） |
+  | `开发计划.md` | **M09 改为【已取消】并删掉原字段/清理机制内容**、P-09 改为"已取消"、P-28/Q1/Q11 去掉"临时指派到期时点"；2.2 的 M06 注释、M08 说明、M12 的 `change_type` CHECK、M18、表清单总览（**当前有效 16 张 = 001 建 20 张 − 4 张**）；4.2/4.6/4.7 接口清单去掉 `scope=temp`；T1.4/T1.5/阶段 1 DoD/T2.5/第 6 章测试策略/越权清单/R8（风险已消除）；第 9 章数字与**新增 V0.7 修订记录** |
+  | `README.md` | 范围说明补临时指派与 `scope=temp` 删除（并点明 `is_temporary` 标记保留）；"半日制作息"删掉"与临时指派的到期时点"；归属解析条改为"视图 + `visibility_from()` 的 scope 条件（`mine` / `unassigned`）"；进度表测试 **470 → 457**、迁移 **8 → 9**；**删掉已不存在的 `app.cli close-expired` 命令行**、`periods` 注释与仓库结构迁移区间改正 |
+  | `app/README.md` | 时间轴**两个 scope**（全科 / 我写的）、Drift **schemaVersion 4**、本地 6 张表复核；测试条数按要求**不固化具体数字**，只写明本轮 `flutter analyze` **0 问题**、`flutter test` **全部通过** |
+  | `docs/sync-protocol.md` | §7.2 本地镜像表清单与 `tables.dart` 逐字对齐（**删 `patient.visibility_state`**；`treatment_record` 补回本地确实保留的 `is_temporary` / `original_therapist_id` 并说明恒为 false/NULL）、schemaVersion **2 → 3 → 4**、`scope=temp` 删除与 `is_temporary` 保留的区分；§10 新增"2026-10-05（第二步）"留痕；§11 冲突解决 UI 由"未定"改为"已落地" |
+  | `docs/setup.md` | 状态行测试 **470 → 457**、补临时指派删除、`cli periods` 注释、APScheduler 用途（**它的到期清理用途已随功能删除**） |
+  | `admin/README.md` | 核对通过：**没有**临时指派 / `visibility_state` 相关表述，页面清单仍是 **10 个**（无需改动） |
+
+  - **一致性脚本补齐（脚本自报项数保持 231 项：本轮是"换对象 + 加守门"，不是把断言删空）**：
+    - **把 `temporary_assignment` / `v_open_temporary_assignment` 加进 `DEPRECATED_TOKENS`**
+      —— 脚本自己的注释早就写明"等文档改完再把它加进来"，现在文档改完了，于是任何文档行
+      **再把临时指派当作现行设计写**都会失败；旧文档里"保留"的表述因此被判成漂移并已全部改掉。
+      `docs/sync-protocol.md` 的同类断言也一并加上这两个词。
+    - **新增迁移清单断言**：`001–009` 共 **9 个**迁移文件、末个必须是
+      `009_drop_temporary_assignment.sql`，且 `README.md` 的写法（"9 个 SQL 迁移" / "001–009"）与实际一致
+      —— 这样"迁移数"不再是文档里手写的孤证。
+    - **合并一条近乎重复的断言**（`009` 的"删掉 `v_open_temporary_assignment`"与"不得重建它"原本是两条），
+      所以**脚本自报总项数仍是 231 项**（README 里那一项就是拿这个数字与脚本自身比对，写错会直接失败）。
+    - 逐条核对的既有断言（本轮**确认已存在、无需新增**）：`009` 删表/删视图/删触发器/清游标、
+      `v_patient_visibility` 简化形态与"模型常量与迁移逐字一致"、`visibility_from()` 无 `temp`、
+      `Scope` Literal 白名单、App `TimelineScope` 无 `temp`、`period_expiry` 已删、
+      `is_temporary` 三个消费方（PDF / 汇总 / 后台）都还在、有效表集合无排期四表。
+  - **数字来源（实测，不是估算）**：pytest → **457 passed**；
+    `check_docs_consistency.py` 自报 **231 项 0 失败**；迁移文件 **9 个**（`001`–`009`）；
+    路由注册 **70 个操作 / 52 个路径**（未变）；`count_verify_checks.py` → 14/25/22/35/28/58（合计 **182**，未变）；
+    安卓 `flutter analyze` **0 问题**、`flutter test` **91 passed**。
+  - **历史数字一律不动**：本文件各阶段条目里的增量快照（205/271/341/377/453/481/532/538、554、470、216 等）
+    按本文件既定约定保持原值；上面"删除临时指派"决策条目里的 `470 → 457`、`216 → 231`
+    才是本次变更的**当前值**。
+  - 影响面：**仅文档与一致性脚本**。无代码、无模型、无接口、无迁移改动，无行为变更。
+
 - **修掉文档里 3 处把已删函数 `covers_patient()` 当现行函数的表述，并给一致性脚本补上"禁现"断言（2026-10-05）**
   —— 上一轮删除死代码 `patient_model.covers_patient()`（原名 `can_schedule`）时只清了代码与注释，
   文档没跟着改，于是 `README.md` / `设计.md` / `开发计划.md` 三处仍把**已不存在的函数**当成
@@ -875,7 +992,7 @@
 | TODO-07 | 清除 `backend/data/_test_tmp/` 下 65 个空目录 | 环境清理 | 需要逐个目录的权限修复 | 低优先级（已 gitignore，无业务数据） |
 | TODO-08 | `option_set` 增加 `variant` 列，让全局层支持同一 `code` 的多套选项 | 3.6.4 / seed/options.py | 无（需一次迁移） | 待办（当前只导入主变体，17 套变体被计数跳过） |
 | TODO-09 | **PDF 生成模板仍需细致修改**（版式/内容细节待定） | D03 / Q10 / 阶段 5 打印 | 无（**明确推迟**） | **已登记，推迟到安卓 App 功能全部实现之后** |
-| TODO-10 | 安卓 App：骨架、排期页、记录页、同步引擎 | T1.6 / T2.7 / T2.8 / T3.8 / T4.4 / T4.5 | Flutter/Android 环境（已就绪，见 TODO-11） | 待办（当前唯一未开工的大块） |
+| TODO-10 | 安卓 App：骨架、~~排期页~~、记录页、同步引擎 | T1.6 / ~~T2.7~~ / T2.8 / T3.8 / T4.4 / T4.5 | — | **已完成**（三个页签 + 记录页 + 时间轴 + 汇总打印 + 同步与冲突处理均已落地；排期页已随功能删除） |
 | TODO-11 | ~~Flutter / Android 构建环境验证~~ | T0.5 / `docs/setup.md` | 无 | **已完成**（Flutter SDK + Android SDK + AVD 均已就绪；详见 [未发布] → 文档） |
 | TODO-12 | **`/records/form` 的带入值落在自己的选项集之外**（89 个参数中 19 个） | 3.6.4 / `seed/option_seed.json` / TODO-08 | 无（客户端已加防御，提交不再被卡） | 待办（详见下方说明） |
 
