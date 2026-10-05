@@ -114,6 +114,8 @@ void main() {
               patientNo: patientNo,
               therapistId: therapistId,
               recordDate: date,
+              discipline: 'PT',
+              kind: 'daily',
               status: Value(status),
             ),
           );

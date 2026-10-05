@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:rehab_app/core/api_endpoints.dart';
 import 'package:rehab_app/data/local/app_database.dart';
 import 'package:rehab_app/data/remote/record_dto.dart';
 import 'package:rehab_app/data/repo/record_repository.dart';
@@ -10,122 +11,169 @@ import 'package:rehab_app/sync/sync_engine.dart';
 import 'support.dart';
 
 /// 一份最小但**形状真实**的表单响应（字段名都来自后端 `RecordFormOut`）。
-Map<String, dynamic> formJson() => {
+///
+/// 四种字段类型都覆盖到：`single` / `multi` / `number` / `text`，
+/// 并带上 `required` / `hint` / `unit` / `auto`。
+Map<String, dynamic> formJson({
+  String kind = 'daily',
+  String discipline = 'PT',
+  String? pendingDocument,
+  Map<String, dynamic>? existing,
+}) =>
+    {
       'patient': {
         'inpatient_no': 'ZY001',
-        'name': '张三',
-        'diagnosis': '脑卒中恢复期',
-        'admin_note': '注意防跌倒',
-        'status': 'in_health',
+        'name': '患者甲',
+        'status': 'in_hospital',
       },
-      'main_items': [
+      'discipline': discipline,
+      'discipline_name': '运动',
+      'kind': kind,
+      'kind_label': switch (kind) {
+        'initial' => '首评',
+        'reassessment' => '阶段性复评',
+        'discharge' => '出院小结',
+        _ => '日常治疗记录',
+      },
+      'title': '康复治疗记录（PT运动）',
+      'next_seq': 3,
+      'total_daily': 2,
+      'sessions_until_reassessment': 18,
+      'pending_document': pendingDocument,
+      'pending_document_label':
+          pendingDocument == null ? null : (pendingDocument == 'initial' ? '首评' : '阶段性复评'),
+      'template_version': 1,
+      'soap': [
         {
-          'id': 1,
-          'name': '运动治疗',
-          'alias': 'PT',
-          'sort': 1,
-          'sub_items': [
+          'key': 's',
+          'label': 'S',
+          'heading': '主观资料',
+          'fields': [
             {
-              'id': 11,
-              'main_item_id': 1,
-              'name': '关节松动术',
-              'sort': 1,
-              'params': [
-                {
-                  'id': 111,
-                  'sub_item_id': 11,
-                  'param_key': 'side',
-                  'param_name': '部位',
-                  'input_type': 'select',
-                  'options': ['左', '右'],
-                  'required': 1,
-                  'sort': 1,
-                  // 服务端已按 5 级带入算好 —— 客户端**不该**再算一遍。
-                  'current_value': '左',
-                  'value_source': 'last_value',
-                },
-                {
-                  'id': 112,
-                  'sub_item_id': 11,
-                  'param_key': 'grade',
-                  'param_name': '分级',
-                  'input_type': 'number',
-                  'required': 0,
-                  'unit': '级',
-                  'sort': 2,
-                  'current_value': null,
-                  'value_source': null,
-                },
-              ],
+              'key': 'mental',
+              'type': 'single',
+              'label': '精神状态',
+              'options': ['良好', '一般', '差'],
+            },
+            {
+              'key': 'complaint',
+              'type': 'multi',
+              'label': '主诉',
+              'options': ['患肢酸胀', '乏力', '无不适'],
+            },
+            {
+              'key': 'vas',
+              'type': 'number',
+              'label': '疼痛VAS',
+              'unit': '分',
             },
           ],
         },
-      ],
-      'response_defs': [
         {
-          'id': 1,
-          'code': 'pain',
-          'label': '疼痛',
-          'value_type': 'number',
-          'value_unit': '分',
-          'value_min': 0,
-          'value_max': 10,
-        },
-        {
-          'id': 2,
-          'code': 'discomfort',
-          'label': '不适',
-          'value_type': 'tag',
-          'options': ['无不适', '头晕', '乏力'],
+          'key': 'o',
+          'label': 'O',
+          'heading': '客观资料',
+          'fields': [
+            {
+              'key': 'therapy_items',
+              'type': 'multi',
+              'label': '本次训练项目',
+              'required': true,
+              'options': ['偏瘫肢体综合训练', '平衡生物反馈训练', '徒手肌力训练'],
+            },
+            {
+              'key': 'extra_note',
+              'type': 'text',
+              'label': '备注',
+              'hint': '选填。留空则记录里不显示这一项。',
+            },
+            if (kind == 'discharge')
+              {
+                'key': 'summary',
+                'type': 'text',
+                'label': '治疗过程汇总',
+                'auto': 'latest_vs_initial',
+                'hint': '自动生成，只读',
+              },
+          ],
         },
       ],
-      'last_completed_seq_no': 3,
-      'reference_date': '2027-03-01',
+      'prefill': {'mental': '良好', 'therapy_items': ['偏瘫肢体综合训练']},
+      'prefill_source': {'mental': 'same_day_first', 'therapy_items': 'last_daily'},
+      'footer': ['治疗师签名：__________'],
+      'existing': existing,
     };
 
 void main() {
-  group('表单 DTO（服务端算好带入值，客户端只透传）', () {
-    test('解析患者、主项目、子项目、参数', () {
+  group('表单 DTO（SOAP 模板驱动，客户端只透传）', () {
+    test('解析患者、文书形态、序号与复评倒计时', () {
       final form = RecordFormData.fromJson(formJson());
       expect(form.patientNo, 'ZY001');
-      expect(form.patientName, '张三');
-      expect(form.adminNote, '注意防跌倒');
-      expect(form.mainItems.single.display, 'PT', reason: '有别名时用别名');
-      expect(form.mainItems.single.subItems.single.name, '关节松动术');
-      // 已完成 3 次 → 本次是第 4 次。
-      expect(form.nextSeqNo, 4);
+      expect(form.patientName, '患者甲');
+      expect(form.discipline, 'PT');
+      expect(form.disciplineName, '运动');
+      expect(form.kind, 'daily');
+      expect(form.kindLabel, '日常治疗记录');
+      expect(form.title, '康复治疗记录（PT运动）');
+      expect(form.nextSeq, 3);
+      expect(form.totalDaily, 2);
+      expect(form.sessionsUntilReassessment, 18);
+      expect(form.pendingDocument, isNull);
+      expect(form.showsSeqNo, isTrue, reason: '日常记录显示"第 N 次"');
+      expect(form.isAssessment, isFalse);
     });
 
-    test('参数的带入值原样保留，并带出"值来源"标注', () {
-      final p = RecordFormData.fromJson(formJson())
-          .mainItems
-          .single
-          .subItems
-          .single
-          .params;
-      final side = p.firstWhere((e) => e.paramKey == 'side');
-      expect(side.currentValue, '左');
-      expect(side.valueSourceLabel, '上次值');
-      expect(side.required, isTrue);
-      expect(side.isSelect, isTrue);
-      expect(side.candidates.map((c) => c.value), ['左', '右']);
+    test('★ 四种字段类型都能解析（single / multi / number / text）', () {
+      final form = RecordFormData.fromJson(formJson());
+      final fields = form.allFields;
+
+      final mental = form.field('mental')!;
+      expect(mental.isSingle, isTrue);
+      expect(mental.options, ['良好', '一般', '差']);
+      expect(mental.required, isFalse);
+
+      final complaint = form.field('complaint')!;
+      expect(complaint.isMulti, isTrue);
+      expect(complaint.options.length, 3);
+
+      final vas = form.field('vas')!;
+      expect(vas.isNumber, isTrue);
+      expect(vas.unit, '分');
+
+      final note = form.field('extra_note')!;
+      expect(note.isText, isTrue);
+      expect(note.hint, isNotNull);
+
+      // 分段与段名（渲染时是「段名：字段；字段」）。
+      expect(form.soap.map((s) => s.heading), ['主观资料', '客观资料']);
+      expect(form.soap.first.label, 'S');
+      expect(fields, hasLength(5));
     });
 
-    test('选项集解析结果优先于字典静态选项', () {
-      final json = formJson();
-      final param = ((json['main_items'] as List).first['sub_items'] as List)
-          .first['params'][0] as Map<String, dynamic>;
-      param['options_resolved'] = {
-        'code': 'side',
-        'source': 'personal',
-        'options': [
-          {'value': 'L', 'label': '左侧'},
-        ],
-        'defaults': ['L'],
-      };
-      final parsed = FormParam.fromJson(param);
-      expect(parsed.candidates.single.label, '左侧');
-      expect(parsed.optionsSourceLabel, '个人选项集');
+    test('★ 评估文书不显示序号（kind != daily）', () {
+      final initial = RecordFormData.fromJson(formJson(kind: 'initial'));
+      expect(initial.showsSeqNo, isFalse);
+      expect(initial.isAssessment, isTrue);
+      final discharge = RecordFormData.fromJson(formJson(kind: 'discharge'));
+      expect(discharge.isDischarge, isTrue);
+      expect(discharge.showsSeqNo, isFalse);
+    });
+
+    test('★ 缺评估文书时 kind 就是那份文书，pending_document 用来提示', () {
+      final form = RecordFormData.fromJson(
+        formJson(kind: 'initial', pendingDocument: 'initial'),
+      );
+      expect(form.pendingDocument, 'initial');
+      expect(form.pendingDocumentLabel, '首评');
+      expect(form.isAssessment, isTrue, reason: '服务端已把 kind 换成评估文书');
+    });
+
+    test('required / hint / unit / auto 原样透传', () {
+      final form = RecordFormData.fromJson(formJson(kind: 'discharge'));
+      expect(form.field('therapy_items')!.required, isTrue);
+      expect(form.field('extra_note')!.hint, contains('选填'));
+      expect(form.field('vas')!.unit, '分');
+      expect(form.field('summary')!.auto, isTrue);
     });
 
     test('toJson 能往返（离线缓存靠它）', () {
@@ -134,158 +182,81 @@ void main() {
         Map<String, dynamic>.from(jsonDecode(jsonEncode(form.toJson())) as Map),
       );
       expect(again.patientNo, form.patientNo);
-      expect(again.mainItems.single.subItems.single.params.length, 2);
-      expect(again.lastCompletedSeqNo, 3);
-      expect(again.responseDefs.length, 2);
+      expect(again.kind, form.kind);
+      expect(again.totalDaily, 2);
+      expect(again.sessionsUntilReassessment, 18);
+      expect(again.prefill['therapy_items'], ['偏瘫肢体综合训练']);
+      expect(again.allFields.length, form.allFields.length);
     });
 
-    test('患者反应三种控件的解析', () {
-      final defs = RecordFormData.fromJson(formJson()).responseDefs;
-      final pain = defs.firstWhere((d) => d.code == 'pain');
-      expect(pain.valueType, 'number');
-      expect(pain.valueUnit, '分');
-      expect(pain.valueMax, 10);
-      final tag = defs.firstWhere((d) => d.code == 'discomfort');
-      expect(tag.valueType, 'tag');
-      expect(tag.options, ['无不适', '头晕', '乏力']);
-    });
-
-    test('★ multi_select 的带入值必须归一化成数组（否则提交会被服务端拒掉）', () {
-      // 实测：`items` 这个 multi_select 参数从 last_value 读回来是 "洗脸 刷牙"。
-      // 后端 _validate_value 对 multi_select 明确要求数组，
-      // 直接把字符串塞进 params 提交会 400（"多选参数取值必须是数组"）。
-      final param = FormParam.fromJson({
-        'id': 1, 'sub_item_id': 1, 'param_key': 'items', 'param_name': '项目',
-        'input_type': 'multi_select', 'required': 0,
-        'current_value': '洗脸 刷牙', 'value_source': 'last_value',
-      });
-      expect(param.normalizeValue(param.currentValue), ['洗脸', '刷牙']);
-
-      // 顿号分隔（存快照时的形式）也要能拆开。
-      final dot = FormParam.fromJson({
-        'id': 2, 'sub_item_id': 1, 'param_key': 'x', 'param_name': 'x',
-        'input_type': 'multi_select', 'required': 0, 'current_value': '舌、唇',
-      });
-      expect(dot.normalizeValue(dot.currentValue), ['舌', '唇']);
-
-      // 已经是数组的原样返回。
-      expect(param.normalizeValue(['左']), ['左']);
-      // 空值不该变成 ['']。
-      expect(param.normalizeValue(''), isNull);
-      expect(param.normalizeValue(null), isNull);
-    });
-
-    test('number 带入值归一化成数字', () {
-      final p = FormParam.fromJson({
-        'id': 1, 'sub_item_id': 1, 'param_key': 'reps', 'param_name': '次数',
-        'input_type': 'number', 'required': 0, 'current_value': '10',
-      });
-      expect(p.normalizeValue('10'), 10);
-      expect(p.normalizeValue(3), 3);
-      expect(p.normalizeValue(''), isNull);
-    });
-
-    test('select 的空串归一化成 null（不提交空值）', () {
-      final p = FormParam.fromJson({
-        'id': 1, 'sub_item_id': 1, 'param_key': 'side', 'param_name': '侧',
-        'input_type': 'select', 'required': 0, 'current_value': '',
-      });
-      expect(p.normalizeValue(''), isNull);
-      expect(p.normalizeValue('左'), '左');
-    });
-
-    test('★ 带入值不在选项集内时必须丢掉（否则"表单给的值，提交却被拒"）', () {
-      // 实测的原始数据：assistance_level 的 dict_default 是「部分辅助」，
-      // 但同一响应里 options_resolved 的合法值是「完全辅助/最大辅助/中等辅助/
-      // 最小辅助/监护/独立」—— 照表单预填直接提交必被 422。
-      final p = FormParam.fromJson({
-        'id': 1, 'sub_item_id': 8, 'param_key': 'assistance_level',
-        'param_name': '辅助程度', 'input_type': 'select', 'required': 0,
-        'default_value': '部分辅助',
-        'current_value': '部分辅助', 'value_source': 'dict_default',
-        'options_resolved': {
-          'code': 'assistance_level', 'source': 'global',
-          'options': [
-            {'value': '完全辅助', 'label': '完全辅助'},
-            {'value': '中等辅助', 'label': '中等辅助'},
-            {'value': '独立', 'label': '独立'},
-          ],
-          'defaults': <String>[],
-        },
-      });
-
-      expect(p.isValueSubmittable('部分辅助'), isFalse);
-      expect(p.normalizeValue(p.currentValue), isNull,
-          reason: '不合法的带入值必须丢掉，不能预填进提交体');
-      expect(p.normalizeValue(p.defaultValue), isNull);
-      // 合法值照常通过。
-      expect(p.normalizeValue('独立'), '独立');
-    });
-
-    test('多选里只要有一个值不合法就整体丢掉', () {
-      final p = FormParam.fromJson({
-        'id': 1, 'sub_item_id': 1, 'param_key': 'body_part', 'param_name': '部位',
-        'input_type': 'multi_select', 'required': 0,
-        'options_resolved': {
-          'code': 'body_part', 'source': 'global',
-          'options': [
-            {'value': '舌', 'label': '舌'},
-            {'value': '腭', 'label': '腭'},
-          ],
-          'defaults': <String>[],
-        },
-      });
-      expect(p.normalizeValue(['舌']), ['舌']);
-      expect(p.normalizeValue(['舌', '肩']), isNull);
-    });
-
-    test('没有候选项时不做判断（交给服务端），避免误杀自由文本', () {
-      final p = FormParam.fromJson({
-        'id': 1, 'sub_item_id': 1, 'param_key': 'x', 'param_name': 'x',
-        'input_type': 'select', 'required': 0, 'current_value': '任意值',
-        'options': <String>[],
-      });
-      expect(p.isValueSubmittable('任意值'), isTrue);
-      expect(p.normalizeValue('任意值'), '任意值');
-    });
-
-    test('未绑主项目的反应定义适用于所有项目', () {
-      final def = ResponseDef.fromJson({
-        'id': 1, 'code': 'x', 'label': 'x', 'value_type': 'tag',
-      });
-      expect(def.appliesTo(1), isTrue);
-      expect(def.appliesTo(null), isTrue);
-
-      final bound = ResponseDef.fromJson({
-        'id': 2, 'code': 'y', 'label': 'y', 'value_type': 'tag', 'main_item_id': 5,
-      });
-      expect(bound.appliesTo(5), isTrue);
-      expect(bound.appliesTo(6), isFalse);
+    test('★ 初值 = 服务端预填 + 已存在记录的内容（已存在优先）', () {
+      final form = RecordFormData.fromJson(formJson(existing: {
+        'id': 88,
+        'patient_no': 'ZY001',
+        'therapist_id': 2,
+        'record_date': '2026-10-06',
+        'discipline': 'PT',
+        'kind': 'daily',
+        'body': {'vas': 3, 'mental': '一般'},
+        'rendered_text': '康复治疗记录（PT运动）',
+        'status': 'draft',
+      }));
+      expect(form.existing, isNotNull);
+      expect(form.existing!.id, 88);
+      final values = form.initialValues();
+      expect(values['mental'], '一般', reason: '已存在记录覆盖了预填的"良好"');
+      expect(values['vas'], 3);
+      expect(values['therapy_items'], ['偏瘫肢体综合训练']);
     });
   });
 
-  group('患者反应草稿的形状（必须与后端一致）', () {
-    test('序列化成 {tags: [...], items: [{code, value}]}', () {
-      final r = PatientResponseDraft(
-        tags: {'无不适'},
-        items: {'pain': 3},
-      );
-      final json = r.toJson();
-      expect((json['tags'] as List).cast<String>(), ['无不适']);
-      expect((json['items'] as List).single, {'code': 'pain', 'value': 3});
+  group('字段值的归一化（提交体必须与后端同一形状）', () {
+    final single = SoapField.fromJson({
+      'key': 'mental', 'type': 'single', 'label': '精神状态',
+      'options': ['良好', '一般'],
+    });
+    final multi = SoapField.fromJson({
+      'key': 'items', 'type': 'multi', 'label': '项目', 'options': ['A', 'B'],
+    });
+    final number = SoapField.fromJson({
+      'key': 'vas', 'type': 'number', 'label': '疼痛VAS', 'unit': '分',
+    });
+    final text = SoapField.fromJson({'key': 'note', 'type': 'text', 'label': '备注'});
+
+    test('single：空串归一化成 null（不写进 body）', () {
+      expect(single.normalize('良好'), '良好');
+      expect(single.normalize(''), isNull);
+      expect(single.normalize(null), isNull);
     });
 
-    test('能往返解析', () {
-      final back = PatientResponseDraft.fromJson({
-        'tags': ['头晕'],
-        'items': [
-          {'code': 'pain', 'value': 5},
-          {'code': 'rom', 'value': '120'},
-        ],
-      });
-      expect(back.tags, {'头晕'});
-      expect(back.items['pain'], 5);
-      expect(back.items['rom'], '120');
+    test('multi：始终是数组（传字符串会被后端当成单值）', () {
+      expect(multi.normalize(['A']), ['A']);
+      expect(multi.normalize(['A', 'B']), ['A', 'B']);
+      expect(multi.normalize('A/B'), ['A', 'B']);
+      expect(multi.normalize('A、B'), ['A', 'B']);
+      expect(multi.normalize(<String>[]), isNull);
+      expect(multi.normalize(''), isNull);
+    });
+
+    test('number：存成数字，0 是有效值', () {
+      expect(number.normalize('3'), 3);
+      expect(number.normalize(2.5), 2.5);
+      expect(number.normalize(0), 0);
+      expect(number.normalize(''), isNull);
+      // 0 必须算"填了"（VAS 0 分是真实数据）。
+      expect(SoapField.hasValue(0), isTrue);
+      expect(SoapField.hasValue(<String>[]), isFalse);
+    });
+
+    test('text：原样，空白串丢掉', () {
+      expect(text.normalize('  有点头晕  '), '有点头晕');
+      expect(text.normalize('   '), isNull);
+    });
+
+    test('display：多选用 / 连接（与后端渲染器一致）', () {
+      expect(SoapField.display(['A', 'B']), 'A/B');
+      expect(SoapField.display(3), '3');
+      expect(SoapField.display(null), '');
     });
   });
 
@@ -304,114 +275,125 @@ void main() {
 
     tearDown(() async => db.close());
 
-    test('新草稿：负数占位 id、pending、入队 insert、明细存成 JSON', () async {
-      final id = await repo.saveDraft(
+    test('新草稿：负数占位 id、pending、入队 insert、内容存成 body_json', () async {
+      final saved = await repo.save(
         existingId: null,
         patientNo: 'ZY001',
         therapistId: 2,
-        recordDate: '2027-03-01',
-        sessionPeriod: 'am',
-        durationMin: 30,
-        note: '首次',
-        response: PatientResponseDraft(tags: {'无不适'}, items: {'pain': 2}),
-        items: [
-          RecordItemDraft(
-            mainItemId: 1,
-            subItemId: 11,
-            subItemName: '关节松动术',
-            params: {'side': '左'},
-          ),
-        ],
+        recordDate: '2026-10-06',
+        discipline: 'PT',
+        kind: 'daily',
+        body: {'mental': '良好', 'therapy_items': ['偏瘫肢体综合训练']},
         status: 'draft',
+        renderedText: '康复治疗记录（PT运动）',
       );
 
-      expect(id, lessThan(0), reason: '本地新建用负数占位，避免与服务端自增 id 撞号');
+      expect(saved.localId, lessThan(0), reason: '本地新建用负数占位，避免与服务端自增 id 撞号');
+      expect(saved.clientUuid, isNotEmpty);
 
       final row = await db.select(db.treatmentRecords).getSingle();
       expect(row.syncStatus, 'pending');
       expect(row.status, 'draft');
-      expect(row.durationMin, 30);
-      expect(row.clientUuid, isNotNull);
+      expect(row.discipline, 'PT');
+      expect(row.kind, 'daily');
+      expect(RecordRepository.decodeBody(row.bodyJson),
+          {'mental': '良好', 'therapy_items': ['偏瘫肢体综合训练']});
+      expect(row.renderedText, '康复治疗记录（PT运动）');
+    });
 
-      // 未推送的明细只能存 JSON 列 —— 它没有服务端 id，走不了 record_items 表。
+    test('★ 推送 payload 的形状：`body`（没有 items / session_period / duration_min）', () async {
+      await repo.save(
+        existingId: null,
+        patientNo: 'ZY001',
+        therapistId: 2,
+        recordDate: '2026-10-06',
+        discipline: 'PT',
+        kind: 'daily',
+        body: {'vas': 2, 'complaint': ['乏力']},
+        status: 'submitted',
+      );
+
       final queued = await db.select(db.changeQueue).getSingle();
       expect(queued.op, 'insert');
       expect(queued.baseRevision, isNull, reason: '新建不带基线（协议 §4.4）');
-      expect(queued.payloadJson, contains('"side":"左"'));
-      expect(queued.payloadJson, contains('"patient_response"'));
-      expect(queued.payloadJson, contains('"items"'));
+
+      final payload = jsonDecode(queued.payloadJson) as Map<String, dynamic>;
+      expect(payload['patient_no'], 'ZY001');
+      expect(payload['record_date'], '2026-10-06');
+      expect(payload['discipline'], 'PT');
+      expect(payload['kind'], 'daily');
+      expect(payload['status'], 'submitted');
+      expect(payload['body'], {'vas': 2, 'complaint': ['乏力']});
+      // 旧模型的字段一个都不能再出现（服务端已经不认它们）。
+      expect(payload.containsKey('items'), isFalse);
+      expect(payload.containsKey('session_period'), isFalse);
+      expect(payload.containsKey('duration_min'), isFalse);
+      expect(payload.containsKey('patient_response'), isFalse);
     });
 
-    test('读回未推送的明细（继续编辑要靠它）', () async {
-      final id = await repo.saveDraft(
+    test('读回本地草稿的 body（继续编辑要靠它）', () async {
+      final saved = await repo.save(
         existingId: null,
         patientNo: 'ZY001',
         therapistId: 2,
-        recordDate: '2027-03-01',
-        sessionPeriod: null,
-        durationMin: null,
-        note: null,
-        response: PatientResponseDraft(),
-        items: [
-          RecordItemDraft(
-            mainItemId: 1, subItemId: 11, subItemName: '关节松动术',
-            params: {'side': '左', 'grade': 3},
-          ),
-        ],
+        recordDate: '2026-10-06',
+        discipline: 'ST_SW',
+        kind: 'daily',
+        body: {'vas': 3, 'mental': '一般'},
         status: 'draft',
       );
 
-      final items = await repo.readPendingItems(id);
-      expect(items, hasLength(1));
-      expect(items.single.subItemId, 11);
-      expect(items.single.params['side'], '左');
-      expect(items.single.params['grade'], 3);
-    });
+      final body = await repo.readLocalBody(saved.localId);
+      expect(body['vas'], 3);
+      expect(body['mental'], '一般');
 
-    test('空患者反应不写进 payload（服务端按"未评估"处理）', () async {
-      await repo.saveDraft(
-        existingId: null,
+      final draft = await repo.findLocalDraft(
         patientNo: 'ZY001',
-        therapistId: 2,
-        recordDate: '2027-03-01',
-        sessionPeriod: null,
-        durationMin: null,
-        note: null,
-        response: PatientResponseDraft(),
-        items: const [],
-        status: 'draft',
+        recordDate: '2026-10-06',
+        discipline: 'ST_SW',
       );
-
-      final queued = await db.select(db.changeQueue).getSingle();
-      expect(queued.payloadJson.contains('patient_response'), isFalse);
-      final row = await db.select(db.treatmentRecords).getSingle();
-      expect(row.patientResponseJson, isNull);
+      expect(draft?.id, saved.localId);
+      // 别的大类不该被匹配到（表单/草稿都是按大类分的）。
+      expect(
+        await repo.findLocalDraft(
+          patientNo: 'ZY001',
+          recordDate: '2026-10-06',
+          discipline: 'PT',
+        ),
+        isNull,
+      );
     });
 
     test('改一条尚未推送的本地草稿：仍是一个队列条目，且不带基线', () async {
-      final id = await repo.saveDraft(
+      final saved = await repo.save(
         existingId: null,
-        patientNo: 'ZY001', therapistId: 2, recordDate: '2027-03-01',
-        sessionPeriod: null, durationMin: null, note: 'v1',
-        response: PatientResponseDraft(), items: const [], status: 'draft',
+        patientNo: 'ZY001',
+        therapistId: 2,
+        recordDate: '2026-10-06',
+        discipline: 'PT',
+        kind: 'daily',
+        body: {'mental': '良好'},
+        status: 'draft',
       );
 
-      await repo.saveDraft(
-        existingId: id,
-        patientNo: 'ZY001', therapistId: 2, recordDate: '2027-03-01',
-        sessionPeriod: null, durationMin: 45, note: 'v2',
-        response: PatientResponseDraft(), items: const [], status: 'draft',
+      await repo.save(
+        existingId: saved.localId,
+        patientNo: 'ZY001',
+        therapistId: 2,
+        recordDate: '2026-10-06',
+        discipline: 'PT',
+        kind: 'daily',
+        body: {'mental': '差'},
+        status: 'draft',
       );
 
-      // 同一个 client_uuid 只留一条（队列以它为幂等键）。
       final queued = await db.select(db.changeQueue).getSingle();
       expect(queued.baseRevision, isNull,
           reason: '服务端还不知道这个 uuid，带基线反而可能被判成冲突');
-      expect(queued.payloadJson, contains('v2'));
+      expect(queued.payloadJson, contains('差'));
 
       final rows = await db.select(db.treatmentRecords).get();
       expect(rows, hasLength(1), reason: '更新不该产生第二条本地记录');
-      expect(rows.single.durationMin, 45);
     });
 
     test('按患者查询是响应式的：存一条草稿本地立刻能看到', () async {
@@ -421,11 +403,15 @@ void main() {
       await pumpEventQueue();
       expect(emissions.last, 0);
 
-      await repo.saveDraft(
+      await repo.save(
         existingId: null,
-        patientNo: 'ZY001', therapistId: 2, recordDate: '2027-03-01',
-        sessionPeriod: null, durationMin: null, note: null,
-        response: PatientResponseDraft(), items: const [], status: 'draft',
+        patientNo: 'ZY001',
+        therapistId: 2,
+        recordDate: '2026-10-06',
+        discipline: 'PT',
+        kind: 'daily',
+        body: const {},
+        status: 'draft',
       );
       await pumpEventQueue();
       expect(emissions.last, 1);
@@ -433,87 +419,169 @@ void main() {
       await sub.cancel();
     });
 
-    test('表单离线缓存往返', () async {
-      // 预置一份缓存，再断网读它。
-      await db.into(db.refCache).insertOnConflictUpdate(
-            RefCacheCompanion.insert(
-              key: 'record_form:ZY001:all',
-              payloadJson: jsonEncode(RecordFormData.fromJson(formJson()).toJson()),
-              fetchedAt: '2027-03-01T00:00:00Z',
-            ),
-          );
-
-      final cached = await repo.readCachedForm('ZY001');
-      expect(cached, isNotNull);
-      expect(cached!.patientName, '张三');
-      expect(cached.mainItems.single.subItems.single.params.length, 2);
-    });
-
-    test('★ 表单缓存按"反应作用域"分开存（不能互相覆盖）', () async {
-      // patient 反应定义是按主项目分组的。不带 main_item_id 与带 1 是**两份不同
-      // 内容**的表单，缓存 key 必须区分，否则先取全量再取分组就会互相覆盖，
-      // 离线时可能拿到错误作用域的定义 → 提交 422。
-      final all = RecordFormData.fromJson(formJson());
-      final scoped = RecordFormData.fromJson({
-        ...formJson(),
-        'response_defs': [
-          {'id': 2, 'code': 'pain', 'label': '疼痛', 'value_type': 'number'},
-        ],
-      });
-
-      await db.into(db.refCache).insertOnConflictUpdate(
-            RefCacheCompanion.insert(
-              key: 'record_form:ZY001:all',
-              payloadJson: jsonEncode(all.toJson()),
-              fetchedAt: '2027-03-01T00:00:00Z',
-            ),
-          );
-      await db.into(db.refCache).insertOnConflictUpdate(
-            RefCacheCompanion.insert(
-              key: 'record_form:ZY001:1',
-              payloadJson: jsonEncode(scoped.toJson()),
-              fetchedAt: '2027-03-01T00:00:00Z',
-            ),
-          );
-
-      expect((await repo.readCachedForm('ZY001'))!.responseDefs.length, 2);
+    test('当天计数按**大类**分开（服务端是"同一天同一大类至多 2 条"）', () async {
+      await repo.save(
+        existingId: null,
+        patientNo: 'ZY001',
+        therapistId: 2,
+        recordDate: '2026-10-06',
+        discipline: 'PT',
+        kind: 'daily',
+        body: const {},
+        status: 'submitted',
+      );
       expect(
-        (await repo.readCachedForm('ZY001', mainItemId: 1))!.responseDefs.length,
+        await repo.countForDay(
+          patientNo: 'ZY001',
+          recordDate: '2026-10-06',
+          discipline: 'PT',
+        ),
         1,
       );
-      // 没缓存过的作用域返回 null，而不是错误地回落到别的 key。
-      expect(await repo.readCachedForm('ZY001', mainItemId: 2), isNull);
+      expect(
+        await repo.countForDay(
+          patientNo: 'ZY001',
+          recordDate: '2026-10-06',
+          discipline: 'OT',
+        ),
+        0,
+      );
+    });
+  });
+
+  group('表单缓存（离线优先）', () {
+    late AppDatabase db;
+    late RecordRepository repo;
+    late ScriptedAdapter adapter;
+
+    setUp(() {
+      db = AppDatabase.forTesting(NativeDatabase.memory());
+      adapter = ScriptedAdapter({kRecordForm: (200, formJson())});
+      repo = RecordRepository(
+        client: buildScriptedClient({}, adapter: adapter),
+        db: db,
+        sync: SyncEngine(client: buildScriptedClient({}), db: db),
+      );
+    });
+
+    tearDown(() async => db.close());
+
+    test('取表单带 patient_no + discipline（kind 只在出院时显式传）', () async {
+      await repo.fetchForm('ZY001', 'PT', date: '2026-10-06');
+      final q = adapter.seen.single.queryParameters;
+      expect(q['patient_no'], 'ZY001');
+      expect(q['discipline'], 'PT');
+      expect(q['date'], '2026-10-06');
+      expect(q.containsKey('kind'), isFalse, reason: '形态由服务端门禁决定');
+    });
+
+    test('★ 出院小结必须显式传 kind=discharge（门禁推不出来）', () async {
+      await repo.fetchForm('ZY001', 'PT', kind: 'discharge');
+      expect(adapter.seen.single.queryParameters['kind'], 'discharge');
+    });
+
+    test('联网成功后落缓存；断网时能读回来', () async {
+      final online = await repo.fetchForm('ZY001', 'PT');
+      expect(online.fromCache, isFalse);
+
+      final cached = await repo.readCachedForm('ZY001', 'PT');
+      expect(cached, isNotNull);
+      expect(cached!.patientName, '患者甲');
+      expect(cached.allFields.length, 5);
+
+      // 断网：抛 NETWORK_ERROR 时应回落到缓存。
+      final offlineRepo = RecordRepository(
+        client: buildScriptedClient({kRecordForm: (500, {'code': 'X', 'message': 'boom'})}),
+        db: db,
+        sync: SyncEngine(client: buildScriptedClient({}), db: db),
+      );
+      final fallback = await offlineRepo.fetchForm('ZY001', 'PT');
+      expect(fallback.fromCache, isTrue);
+      expect(fallback.form.patientName, '患者甲');
+    });
+
+    test('★ 缓存按大类 + 形态分开存（不能互相覆盖）', () async {
+      final adapter2 = ScriptedAdapter({
+        kRecordForm: (200, formJson()),
+      });
+      final repo2 = RecordRepository(
+        client: buildScriptedClient({}, adapter: adapter2),
+        db: db,
+        sync: SyncEngine(client: buildScriptedClient({}), db: db),
+      );
+      await repo2.fetchForm('ZY001', 'PT');
+      await db.into(db.refCache).insertOnConflictUpdate(
+            RefCacheCompanion.insert(
+              key: RecordRepository.formCacheKey('ZY001', 'PT', kind: 'discharge'),
+              payloadJson: jsonEncode(
+                RecordFormData.fromJson(formJson(kind: 'discharge')).toJson(),
+              ),
+              fetchedAt: '2026-10-06T00:00:00Z',
+            ),
+          );
+
+      final daily = await repo2.readCachedForm('ZY001', 'PT');
+      final discharge =
+          await repo2.readCachedForm('ZY001', 'PT', kind: 'discharge');
+      expect(daily!.kind, 'daily');
+      expect(discharge!.kind, 'discharge');
+      // 没缓存过的大类返回 null，而不是错误地回落到别的大类。
+      expect(await repo2.readCachedForm('ZY001', 'ST_SP'), isNull);
     });
 
     test('缓存损坏时返回 null，不炸掉整个页面', () async {
       await db.into(db.refCache).insertOnConflictUpdate(
             RefCacheCompanion.insert(
-              key: 'record_form:ZY001',
+              key: RecordRepository.formCacheKey('ZY001', 'PT'),
               payloadJson: '这不是 JSON',
-              fetchedAt: '2027-03-01T00:00:00Z',
+              fetchedAt: '2026-10-06T00:00:00Z',
             ),
           );
-      expect(await repo.readCachedForm('ZY001'), isNull);
+      expect(await repo.readCachedForm('ZY001', 'PT'), isNull);
+    });
+  });
+
+  group('多选字段的"最近用过"（58 项选项要靠它才能一点就中）', () {
+    late AppDatabase db;
+    late RecordRepository repo;
+
+    setUp(() {
+      db = AppDatabase.forTesting(NativeDatabase.memory());
+      repo = RecordRepository(
+        client: buildScriptedClient({}),
+        db: db,
+        sync: SyncEngine(client: buildScriptedClient({}), db: db),
+      );
     });
 
-    test('当天计数（含未推送草稿）', () async {
-      await repo.saveDraft(
-        existingId: null,
-        patientNo: 'ZY001', therapistId: 2, recordDate: '2027-03-01',
-        sessionPeriod: 'am', durationMin: null, note: null,
-        response: PatientResponseDraft(), items: const [], status: 'draft',
-      );
-      expect(await repo.countForDay(patientNo: 'ZY001', recordDate: '2027-03-01'), 1);
+    tearDown(() async => db.close());
+
+    test('记住之后最近的排最前，且去重、限长', () async {
+      await repo.rememberOptions('therapy_items', ['徒手肌力训练']);
+      await repo.rememberOptions('therapy_items', ['偏瘫肢体综合训练']);
       expect(
-        await repo.countForDay(
-            patientNo: 'ZY001', recordDate: '2027-03-01', sessionPeriod: 'am'),
-        1,
+        await repo.recentOptions('therapy_items'),
+        ['偏瘫肢体综合训练', '徒手肌力训练'],
       );
+
+      // 重复使用只提前，不重复。
+      await repo.rememberOptions('therapy_items', ['徒手肌力训练']);
       expect(
-        await repo.countForDay(
-            patientNo: 'ZY001', recordDate: '2027-03-01', sessionPeriod: 'pm'),
-        0,
+        await repo.recentOptions('therapy_items'),
+        ['徒手肌力训练', '偏瘫肢体综合训练'],
       );
+
+      for (var i = 0; i < 20; i++) {
+        await repo.rememberOptions('therapy_items', ['项目$i']);
+      }
+      expect(
+        (await repo.recentOptions('therapy_items')).length,
+        RecordRepository.recentOptionsLimit,
+      );
+    });
+
+    test('没记过就返回空表（界面按模板顺序显示）', () async {
+      expect(await repo.recentOptions('never_used'), isEmpty);
     });
   });
 }

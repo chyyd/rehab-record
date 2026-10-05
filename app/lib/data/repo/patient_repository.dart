@@ -306,9 +306,36 @@ class PatientRepository {
         );
   }
 
+  /// 发起出院（`POST /patients/{inpatient_no}/discharge`）。
+  ///
+  /// ★ 权限口径是用户的明确决定：「所有治疗师都可以有出院的权限」——
+  /// 所以这里只是普通接口，不带管理员限制。
+  ///
+  /// 服务端要求 `record_id` 指向该患者**已提交**的出院小结
+  ///（"出院不是点按钮，而是文书写完了"），返回患者的新状态。
+  ///
+  /// 成功后本地立刻把该患者标成**不可见**：待出院患者已不在治疗师白板上
+  /// （用户：「从治疗师白名单消失」），但**绝不删本地行** —— 历史记录还要用
+  /// 患者信息（协议 §2）。
+  Future<String> requestDischarge(String inpatientNo, int recordId) async {
+    final data = await _client.request(
+      kPatientDischarge(inpatientNo),
+      method: 'POST',
+      body: {'record_id': recordId},
+    );
+    final json = Map<String, dynamic>.from(data as Map);
+    await _upsert(json);
+    final status = '${json['status'] ?? ''}';
+    if (status == 'pending_discharge' || status == 'discharged') {
+      await (_db.update(_db.patients)
+            ..where((t) => t.inpatientNo.equals(inpatientNo)))
+          .write(const PatientsCompanion(visible: Value(false)));
+    }
+    return status;
+  }
+
   /// 上次患者同步时间（用于 UI 显示"数据可能不是最新"）。
-  Future<DateTime?> lastSyncedAt() async {
-    final row = await (_db.select(_db.syncState)
+  Future<DateTime?> lastSyncedAt() async {    final row = await (_db.select(_db.syncState)
           ..where((t) => t.key.equals('last_patient_sync_at')))
         .getSingleOrNull();
     if (row == null) return null;

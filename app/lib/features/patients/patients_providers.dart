@@ -1,5 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:rehab_app/core/disciplines.dart';
 import 'package:rehab_app/core/error.dart';
 import 'package:rehab_app/core/providers.dart';
 import 'package:rehab_app/data/repo/patient_repository.dart';
@@ -111,6 +112,81 @@ final patientDetailProvider =
     FutureProvider.family<PatientView?, String>((ref, inpatientNo) async {
   final services = ref.watch(appServicesProvider).requireValue;
   return services.patients.findByNo(inpatientNo);
+});
+
+// --------------------------------------------------------------------------- //
+// 四大类摘要（患者详情页的"记录治疗"区域）
+// --------------------------------------------------------------------------- //
+
+/// 一个大类的状态摘要（详情页按钮上要显示的那两个数字）。
+///
+/// 数据直接来自记录表单接口 —— 它本来就返回 `total_daily`（该大类已记录次数）
+/// 与 `sessions_until_reassessment`（距复评还差几次），
+/// 以及 `pending_document`（点进去会先弹哪份评估文书）。
+/// **不本地重算**：序号/复评口径的唯一真源在服务端。
+class DisciplineSummary {
+  const DisciplineSummary({
+    required this.key,
+    required this.name,
+    this.totalDaily = 0,
+    this.sessionsUntilReassessment = 0,
+    this.pendingDocument,
+    this.pendingDocumentLabel,
+    this.fromCache = false,
+    this.error,
+  });
+
+  final String key;
+  final String name;
+  final int totalDaily;
+  final int sessionsUntilReassessment;
+
+  /// 非 null 表示"点进去要先填这份评估文书"（首评 / 复评）。
+  final String? pendingDocument;
+  final String? pendingDocumentLabel;
+
+  /// 数据是否来自离线缓存。
+  final bool fromCache;
+
+  /// 取不到时（离线且没缓存过）的提示。
+  final String? error;
+
+  bool get needsDocument => pendingDocument != null;
+}
+
+/// 四个大类各自的摘要（并发取，互不阻塞）。
+///
+/// 每个大类一次 `GET /records/form`：请求很小，换来的是**准确**的次数与复评倒计时，
+/// 同时顺带把该大类的表单缓存到本地（之后点进记录页即使断网也能打开）。
+final disciplineSummariesProvider =
+    FutureProvider.family<List<DisciplineSummary>, String>((ref, patientNo) async {
+  final services = ref.watch(appServicesProvider).requireValue;
+  return Future.wait(
+    Discipline.all.map((d) async {
+      try {
+        final result = await services.records.fetchForm(patientNo, d.key);
+        return DisciplineSummary(
+          key: d.key,
+          name: result.form.disciplineName.isEmpty
+              ? d.name
+              : result.form.disciplineName,
+          totalDaily: result.form.totalDaily,
+          sessionsUntilReassessment: result.form.sessionsUntilReassessment,
+          pendingDocument: result.form.pendingDocument,
+          pendingDocumentLabel: result.form.pendingDocumentLabel,
+          fromCache: result.fromCache,
+        );
+      } on AppError catch (e) {
+        // 一个大类取不到不该让整块区域消失：如实说明，按钮照样可点
+        //（点进去会自己再取一次表单）。
+        return DisciplineSummary(
+          key: d.key,
+          name: d.name,
+          error: e.code == 'NETWORK_ERROR' ? '离线' : e.message,
+        );
+      }
+    }),
+  );
 });
 
 /// 同步动作的结果，供 UI 提示。

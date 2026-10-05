@@ -192,47 +192,57 @@ class _TotalsCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(title, style: theme.textTheme.titleMedium),
+            const SizedBox(height: 4),
+            Text(
+              '只算日常记录（首评/复评/出院小结是独立文书，不占治疗次数）',
+              style: TextStyle(fontSize: 11, color: theme.colorScheme.outline),
+            ),
             const SizedBox(height: 10),
             Row(
               children: [
-                _Metric(label: '记录', value: '${totals.recordCount}'),
-                _Metric(label: '项目', value: '${totals.itemCount}'),
+                _Metric(label: '治疗次数', value: '${totals.recordCount}'),
                 _Metric(label: '患者', value: '${totals.patientCount}'),
-                _Metric(label: '时长', value: totals.durationLabel),
+                _Metric(label: '大类', value: '${totals.disciplineCounts.length}'),
               ],
             ),
-            if (totals.mainItemCounts.isNotEmpty) ...[
+            if (totals.disciplineCounts.isNotEmpty) ...[
               const Divider(height: 20),
-              Text('主项目分布', style: TextStyle(fontSize: 12, color: theme.colorScheme.outline)),
+              Text('大类分布',
+                  style: TextStyle(fontSize: 12, color: theme.colorScheme.outline)),
               const SizedBox(height: 4),
-              for (final e in totals.mainItemCounts.entries)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 2),
-                  child: Row(
-                    children: [
-                      Expanded(child: Text(e.key, style: const TextStyle(fontSize: 12))),
-                      Text('${e.value}', style: const TextStyle(fontSize: 12)),
-                    ],
-                  ),
-                ),
+              for (final e in totals.disciplineCounts.entries)
+                _CountRow(label: e.key, count: e.value),
             ],
             if (totals.therapistCounts.isNotEmpty) ...[
               const Divider(height: 20),
-              Text('治疗师分布', style: TextStyle(fontSize: 12, color: theme.colorScheme.outline)),
+              Text('治疗师分布',
+                  style: TextStyle(fontSize: 12, color: theme.colorScheme.outline)),
               const SizedBox(height: 4),
               for (final e in totals.therapistCounts.entries)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 2),
-                  child: Row(
-                    children: [
-                      Expanded(child: Text(e.key, style: const TextStyle(fontSize: 12))),
-                      Text('${e.value}', style: const TextStyle(fontSize: 12)),
-                    ],
-                  ),
-                ),
+                _CountRow(label: e.key, count: e.value),
             ],
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _CountRow extends StatelessWidget {
+  const _CountRow({required this.label, required this.count});
+
+  final String label;
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 2),
+      child: Row(
+        children: [
+          Expanded(child: Text(label, style: const TextStyle(fontSize: 12))),
+          Text('$count', style: const TextStyle(fontSize: 12)),
+        ],
       ),
     );
   }
@@ -274,32 +284,32 @@ class _GroupCard extends StatelessWidget {
       child: ExpansionTile(
         title: Text(group.label, style: const TextStyle(fontWeight: FontWeight.w600)),
         subtitle: Text(
-          '${group.totals.recordCount} 条 · ${group.totals.itemCount} 项 · '
-          '${group.totals.patientCount} 名患者 · ${group.totals.durationLabel}',
+          '${group.totals.recordCount} 次治疗 · ${group.totals.patientCount} 名患者',
           style: const TextStyle(fontSize: 12),
         ),
         childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
         children: [
-          for (final e in group.totals.subItemCounts.entries)
+          for (final row in group.rows)
             Padding(
-              padding: const EdgeInsets.only(bottom: 2),
-              child: Row(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(child: Text(e.key, style: const TextStyle(fontSize: 12))),
-                  Text('×${e.value}', style: const TextStyle(fontSize: 12)),
+                  Text(
+                    '${row.recordDate} · ${row.patientName ?? row.patientNo}'
+                    ' · ${row.disciplineName ?? ''}${row.kindLabel ?? ''}',
+                    style: TextStyle(
+                        fontSize: 11, color: theme.colorScheme.outline),
+                  ),
+                  const SizedBox(height: 2),
+                  // ★ 内容就是 SOAP 纯文本（与 PDF 同一份）。
+                  SelectableText(
+                    row.renderedText.isEmpty ? '（无内容）' : row.renderedText,
+                    style: const TextStyle(fontSize: 12, height: 1.4),
+                  ),
                 ],
               ),
             ),
-          if (group.patientNos.isNotEmpty) ...[
-            const SizedBox(height: 6),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                '患者：${group.patientNos.join('、')}',
-                style: TextStyle(fontSize: 11, color: theme.colorScheme.outline),
-              ),
-            ),
-          ],
         ],
       ),
     );

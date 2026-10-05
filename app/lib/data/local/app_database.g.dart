@@ -697,27 +697,58 @@ class $TreatmentRecordsTable extends TreatmentRecords
     type: DriftSqlType.string,
     requiredDuringInsert: true,
   );
-  static const VerificationMeta _sessionPeriodMeta = const VerificationMeta(
-    'sessionPeriod',
+  static const VerificationMeta _disciplineMeta = const VerificationMeta(
+    'discipline',
   );
   @override
-  late final GeneratedColumn<String> sessionPeriod = GeneratedColumn<String>(
-    'session_period',
+  late final GeneratedColumn<String> discipline = GeneratedColumn<String>(
+    'discipline',
     aliasedName,
-    true,
+    false,
     type: DriftSqlType.string,
-    requiredDuringInsert: false,
+    requiredDuringInsert: true,
   );
-  static const VerificationMeta _durationMinMeta = const VerificationMeta(
-    'durationMin',
-  );
+  static const VerificationMeta _kindMeta = const VerificationMeta('kind');
   @override
-  late final GeneratedColumn<int> durationMin = GeneratedColumn<int>(
-    'duration_min',
+  late final GeneratedColumn<String> kind = GeneratedColumn<String>(
+    'kind',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _seqNoMeta = const VerificationMeta('seqNo');
+  @override
+  late final GeneratedColumn<int> seqNo = GeneratedColumn<int>(
+    'seq_no',
     aliasedName,
     true,
     type: DriftSqlType.int,
     requiredDuringInsert: false,
+  );
+  static const VerificationMeta _bodyJsonMeta = const VerificationMeta(
+    'bodyJson',
+  );
+  @override
+  late final GeneratedColumn<String> bodyJson = GeneratedColumn<String>(
+    'body_json',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant('{}'),
+  );
+  static const VerificationMeta _renderedTextMeta = const VerificationMeta(
+    'renderedText',
+  );
+  @override
+  late final GeneratedColumn<String> renderedText = GeneratedColumn<String>(
+    'rendered_text',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(''),
   );
   static const VerificationMeta _noteMeta = const VerificationMeta('note');
   @override
@@ -728,17 +759,6 @@ class $TreatmentRecordsTable extends TreatmentRecords
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
-  static const VerificationMeta _patientResponseJsonMeta =
-      const VerificationMeta('patientResponseJson');
-  @override
-  late final GeneratedColumn<String> patientResponseJson =
-      GeneratedColumn<String>(
-        'patient_response_json',
-        aliasedName,
-        true,
-        type: DriftSqlType.string,
-        requiredDuringInsert: false,
-      );
   static const VerificationMeta _statusMeta = const VerificationMeta('status');
   @override
   late final GeneratedColumn<String> status = GeneratedColumn<String>(
@@ -748,15 +768,6 @@ class $TreatmentRecordsTable extends TreatmentRecords
     type: DriftSqlType.string,
     requiredDuringInsert: false,
     defaultValue: const Constant('draft'),
-  );
-  static const VerificationMeta _seqNoMeta = const VerificationMeta('seqNo');
-  @override
-  late final GeneratedColumn<int> seqNo = GeneratedColumn<int>(
-    'seq_no',
-    aliasedName,
-    true,
-    type: DriftSqlType.int,
-    requiredDuringInsert: false,
   );
   static const VerificationMeta _editCountMeta = const VerificationMeta(
     'editCount',
@@ -830,36 +841,25 @@ class $TreatmentRecordsTable extends TreatmentRecords
     requiredDuringInsert: false,
     defaultValue: const Constant('synced'),
   );
-  static const VerificationMeta _pendingItemsJsonMeta = const VerificationMeta(
-    'pendingItemsJson',
-  );
-  @override
-  late final GeneratedColumn<String> pendingItemsJson = GeneratedColumn<String>(
-    'pending_items_json',
-    aliasedName,
-    true,
-    type: DriftSqlType.string,
-    requiredDuringInsert: false,
-  );
   @override
   List<GeneratedColumn> get $columns => [
     id,
     patientNo,
     therapistId,
     recordDate,
-    sessionPeriod,
-    durationMin,
-    note,
-    patientResponseJson,
-    status,
+    discipline,
+    kind,
     seqNo,
+    bodyJson,
+    renderedText,
+    note,
+    status,
     editCount,
     revision,
     isTemporary,
     originalTherapistId,
     clientUuid,
     syncStatus,
-    pendingItemsJson,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -903,21 +903,40 @@ class $TreatmentRecordsTable extends TreatmentRecords
     } else if (isInserting) {
       context.missing(_recordDateMeta);
     }
-    if (data.containsKey('session_period')) {
+    if (data.containsKey('discipline')) {
       context.handle(
-        _sessionPeriodMeta,
-        sessionPeriod.isAcceptableOrUnknown(
-          data['session_period']!,
-          _sessionPeriodMeta,
-        ),
+        _disciplineMeta,
+        discipline.isAcceptableOrUnknown(data['discipline']!, _disciplineMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_disciplineMeta);
+    }
+    if (data.containsKey('kind')) {
+      context.handle(
+        _kindMeta,
+        kind.isAcceptableOrUnknown(data['kind']!, _kindMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_kindMeta);
+    }
+    if (data.containsKey('seq_no')) {
+      context.handle(
+        _seqNoMeta,
+        seqNo.isAcceptableOrUnknown(data['seq_no']!, _seqNoMeta),
       );
     }
-    if (data.containsKey('duration_min')) {
+    if (data.containsKey('body_json')) {
       context.handle(
-        _durationMinMeta,
-        durationMin.isAcceptableOrUnknown(
-          data['duration_min']!,
-          _durationMinMeta,
+        _bodyJsonMeta,
+        bodyJson.isAcceptableOrUnknown(data['body_json']!, _bodyJsonMeta),
+      );
+    }
+    if (data.containsKey('rendered_text')) {
+      context.handle(
+        _renderedTextMeta,
+        renderedText.isAcceptableOrUnknown(
+          data['rendered_text']!,
+          _renderedTextMeta,
         ),
       );
     }
@@ -927,25 +946,10 @@ class $TreatmentRecordsTable extends TreatmentRecords
         note.isAcceptableOrUnknown(data['note']!, _noteMeta),
       );
     }
-    if (data.containsKey('patient_response_json')) {
-      context.handle(
-        _patientResponseJsonMeta,
-        patientResponseJson.isAcceptableOrUnknown(
-          data['patient_response_json']!,
-          _patientResponseJsonMeta,
-        ),
-      );
-    }
     if (data.containsKey('status')) {
       context.handle(
         _statusMeta,
         status.isAcceptableOrUnknown(data['status']!, _statusMeta),
-      );
-    }
-    if (data.containsKey('seq_no')) {
-      context.handle(
-        _seqNoMeta,
-        seqNo.isAcceptableOrUnknown(data['seq_no']!, _seqNoMeta),
       );
     }
     if (data.containsKey('edit_count')) {
@@ -990,15 +994,6 @@ class $TreatmentRecordsTable extends TreatmentRecords
         syncStatus.isAcceptableOrUnknown(data['sync_status']!, _syncStatusMeta),
       );
     }
-    if (data.containsKey('pending_items_json')) {
-      context.handle(
-        _pendingItemsJsonMeta,
-        pendingItemsJson.isAcceptableOrUnknown(
-          data['pending_items_json']!,
-          _pendingItemsJsonMeta,
-        ),
-      );
-    }
     return context;
   }
 
@@ -1024,30 +1019,34 @@ class $TreatmentRecordsTable extends TreatmentRecords
         DriftSqlType.string,
         data['${effectivePrefix}record_date'],
       )!,
-      sessionPeriod: attachedDatabase.typeMapping.read(
+      discipline: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
-        data['${effectivePrefix}session_period'],
-      ),
-      durationMin: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
-        data['${effectivePrefix}duration_min'],
-      ),
-      note: attachedDatabase.typeMapping.read(
+        data['${effectivePrefix}discipline'],
+      )!,
+      kind: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
-        data['${effectivePrefix}note'],
-      ),
-      patientResponseJson: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}patient_response_json'],
-      ),
-      status: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}status'],
+        data['${effectivePrefix}kind'],
       )!,
       seqNo: attachedDatabase.typeMapping.read(
         DriftSqlType.int,
         data['${effectivePrefix}seq_no'],
       ),
+      bodyJson: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}body_json'],
+      )!,
+      renderedText: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}rendered_text'],
+      )!,
+      note: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}note'],
+      ),
+      status: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}status'],
+      )!,
       editCount: attachedDatabase.typeMapping.read(
         DriftSqlType.int,
         data['${effectivePrefix}edit_count'],
@@ -1072,10 +1071,6 @@ class $TreatmentRecordsTable extends TreatmentRecords
         DriftSqlType.string,
         data['${effectivePrefix}sync_status'],
       )!,
-      pendingItemsJson: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}pending_items_json'],
-      ),
     );
   }
 
@@ -1090,17 +1085,28 @@ class TreatmentRecord extends DataClass implements Insertable<TreatmentRecord> {
   final String patientNo;
   final int therapistId;
   final String recordDate;
-  final String? sessionPeriod;
-  final int? durationMin;
-  final String? note;
 
-  /// `patient_response_json` 原样保存：`{"tags": [...], "items": [...]}`。
-  /// 不做结构化拆解——服务端已保证 `json_valid()`，客户端只需原样回传。
-  final String? patientResponseJson;
-  final String status;
+  /// `PT` / `OT` / `ST_SW` / `ST_SP`（四大类）。
+  final String discipline;
 
-  /// 该患者第几次治疗；**草稿不占号**，提交后才有值。
+  /// `initial` / `daily` / `reassessment` / `discharge`（形态）。
+  final String kind;
+
+  /// 第几次**日常**记录；评估文书（首评/复评/出院小结）不占次数 → 为 null。
   final int? seqNo;
+
+  /// 答案：`{field_key: value}`（键就是模板字段的 `key`）。
+  ///
+  /// 这是**唯一**的记录内容载体：服务端 `body` 原样存取，App 不再拆表。
+  final String bodyJson;
+
+  /// 服务端在落库时**冻结**的 SOAP 纯文本（时间轴/详情直接显示它）。
+  ///
+  /// 本地草稿也存一份客户端预览（见 `RecordRepository`），推送成功后会被
+  /// 服务端返回的正式文本覆盖。
+  final String renderedText;
+  final String? note;
+  final String status;
   final int editCount;
   final int revision;
 
@@ -1110,32 +1116,24 @@ class TreatmentRecord extends DataClass implements Insertable<TreatmentRecord> {
   final int? originalTherapistId;
   final String? clientUuid;
   final String syncStatus;
-
-  /// 明细快照（JSON 数组），**仅用于离线草稿**。
-  ///
-  /// 为什么需要它：服务端返回的 `payload.items` 里带着两层快照
-  /// （`sub_item_name_snapshot` + `params_snapshot_json`），所以**已同步**记录的明细
-  /// 走 `record_items` 表。但本地新建、**尚未推送**的草稿没有服务端 id，
-  /// 明细只能先整体存成一列 JSON；推送成功后由同步引擎落成 `record_items` 行。
-  final String? pendingItemsJson;
   const TreatmentRecord({
     required this.id,
     required this.patientNo,
     required this.therapistId,
     required this.recordDate,
-    this.sessionPeriod,
-    this.durationMin,
-    this.note,
-    this.patientResponseJson,
-    required this.status,
+    required this.discipline,
+    required this.kind,
     this.seqNo,
+    required this.bodyJson,
+    required this.renderedText,
+    this.note,
+    required this.status,
     required this.editCount,
     required this.revision,
     required this.isTemporary,
     this.originalTherapistId,
     this.clientUuid,
     required this.syncStatus,
-    this.pendingItemsJson,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -1144,22 +1142,17 @@ class TreatmentRecord extends DataClass implements Insertable<TreatmentRecord> {
     map['patient_no'] = Variable<String>(patientNo);
     map['therapist_id'] = Variable<int>(therapistId);
     map['record_date'] = Variable<String>(recordDate);
-    if (!nullToAbsent || sessionPeriod != null) {
-      map['session_period'] = Variable<String>(sessionPeriod);
-    }
-    if (!nullToAbsent || durationMin != null) {
-      map['duration_min'] = Variable<int>(durationMin);
-    }
-    if (!nullToAbsent || note != null) {
-      map['note'] = Variable<String>(note);
-    }
-    if (!nullToAbsent || patientResponseJson != null) {
-      map['patient_response_json'] = Variable<String>(patientResponseJson);
-    }
-    map['status'] = Variable<String>(status);
+    map['discipline'] = Variable<String>(discipline);
+    map['kind'] = Variable<String>(kind);
     if (!nullToAbsent || seqNo != null) {
       map['seq_no'] = Variable<int>(seqNo);
     }
+    map['body_json'] = Variable<String>(bodyJson);
+    map['rendered_text'] = Variable<String>(renderedText);
+    if (!nullToAbsent || note != null) {
+      map['note'] = Variable<String>(note);
+    }
+    map['status'] = Variable<String>(status);
     map['edit_count'] = Variable<int>(editCount);
     map['revision'] = Variable<int>(revision);
     map['is_temporary'] = Variable<bool>(isTemporary);
@@ -1170,9 +1163,6 @@ class TreatmentRecord extends DataClass implements Insertable<TreatmentRecord> {
       map['client_uuid'] = Variable<String>(clientUuid);
     }
     map['sync_status'] = Variable<String>(syncStatus);
-    if (!nullToAbsent || pendingItemsJson != null) {
-      map['pending_items_json'] = Variable<String>(pendingItemsJson);
-    }
     return map;
   }
 
@@ -1182,20 +1172,15 @@ class TreatmentRecord extends DataClass implements Insertable<TreatmentRecord> {
       patientNo: Value(patientNo),
       therapistId: Value(therapistId),
       recordDate: Value(recordDate),
-      sessionPeriod: sessionPeriod == null && nullToAbsent
-          ? const Value.absent()
-          : Value(sessionPeriod),
-      durationMin: durationMin == null && nullToAbsent
-          ? const Value.absent()
-          : Value(durationMin),
-      note: note == null && nullToAbsent ? const Value.absent() : Value(note),
-      patientResponseJson: patientResponseJson == null && nullToAbsent
-          ? const Value.absent()
-          : Value(patientResponseJson),
-      status: Value(status),
+      discipline: Value(discipline),
+      kind: Value(kind),
       seqNo: seqNo == null && nullToAbsent
           ? const Value.absent()
           : Value(seqNo),
+      bodyJson: Value(bodyJson),
+      renderedText: Value(renderedText),
+      note: note == null && nullToAbsent ? const Value.absent() : Value(note),
+      status: Value(status),
       editCount: Value(editCount),
       revision: Value(revision),
       isTemporary: Value(isTemporary),
@@ -1206,9 +1191,6 @@ class TreatmentRecord extends DataClass implements Insertable<TreatmentRecord> {
           ? const Value.absent()
           : Value(clientUuid),
       syncStatus: Value(syncStatus),
-      pendingItemsJson: pendingItemsJson == null && nullToAbsent
-          ? const Value.absent()
-          : Value(pendingItemsJson),
     );
   }
 
@@ -1222,14 +1204,13 @@ class TreatmentRecord extends DataClass implements Insertable<TreatmentRecord> {
       patientNo: serializer.fromJson<String>(json['patientNo']),
       therapistId: serializer.fromJson<int>(json['therapistId']),
       recordDate: serializer.fromJson<String>(json['recordDate']),
-      sessionPeriod: serializer.fromJson<String?>(json['sessionPeriod']),
-      durationMin: serializer.fromJson<int?>(json['durationMin']),
-      note: serializer.fromJson<String?>(json['note']),
-      patientResponseJson: serializer.fromJson<String?>(
-        json['patientResponseJson'],
-      ),
-      status: serializer.fromJson<String>(json['status']),
+      discipline: serializer.fromJson<String>(json['discipline']),
+      kind: serializer.fromJson<String>(json['kind']),
       seqNo: serializer.fromJson<int?>(json['seqNo']),
+      bodyJson: serializer.fromJson<String>(json['bodyJson']),
+      renderedText: serializer.fromJson<String>(json['renderedText']),
+      note: serializer.fromJson<String?>(json['note']),
+      status: serializer.fromJson<String>(json['status']),
       editCount: serializer.fromJson<int>(json['editCount']),
       revision: serializer.fromJson<int>(json['revision']),
       isTemporary: serializer.fromJson<bool>(json['isTemporary']),
@@ -1238,7 +1219,6 @@ class TreatmentRecord extends DataClass implements Insertable<TreatmentRecord> {
       ),
       clientUuid: serializer.fromJson<String?>(json['clientUuid']),
       syncStatus: serializer.fromJson<String>(json['syncStatus']),
-      pendingItemsJson: serializer.fromJson<String?>(json['pendingItemsJson']),
     );
   }
   @override
@@ -1249,19 +1229,19 @@ class TreatmentRecord extends DataClass implements Insertable<TreatmentRecord> {
       'patientNo': serializer.toJson<String>(patientNo),
       'therapistId': serializer.toJson<int>(therapistId),
       'recordDate': serializer.toJson<String>(recordDate),
-      'sessionPeriod': serializer.toJson<String?>(sessionPeriod),
-      'durationMin': serializer.toJson<int?>(durationMin),
-      'note': serializer.toJson<String?>(note),
-      'patientResponseJson': serializer.toJson<String?>(patientResponseJson),
-      'status': serializer.toJson<String>(status),
+      'discipline': serializer.toJson<String>(discipline),
+      'kind': serializer.toJson<String>(kind),
       'seqNo': serializer.toJson<int?>(seqNo),
+      'bodyJson': serializer.toJson<String>(bodyJson),
+      'renderedText': serializer.toJson<String>(renderedText),
+      'note': serializer.toJson<String?>(note),
+      'status': serializer.toJson<String>(status),
       'editCount': serializer.toJson<int>(editCount),
       'revision': serializer.toJson<int>(revision),
       'isTemporary': serializer.toJson<bool>(isTemporary),
       'originalTherapistId': serializer.toJson<int?>(originalTherapistId),
       'clientUuid': serializer.toJson<String?>(clientUuid),
       'syncStatus': serializer.toJson<String>(syncStatus),
-      'pendingItemsJson': serializer.toJson<String?>(pendingItemsJson),
     };
   }
 
@@ -1270,34 +1250,31 @@ class TreatmentRecord extends DataClass implements Insertable<TreatmentRecord> {
     String? patientNo,
     int? therapistId,
     String? recordDate,
-    Value<String?> sessionPeriod = const Value.absent(),
-    Value<int?> durationMin = const Value.absent(),
-    Value<String?> note = const Value.absent(),
-    Value<String?> patientResponseJson = const Value.absent(),
-    String? status,
+    String? discipline,
+    String? kind,
     Value<int?> seqNo = const Value.absent(),
+    String? bodyJson,
+    String? renderedText,
+    Value<String?> note = const Value.absent(),
+    String? status,
     int? editCount,
     int? revision,
     bool? isTemporary,
     Value<int?> originalTherapistId = const Value.absent(),
     Value<String?> clientUuid = const Value.absent(),
     String? syncStatus,
-    Value<String?> pendingItemsJson = const Value.absent(),
   }) => TreatmentRecord(
     id: id ?? this.id,
     patientNo: patientNo ?? this.patientNo,
     therapistId: therapistId ?? this.therapistId,
     recordDate: recordDate ?? this.recordDate,
-    sessionPeriod: sessionPeriod.present
-        ? sessionPeriod.value
-        : this.sessionPeriod,
-    durationMin: durationMin.present ? durationMin.value : this.durationMin,
-    note: note.present ? note.value : this.note,
-    patientResponseJson: patientResponseJson.present
-        ? patientResponseJson.value
-        : this.patientResponseJson,
-    status: status ?? this.status,
+    discipline: discipline ?? this.discipline,
+    kind: kind ?? this.kind,
     seqNo: seqNo.present ? seqNo.value : this.seqNo,
+    bodyJson: bodyJson ?? this.bodyJson,
+    renderedText: renderedText ?? this.renderedText,
+    note: note.present ? note.value : this.note,
+    status: status ?? this.status,
     editCount: editCount ?? this.editCount,
     revision: revision ?? this.revision,
     isTemporary: isTemporary ?? this.isTemporary,
@@ -1306,9 +1283,6 @@ class TreatmentRecord extends DataClass implements Insertable<TreatmentRecord> {
         : this.originalTherapistId,
     clientUuid: clientUuid.present ? clientUuid.value : this.clientUuid,
     syncStatus: syncStatus ?? this.syncStatus,
-    pendingItemsJson: pendingItemsJson.present
-        ? pendingItemsJson.value
-        : this.pendingItemsJson,
   );
   TreatmentRecord copyWithCompanion(TreatmentRecordsCompanion data) {
     return TreatmentRecord(
@@ -1320,18 +1294,17 @@ class TreatmentRecord extends DataClass implements Insertable<TreatmentRecord> {
       recordDate: data.recordDate.present
           ? data.recordDate.value
           : this.recordDate,
-      sessionPeriod: data.sessionPeriod.present
-          ? data.sessionPeriod.value
-          : this.sessionPeriod,
-      durationMin: data.durationMin.present
-          ? data.durationMin.value
-          : this.durationMin,
-      note: data.note.present ? data.note.value : this.note,
-      patientResponseJson: data.patientResponseJson.present
-          ? data.patientResponseJson.value
-          : this.patientResponseJson,
-      status: data.status.present ? data.status.value : this.status,
+      discipline: data.discipline.present
+          ? data.discipline.value
+          : this.discipline,
+      kind: data.kind.present ? data.kind.value : this.kind,
       seqNo: data.seqNo.present ? data.seqNo.value : this.seqNo,
+      bodyJson: data.bodyJson.present ? data.bodyJson.value : this.bodyJson,
+      renderedText: data.renderedText.present
+          ? data.renderedText.value
+          : this.renderedText,
+      note: data.note.present ? data.note.value : this.note,
+      status: data.status.present ? data.status.value : this.status,
       editCount: data.editCount.present ? data.editCount.value : this.editCount,
       revision: data.revision.present ? data.revision.value : this.revision,
       isTemporary: data.isTemporary.present
@@ -1346,9 +1319,6 @@ class TreatmentRecord extends DataClass implements Insertable<TreatmentRecord> {
       syncStatus: data.syncStatus.present
           ? data.syncStatus.value
           : this.syncStatus,
-      pendingItemsJson: data.pendingItemsJson.present
-          ? data.pendingItemsJson.value
-          : this.pendingItemsJson,
     );
   }
 
@@ -1359,19 +1329,19 @@ class TreatmentRecord extends DataClass implements Insertable<TreatmentRecord> {
           ..write('patientNo: $patientNo, ')
           ..write('therapistId: $therapistId, ')
           ..write('recordDate: $recordDate, ')
-          ..write('sessionPeriod: $sessionPeriod, ')
-          ..write('durationMin: $durationMin, ')
-          ..write('note: $note, ')
-          ..write('patientResponseJson: $patientResponseJson, ')
-          ..write('status: $status, ')
+          ..write('discipline: $discipline, ')
+          ..write('kind: $kind, ')
           ..write('seqNo: $seqNo, ')
+          ..write('bodyJson: $bodyJson, ')
+          ..write('renderedText: $renderedText, ')
+          ..write('note: $note, ')
+          ..write('status: $status, ')
           ..write('editCount: $editCount, ')
           ..write('revision: $revision, ')
           ..write('isTemporary: $isTemporary, ')
           ..write('originalTherapistId: $originalTherapistId, ')
           ..write('clientUuid: $clientUuid, ')
-          ..write('syncStatus: $syncStatus, ')
-          ..write('pendingItemsJson: $pendingItemsJson')
+          ..write('syncStatus: $syncStatus')
           ..write(')'))
         .toString();
   }
@@ -1382,19 +1352,19 @@ class TreatmentRecord extends DataClass implements Insertable<TreatmentRecord> {
     patientNo,
     therapistId,
     recordDate,
-    sessionPeriod,
-    durationMin,
-    note,
-    patientResponseJson,
-    status,
+    discipline,
+    kind,
     seqNo,
+    bodyJson,
+    renderedText,
+    note,
+    status,
     editCount,
     revision,
     isTemporary,
     originalTherapistId,
     clientUuid,
     syncStatus,
-    pendingItemsJson,
   );
   @override
   bool operator ==(Object other) =>
@@ -1404,19 +1374,19 @@ class TreatmentRecord extends DataClass implements Insertable<TreatmentRecord> {
           other.patientNo == this.patientNo &&
           other.therapistId == this.therapistId &&
           other.recordDate == this.recordDate &&
-          other.sessionPeriod == this.sessionPeriod &&
-          other.durationMin == this.durationMin &&
-          other.note == this.note &&
-          other.patientResponseJson == this.patientResponseJson &&
-          other.status == this.status &&
+          other.discipline == this.discipline &&
+          other.kind == this.kind &&
           other.seqNo == this.seqNo &&
+          other.bodyJson == this.bodyJson &&
+          other.renderedText == this.renderedText &&
+          other.note == this.note &&
+          other.status == this.status &&
           other.editCount == this.editCount &&
           other.revision == this.revision &&
           other.isTemporary == this.isTemporary &&
           other.originalTherapistId == this.originalTherapistId &&
           other.clientUuid == this.clientUuid &&
-          other.syncStatus == this.syncStatus &&
-          other.pendingItemsJson == this.pendingItemsJson);
+          other.syncStatus == this.syncStatus);
 }
 
 class TreatmentRecordsCompanion extends UpdateCompanion<TreatmentRecord> {
@@ -1424,90 +1394,92 @@ class TreatmentRecordsCompanion extends UpdateCompanion<TreatmentRecord> {
   final Value<String> patientNo;
   final Value<int> therapistId;
   final Value<String> recordDate;
-  final Value<String?> sessionPeriod;
-  final Value<int?> durationMin;
-  final Value<String?> note;
-  final Value<String?> patientResponseJson;
-  final Value<String> status;
+  final Value<String> discipline;
+  final Value<String> kind;
   final Value<int?> seqNo;
+  final Value<String> bodyJson;
+  final Value<String> renderedText;
+  final Value<String?> note;
+  final Value<String> status;
   final Value<int> editCount;
   final Value<int> revision;
   final Value<bool> isTemporary;
   final Value<int?> originalTherapistId;
   final Value<String?> clientUuid;
   final Value<String> syncStatus;
-  final Value<String?> pendingItemsJson;
   const TreatmentRecordsCompanion({
     this.id = const Value.absent(),
     this.patientNo = const Value.absent(),
     this.therapistId = const Value.absent(),
     this.recordDate = const Value.absent(),
-    this.sessionPeriod = const Value.absent(),
-    this.durationMin = const Value.absent(),
-    this.note = const Value.absent(),
-    this.patientResponseJson = const Value.absent(),
-    this.status = const Value.absent(),
+    this.discipline = const Value.absent(),
+    this.kind = const Value.absent(),
     this.seqNo = const Value.absent(),
+    this.bodyJson = const Value.absent(),
+    this.renderedText = const Value.absent(),
+    this.note = const Value.absent(),
+    this.status = const Value.absent(),
     this.editCount = const Value.absent(),
     this.revision = const Value.absent(),
     this.isTemporary = const Value.absent(),
     this.originalTherapistId = const Value.absent(),
     this.clientUuid = const Value.absent(),
     this.syncStatus = const Value.absent(),
-    this.pendingItemsJson = const Value.absent(),
   });
   TreatmentRecordsCompanion.insert({
     this.id = const Value.absent(),
     required String patientNo,
     required int therapistId,
     required String recordDate,
-    this.sessionPeriod = const Value.absent(),
-    this.durationMin = const Value.absent(),
-    this.note = const Value.absent(),
-    this.patientResponseJson = const Value.absent(),
-    this.status = const Value.absent(),
+    required String discipline,
+    required String kind,
     this.seqNo = const Value.absent(),
+    this.bodyJson = const Value.absent(),
+    this.renderedText = const Value.absent(),
+    this.note = const Value.absent(),
+    this.status = const Value.absent(),
     this.editCount = const Value.absent(),
     this.revision = const Value.absent(),
     this.isTemporary = const Value.absent(),
     this.originalTherapistId = const Value.absent(),
     this.clientUuid = const Value.absent(),
     this.syncStatus = const Value.absent(),
-    this.pendingItemsJson = const Value.absent(),
   }) : patientNo = Value(patientNo),
        therapistId = Value(therapistId),
-       recordDate = Value(recordDate);
+       recordDate = Value(recordDate),
+       discipline = Value(discipline),
+       kind = Value(kind);
   static Insertable<TreatmentRecord> custom({
     Expression<int>? id,
     Expression<String>? patientNo,
     Expression<int>? therapistId,
     Expression<String>? recordDate,
-    Expression<String>? sessionPeriod,
-    Expression<int>? durationMin,
-    Expression<String>? note,
-    Expression<String>? patientResponseJson,
-    Expression<String>? status,
+    Expression<String>? discipline,
+    Expression<String>? kind,
     Expression<int>? seqNo,
+    Expression<String>? bodyJson,
+    Expression<String>? renderedText,
+    Expression<String>? note,
+    Expression<String>? status,
     Expression<int>? editCount,
     Expression<int>? revision,
     Expression<bool>? isTemporary,
     Expression<int>? originalTherapistId,
     Expression<String>? clientUuid,
     Expression<String>? syncStatus,
-    Expression<String>? pendingItemsJson,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
       if (patientNo != null) 'patient_no': patientNo,
       if (therapistId != null) 'therapist_id': therapistId,
       if (recordDate != null) 'record_date': recordDate,
-      if (sessionPeriod != null) 'session_period': sessionPeriod,
-      if (durationMin != null) 'duration_min': durationMin,
-      if (note != null) 'note': note,
-      if (patientResponseJson != null)
-        'patient_response_json': patientResponseJson,
-      if (status != null) 'status': status,
+      if (discipline != null) 'discipline': discipline,
+      if (kind != null) 'kind': kind,
       if (seqNo != null) 'seq_no': seqNo,
+      if (bodyJson != null) 'body_json': bodyJson,
+      if (renderedText != null) 'rendered_text': renderedText,
+      if (note != null) 'note': note,
+      if (status != null) 'status': status,
       if (editCount != null) 'edit_count': editCount,
       if (revision != null) 'revision': revision,
       if (isTemporary != null) 'is_temporary': isTemporary,
@@ -1515,7 +1487,6 @@ class TreatmentRecordsCompanion extends UpdateCompanion<TreatmentRecord> {
         'original_therapist_id': originalTherapistId,
       if (clientUuid != null) 'client_uuid': clientUuid,
       if (syncStatus != null) 'sync_status': syncStatus,
-      if (pendingItemsJson != null) 'pending_items_json': pendingItemsJson,
     });
   }
 
@@ -1524,38 +1495,38 @@ class TreatmentRecordsCompanion extends UpdateCompanion<TreatmentRecord> {
     Value<String>? patientNo,
     Value<int>? therapistId,
     Value<String>? recordDate,
-    Value<String?>? sessionPeriod,
-    Value<int?>? durationMin,
-    Value<String?>? note,
-    Value<String?>? patientResponseJson,
-    Value<String>? status,
+    Value<String>? discipline,
+    Value<String>? kind,
     Value<int?>? seqNo,
+    Value<String>? bodyJson,
+    Value<String>? renderedText,
+    Value<String?>? note,
+    Value<String>? status,
     Value<int>? editCount,
     Value<int>? revision,
     Value<bool>? isTemporary,
     Value<int?>? originalTherapistId,
     Value<String?>? clientUuid,
     Value<String>? syncStatus,
-    Value<String?>? pendingItemsJson,
   }) {
     return TreatmentRecordsCompanion(
       id: id ?? this.id,
       patientNo: patientNo ?? this.patientNo,
       therapistId: therapistId ?? this.therapistId,
       recordDate: recordDate ?? this.recordDate,
-      sessionPeriod: sessionPeriod ?? this.sessionPeriod,
-      durationMin: durationMin ?? this.durationMin,
-      note: note ?? this.note,
-      patientResponseJson: patientResponseJson ?? this.patientResponseJson,
-      status: status ?? this.status,
+      discipline: discipline ?? this.discipline,
+      kind: kind ?? this.kind,
       seqNo: seqNo ?? this.seqNo,
+      bodyJson: bodyJson ?? this.bodyJson,
+      renderedText: renderedText ?? this.renderedText,
+      note: note ?? this.note,
+      status: status ?? this.status,
       editCount: editCount ?? this.editCount,
       revision: revision ?? this.revision,
       isTemporary: isTemporary ?? this.isTemporary,
       originalTherapistId: originalTherapistId ?? this.originalTherapistId,
       clientUuid: clientUuid ?? this.clientUuid,
       syncStatus: syncStatus ?? this.syncStatus,
-      pendingItemsJson: pendingItemsJson ?? this.pendingItemsJson,
     );
   }
 
@@ -1574,25 +1545,26 @@ class TreatmentRecordsCompanion extends UpdateCompanion<TreatmentRecord> {
     if (recordDate.present) {
       map['record_date'] = Variable<String>(recordDate.value);
     }
-    if (sessionPeriod.present) {
-      map['session_period'] = Variable<String>(sessionPeriod.value);
+    if (discipline.present) {
+      map['discipline'] = Variable<String>(discipline.value);
     }
-    if (durationMin.present) {
-      map['duration_min'] = Variable<int>(durationMin.value);
+    if (kind.present) {
+      map['kind'] = Variable<String>(kind.value);
+    }
+    if (seqNo.present) {
+      map['seq_no'] = Variable<int>(seqNo.value);
+    }
+    if (bodyJson.present) {
+      map['body_json'] = Variable<String>(bodyJson.value);
+    }
+    if (renderedText.present) {
+      map['rendered_text'] = Variable<String>(renderedText.value);
     }
     if (note.present) {
       map['note'] = Variable<String>(note.value);
     }
-    if (patientResponseJson.present) {
-      map['patient_response_json'] = Variable<String>(
-        patientResponseJson.value,
-      );
-    }
     if (status.present) {
       map['status'] = Variable<String>(status.value);
-    }
-    if (seqNo.present) {
-      map['seq_no'] = Variable<int>(seqNo.value);
     }
     if (editCount.present) {
       map['edit_count'] = Variable<int>(editCount.value);
@@ -1612,9 +1584,6 @@ class TreatmentRecordsCompanion extends UpdateCompanion<TreatmentRecord> {
     if (syncStatus.present) {
       map['sync_status'] = Variable<String>(syncStatus.value);
     }
-    if (pendingItemsJson.present) {
-      map['pending_items_json'] = Variable<String>(pendingItemsJson.value);
-    }
     return map;
   }
 
@@ -1625,550 +1594,19 @@ class TreatmentRecordsCompanion extends UpdateCompanion<TreatmentRecord> {
           ..write('patientNo: $patientNo, ')
           ..write('therapistId: $therapistId, ')
           ..write('recordDate: $recordDate, ')
-          ..write('sessionPeriod: $sessionPeriod, ')
-          ..write('durationMin: $durationMin, ')
-          ..write('note: $note, ')
-          ..write('patientResponseJson: $patientResponseJson, ')
-          ..write('status: $status, ')
+          ..write('discipline: $discipline, ')
+          ..write('kind: $kind, ')
           ..write('seqNo: $seqNo, ')
+          ..write('bodyJson: $bodyJson, ')
+          ..write('renderedText: $renderedText, ')
+          ..write('note: $note, ')
+          ..write('status: $status, ')
           ..write('editCount: $editCount, ')
           ..write('revision: $revision, ')
           ..write('isTemporary: $isTemporary, ')
           ..write('originalTherapistId: $originalTherapistId, ')
           ..write('clientUuid: $clientUuid, ')
-          ..write('syncStatus: $syncStatus, ')
-          ..write('pendingItemsJson: $pendingItemsJson')
-          ..write(')'))
-        .toString();
-  }
-}
-
-class $RecordItemsTable extends RecordItems
-    with TableInfo<$RecordItemsTable, RecordItem> {
-  @override
-  final GeneratedDatabase attachedDatabase;
-  final String? _alias;
-  $RecordItemsTable(this.attachedDatabase, [this._alias]);
-  static const VerificationMeta _idMeta = const VerificationMeta('id');
-  @override
-  late final GeneratedColumn<int> id = GeneratedColumn<int>(
-    'id',
-    aliasedName,
-    false,
-    type: DriftSqlType.int,
-    requiredDuringInsert: false,
-  );
-  static const VerificationMeta _recordIdMeta = const VerificationMeta(
-    'recordId',
-  );
-  @override
-  late final GeneratedColumn<int> recordId = GeneratedColumn<int>(
-    'record_id',
-    aliasedName,
-    false,
-    type: DriftSqlType.int,
-    requiredDuringInsert: true,
-  );
-  static const VerificationMeta _mainItemIdMeta = const VerificationMeta(
-    'mainItemId',
-  );
-  @override
-  late final GeneratedColumn<int> mainItemId = GeneratedColumn<int>(
-    'main_item_id',
-    aliasedName,
-    false,
-    type: DriftSqlType.int,
-    requiredDuringInsert: true,
-  );
-  static const VerificationMeta _subItemIdMeta = const VerificationMeta(
-    'subItemId',
-  );
-  @override
-  late final GeneratedColumn<int> subItemId = GeneratedColumn<int>(
-    'sub_item_id',
-    aliasedName,
-    false,
-    type: DriftSqlType.int,
-    requiredDuringInsert: true,
-  );
-  static const VerificationMeta _subItemNameSnapshotMeta =
-      const VerificationMeta('subItemNameSnapshot');
-  @override
-  late final GeneratedColumn<String> subItemNameSnapshot =
-      GeneratedColumn<String>(
-        'sub_item_name_snapshot',
-        aliasedName,
-        true,
-        type: DriftSqlType.string,
-        requiredDuringInsert: false,
-      );
-  static const VerificationMeta _paramsJsonMeta = const VerificationMeta(
-    'paramsJson',
-  );
-  @override
-  late final GeneratedColumn<String> paramsJson = GeneratedColumn<String>(
-    'params_json',
-    aliasedName,
-    false,
-    type: DriftSqlType.string,
-    requiredDuringInsert: true,
-  );
-  static const VerificationMeta _paramsSnapshotJsonMeta =
-      const VerificationMeta('paramsSnapshotJson');
-  @override
-  late final GeneratedColumn<String> paramsSnapshotJson =
-      GeneratedColumn<String>(
-        'params_snapshot_json',
-        aliasedName,
-        true,
-        type: DriftSqlType.string,
-        requiredDuringInsert: false,
-      );
-  static const VerificationMeta _sortMeta = const VerificationMeta('sort');
-  @override
-  late final GeneratedColumn<int> sort = GeneratedColumn<int>(
-    'sort',
-    aliasedName,
-    false,
-    type: DriftSqlType.int,
-    requiredDuringInsert: false,
-    defaultValue: const Constant(0),
-  );
-  @override
-  List<GeneratedColumn> get $columns => [
-    id,
-    recordId,
-    mainItemId,
-    subItemId,
-    subItemNameSnapshot,
-    paramsJson,
-    paramsSnapshotJson,
-    sort,
-  ];
-  @override
-  String get aliasedName => _alias ?? actualTableName;
-  @override
-  String get actualTableName => $name;
-  static const String $name = 'record_items';
-  @override
-  VerificationContext validateIntegrity(
-    Insertable<RecordItem> instance, {
-    bool isInserting = false,
-  }) {
-    final context = VerificationContext();
-    final data = instance.toColumns(true);
-    if (data.containsKey('id')) {
-      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
-    }
-    if (data.containsKey('record_id')) {
-      context.handle(
-        _recordIdMeta,
-        recordId.isAcceptableOrUnknown(data['record_id']!, _recordIdMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_recordIdMeta);
-    }
-    if (data.containsKey('main_item_id')) {
-      context.handle(
-        _mainItemIdMeta,
-        mainItemId.isAcceptableOrUnknown(
-          data['main_item_id']!,
-          _mainItemIdMeta,
-        ),
-      );
-    } else if (isInserting) {
-      context.missing(_mainItemIdMeta);
-    }
-    if (data.containsKey('sub_item_id')) {
-      context.handle(
-        _subItemIdMeta,
-        subItemId.isAcceptableOrUnknown(data['sub_item_id']!, _subItemIdMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_subItemIdMeta);
-    }
-    if (data.containsKey('sub_item_name_snapshot')) {
-      context.handle(
-        _subItemNameSnapshotMeta,
-        subItemNameSnapshot.isAcceptableOrUnknown(
-          data['sub_item_name_snapshot']!,
-          _subItemNameSnapshotMeta,
-        ),
-      );
-    }
-    if (data.containsKey('params_json')) {
-      context.handle(
-        _paramsJsonMeta,
-        paramsJson.isAcceptableOrUnknown(data['params_json']!, _paramsJsonMeta),
-      );
-    } else if (isInserting) {
-      context.missing(_paramsJsonMeta);
-    }
-    if (data.containsKey('params_snapshot_json')) {
-      context.handle(
-        _paramsSnapshotJsonMeta,
-        paramsSnapshotJson.isAcceptableOrUnknown(
-          data['params_snapshot_json']!,
-          _paramsSnapshotJsonMeta,
-        ),
-      );
-    }
-    if (data.containsKey('sort')) {
-      context.handle(
-        _sortMeta,
-        sort.isAcceptableOrUnknown(data['sort']!, _sortMeta),
-      );
-    }
-    return context;
-  }
-
-  @override
-  Set<GeneratedColumn> get $primaryKey => {id};
-  @override
-  RecordItem map(Map<String, dynamic> data, {String? tablePrefix}) {
-    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
-    return RecordItem(
-      id: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
-        data['${effectivePrefix}id'],
-      )!,
-      recordId: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
-        data['${effectivePrefix}record_id'],
-      )!,
-      mainItemId: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
-        data['${effectivePrefix}main_item_id'],
-      )!,
-      subItemId: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
-        data['${effectivePrefix}sub_item_id'],
-      )!,
-      subItemNameSnapshot: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}sub_item_name_snapshot'],
-      ),
-      paramsJson: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}params_json'],
-      )!,
-      paramsSnapshotJson: attachedDatabase.typeMapping.read(
-        DriftSqlType.string,
-        data['${effectivePrefix}params_snapshot_json'],
-      ),
-      sort: attachedDatabase.typeMapping.read(
-        DriftSqlType.int,
-        data['${effectivePrefix}sort'],
-      )!,
-    );
-  }
-
-  @override
-  $RecordItemsTable createAlias(String alias) {
-    return $RecordItemsTable(attachedDatabase, alias);
-  }
-}
-
-class RecordItem extends DataClass implements Insertable<RecordItem> {
-  final int id;
-  final int recordId;
-  final int mainItemId;
-  final int subItemId;
-
-  /// 第一层快照：子项目**当时**的名称，字典改名后历史仍显示原文。
-  final String? subItemNameSnapshot;
-
-  /// 实际提交的参数值（键为 `param_key`）。
-  final String paramsJson;
-
-  /// 第二层快照：参数**当时**的显示名、取值与选项文本。
-  final String? paramsSnapshotJson;
-  final int sort;
-  const RecordItem({
-    required this.id,
-    required this.recordId,
-    required this.mainItemId,
-    required this.subItemId,
-    this.subItemNameSnapshot,
-    required this.paramsJson,
-    this.paramsSnapshotJson,
-    required this.sort,
-  });
-  @override
-  Map<String, Expression> toColumns(bool nullToAbsent) {
-    final map = <String, Expression>{};
-    map['id'] = Variable<int>(id);
-    map['record_id'] = Variable<int>(recordId);
-    map['main_item_id'] = Variable<int>(mainItemId);
-    map['sub_item_id'] = Variable<int>(subItemId);
-    if (!nullToAbsent || subItemNameSnapshot != null) {
-      map['sub_item_name_snapshot'] = Variable<String>(subItemNameSnapshot);
-    }
-    map['params_json'] = Variable<String>(paramsJson);
-    if (!nullToAbsent || paramsSnapshotJson != null) {
-      map['params_snapshot_json'] = Variable<String>(paramsSnapshotJson);
-    }
-    map['sort'] = Variable<int>(sort);
-    return map;
-  }
-
-  RecordItemsCompanion toCompanion(bool nullToAbsent) {
-    return RecordItemsCompanion(
-      id: Value(id),
-      recordId: Value(recordId),
-      mainItemId: Value(mainItemId),
-      subItemId: Value(subItemId),
-      subItemNameSnapshot: subItemNameSnapshot == null && nullToAbsent
-          ? const Value.absent()
-          : Value(subItemNameSnapshot),
-      paramsJson: Value(paramsJson),
-      paramsSnapshotJson: paramsSnapshotJson == null && nullToAbsent
-          ? const Value.absent()
-          : Value(paramsSnapshotJson),
-      sort: Value(sort),
-    );
-  }
-
-  factory RecordItem.fromJson(
-    Map<String, dynamic> json, {
-    ValueSerializer? serializer,
-  }) {
-    serializer ??= driftRuntimeOptions.defaultSerializer;
-    return RecordItem(
-      id: serializer.fromJson<int>(json['id']),
-      recordId: serializer.fromJson<int>(json['recordId']),
-      mainItemId: serializer.fromJson<int>(json['mainItemId']),
-      subItemId: serializer.fromJson<int>(json['subItemId']),
-      subItemNameSnapshot: serializer.fromJson<String?>(
-        json['subItemNameSnapshot'],
-      ),
-      paramsJson: serializer.fromJson<String>(json['paramsJson']),
-      paramsSnapshotJson: serializer.fromJson<String?>(
-        json['paramsSnapshotJson'],
-      ),
-      sort: serializer.fromJson<int>(json['sort']),
-    );
-  }
-  @override
-  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
-    serializer ??= driftRuntimeOptions.defaultSerializer;
-    return <String, dynamic>{
-      'id': serializer.toJson<int>(id),
-      'recordId': serializer.toJson<int>(recordId),
-      'mainItemId': serializer.toJson<int>(mainItemId),
-      'subItemId': serializer.toJson<int>(subItemId),
-      'subItemNameSnapshot': serializer.toJson<String?>(subItemNameSnapshot),
-      'paramsJson': serializer.toJson<String>(paramsJson),
-      'paramsSnapshotJson': serializer.toJson<String?>(paramsSnapshotJson),
-      'sort': serializer.toJson<int>(sort),
-    };
-  }
-
-  RecordItem copyWith({
-    int? id,
-    int? recordId,
-    int? mainItemId,
-    int? subItemId,
-    Value<String?> subItemNameSnapshot = const Value.absent(),
-    String? paramsJson,
-    Value<String?> paramsSnapshotJson = const Value.absent(),
-    int? sort,
-  }) => RecordItem(
-    id: id ?? this.id,
-    recordId: recordId ?? this.recordId,
-    mainItemId: mainItemId ?? this.mainItemId,
-    subItemId: subItemId ?? this.subItemId,
-    subItemNameSnapshot: subItemNameSnapshot.present
-        ? subItemNameSnapshot.value
-        : this.subItemNameSnapshot,
-    paramsJson: paramsJson ?? this.paramsJson,
-    paramsSnapshotJson: paramsSnapshotJson.present
-        ? paramsSnapshotJson.value
-        : this.paramsSnapshotJson,
-    sort: sort ?? this.sort,
-  );
-  RecordItem copyWithCompanion(RecordItemsCompanion data) {
-    return RecordItem(
-      id: data.id.present ? data.id.value : this.id,
-      recordId: data.recordId.present ? data.recordId.value : this.recordId,
-      mainItemId: data.mainItemId.present
-          ? data.mainItemId.value
-          : this.mainItemId,
-      subItemId: data.subItemId.present ? data.subItemId.value : this.subItemId,
-      subItemNameSnapshot: data.subItemNameSnapshot.present
-          ? data.subItemNameSnapshot.value
-          : this.subItemNameSnapshot,
-      paramsJson: data.paramsJson.present
-          ? data.paramsJson.value
-          : this.paramsJson,
-      paramsSnapshotJson: data.paramsSnapshotJson.present
-          ? data.paramsSnapshotJson.value
-          : this.paramsSnapshotJson,
-      sort: data.sort.present ? data.sort.value : this.sort,
-    );
-  }
-
-  @override
-  String toString() {
-    return (StringBuffer('RecordItem(')
-          ..write('id: $id, ')
-          ..write('recordId: $recordId, ')
-          ..write('mainItemId: $mainItemId, ')
-          ..write('subItemId: $subItemId, ')
-          ..write('subItemNameSnapshot: $subItemNameSnapshot, ')
-          ..write('paramsJson: $paramsJson, ')
-          ..write('paramsSnapshotJson: $paramsSnapshotJson, ')
-          ..write('sort: $sort')
-          ..write(')'))
-        .toString();
-  }
-
-  @override
-  int get hashCode => Object.hash(
-    id,
-    recordId,
-    mainItemId,
-    subItemId,
-    subItemNameSnapshot,
-    paramsJson,
-    paramsSnapshotJson,
-    sort,
-  );
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      (other is RecordItem &&
-          other.id == this.id &&
-          other.recordId == this.recordId &&
-          other.mainItemId == this.mainItemId &&
-          other.subItemId == this.subItemId &&
-          other.subItemNameSnapshot == this.subItemNameSnapshot &&
-          other.paramsJson == this.paramsJson &&
-          other.paramsSnapshotJson == this.paramsSnapshotJson &&
-          other.sort == this.sort);
-}
-
-class RecordItemsCompanion extends UpdateCompanion<RecordItem> {
-  final Value<int> id;
-  final Value<int> recordId;
-  final Value<int> mainItemId;
-  final Value<int> subItemId;
-  final Value<String?> subItemNameSnapshot;
-  final Value<String> paramsJson;
-  final Value<String?> paramsSnapshotJson;
-  final Value<int> sort;
-  const RecordItemsCompanion({
-    this.id = const Value.absent(),
-    this.recordId = const Value.absent(),
-    this.mainItemId = const Value.absent(),
-    this.subItemId = const Value.absent(),
-    this.subItemNameSnapshot = const Value.absent(),
-    this.paramsJson = const Value.absent(),
-    this.paramsSnapshotJson = const Value.absent(),
-    this.sort = const Value.absent(),
-  });
-  RecordItemsCompanion.insert({
-    this.id = const Value.absent(),
-    required int recordId,
-    required int mainItemId,
-    required int subItemId,
-    this.subItemNameSnapshot = const Value.absent(),
-    required String paramsJson,
-    this.paramsSnapshotJson = const Value.absent(),
-    this.sort = const Value.absent(),
-  }) : recordId = Value(recordId),
-       mainItemId = Value(mainItemId),
-       subItemId = Value(subItemId),
-       paramsJson = Value(paramsJson);
-  static Insertable<RecordItem> custom({
-    Expression<int>? id,
-    Expression<int>? recordId,
-    Expression<int>? mainItemId,
-    Expression<int>? subItemId,
-    Expression<String>? subItemNameSnapshot,
-    Expression<String>? paramsJson,
-    Expression<String>? paramsSnapshotJson,
-    Expression<int>? sort,
-  }) {
-    return RawValuesInsertable({
-      if (id != null) 'id': id,
-      if (recordId != null) 'record_id': recordId,
-      if (mainItemId != null) 'main_item_id': mainItemId,
-      if (subItemId != null) 'sub_item_id': subItemId,
-      if (subItemNameSnapshot != null)
-        'sub_item_name_snapshot': subItemNameSnapshot,
-      if (paramsJson != null) 'params_json': paramsJson,
-      if (paramsSnapshotJson != null)
-        'params_snapshot_json': paramsSnapshotJson,
-      if (sort != null) 'sort': sort,
-    });
-  }
-
-  RecordItemsCompanion copyWith({
-    Value<int>? id,
-    Value<int>? recordId,
-    Value<int>? mainItemId,
-    Value<int>? subItemId,
-    Value<String?>? subItemNameSnapshot,
-    Value<String>? paramsJson,
-    Value<String?>? paramsSnapshotJson,
-    Value<int>? sort,
-  }) {
-    return RecordItemsCompanion(
-      id: id ?? this.id,
-      recordId: recordId ?? this.recordId,
-      mainItemId: mainItemId ?? this.mainItemId,
-      subItemId: subItemId ?? this.subItemId,
-      subItemNameSnapshot: subItemNameSnapshot ?? this.subItemNameSnapshot,
-      paramsJson: paramsJson ?? this.paramsJson,
-      paramsSnapshotJson: paramsSnapshotJson ?? this.paramsSnapshotJson,
-      sort: sort ?? this.sort,
-    );
-  }
-
-  @override
-  Map<String, Expression> toColumns(bool nullToAbsent) {
-    final map = <String, Expression>{};
-    if (id.present) {
-      map['id'] = Variable<int>(id.value);
-    }
-    if (recordId.present) {
-      map['record_id'] = Variable<int>(recordId.value);
-    }
-    if (mainItemId.present) {
-      map['main_item_id'] = Variable<int>(mainItemId.value);
-    }
-    if (subItemId.present) {
-      map['sub_item_id'] = Variable<int>(subItemId.value);
-    }
-    if (subItemNameSnapshot.present) {
-      map['sub_item_name_snapshot'] = Variable<String>(
-        subItemNameSnapshot.value,
-      );
-    }
-    if (paramsJson.present) {
-      map['params_json'] = Variable<String>(paramsJson.value);
-    }
-    if (paramsSnapshotJson.present) {
-      map['params_snapshot_json'] = Variable<String>(paramsSnapshotJson.value);
-    }
-    if (sort.present) {
-      map['sort'] = Variable<int>(sort.value);
-    }
-    return map;
-  }
-
-  @override
-  String toString() {
-    return (StringBuffer('RecordItemsCompanion(')
-          ..write('id: $id, ')
-          ..write('recordId: $recordId, ')
-          ..write('mainItemId: $mainItemId, ')
-          ..write('subItemId: $subItemId, ')
-          ..write('subItemNameSnapshot: $subItemNameSnapshot, ')
-          ..write('paramsJson: $paramsJson, ')
-          ..write('paramsSnapshotJson: $paramsSnapshotJson, ')
-          ..write('sort: $sort')
+          ..write('syncStatus: $syncStatus')
           ..write(')'))
         .toString();
   }
@@ -3280,7 +2718,6 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   late final $TreatmentRecordsTable treatmentRecords = $TreatmentRecordsTable(
     this,
   );
-  late final $RecordItemsTable recordItems = $RecordItemsTable(this);
   late final $ChangeQueueTable changeQueue = $ChangeQueueTable(this);
   late final $SyncStateTable syncState = $SyncStateTable(this);
   late final $RefCacheTable refCache = $RefCacheTable(this);
@@ -3291,7 +2728,6 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   List<DatabaseSchemaEntity> get allSchemaEntities => [
     patients,
     treatmentRecords,
-    recordItems,
     changeQueue,
     syncState,
     refCache,
@@ -3606,19 +3042,19 @@ typedef $$TreatmentRecordsTableCreateCompanionBuilder =
       required String patientNo,
       required int therapistId,
       required String recordDate,
-      Value<String?> sessionPeriod,
-      Value<int?> durationMin,
-      Value<String?> note,
-      Value<String?> patientResponseJson,
-      Value<String> status,
+      required String discipline,
+      required String kind,
       Value<int?> seqNo,
+      Value<String> bodyJson,
+      Value<String> renderedText,
+      Value<String?> note,
+      Value<String> status,
       Value<int> editCount,
       Value<int> revision,
       Value<bool> isTemporary,
       Value<int?> originalTherapistId,
       Value<String?> clientUuid,
       Value<String> syncStatus,
-      Value<String?> pendingItemsJson,
     });
 typedef $$TreatmentRecordsTableUpdateCompanionBuilder =
     TreatmentRecordsCompanion Function({
@@ -3626,19 +3062,19 @@ typedef $$TreatmentRecordsTableUpdateCompanionBuilder =
       Value<String> patientNo,
       Value<int> therapistId,
       Value<String> recordDate,
-      Value<String?> sessionPeriod,
-      Value<int?> durationMin,
-      Value<String?> note,
-      Value<String?> patientResponseJson,
-      Value<String> status,
+      Value<String> discipline,
+      Value<String> kind,
       Value<int?> seqNo,
+      Value<String> bodyJson,
+      Value<String> renderedText,
+      Value<String?> note,
+      Value<String> status,
       Value<int> editCount,
       Value<int> revision,
       Value<bool> isTemporary,
       Value<int?> originalTherapistId,
       Value<String?> clientUuid,
       Value<String> syncStatus,
-      Value<String?> pendingItemsJson,
     });
 
 class $$TreatmentRecordsTableFilterComposer
@@ -3670,13 +3106,28 @@ class $$TreatmentRecordsTableFilterComposer
     builder: (column) => ColumnFilters(column),
   );
 
-  ColumnFilters<String> get sessionPeriod => $composableBuilder(
-    column: $table.sessionPeriod,
+  ColumnFilters<String> get discipline => $composableBuilder(
+    column: $table.discipline,
     builder: (column) => ColumnFilters(column),
   );
 
-  ColumnFilters<int> get durationMin => $composableBuilder(
-    column: $table.durationMin,
+  ColumnFilters<String> get kind => $composableBuilder(
+    column: $table.kind,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get seqNo => $composableBuilder(
+    column: $table.seqNo,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get bodyJson => $composableBuilder(
+    column: $table.bodyJson,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get renderedText => $composableBuilder(
+    column: $table.renderedText,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -3685,18 +3136,8 @@ class $$TreatmentRecordsTableFilterComposer
     builder: (column) => ColumnFilters(column),
   );
 
-  ColumnFilters<String> get patientResponseJson => $composableBuilder(
-    column: $table.patientResponseJson,
-    builder: (column) => ColumnFilters(column),
-  );
-
   ColumnFilters<String> get status => $composableBuilder(
     column: $table.status,
-    builder: (column) => ColumnFilters(column),
-  );
-
-  ColumnFilters<int> get seqNo => $composableBuilder(
-    column: $table.seqNo,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -3727,11 +3168,6 @@ class $$TreatmentRecordsTableFilterComposer
 
   ColumnFilters<String> get syncStatus => $composableBuilder(
     column: $table.syncStatus,
-    builder: (column) => ColumnFilters(column),
-  );
-
-  ColumnFilters<String> get pendingItemsJson => $composableBuilder(
-    column: $table.pendingItemsJson,
     builder: (column) => ColumnFilters(column),
   );
 }
@@ -3765,13 +3201,28 @@ class $$TreatmentRecordsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
-  ColumnOrderings<String> get sessionPeriod => $composableBuilder(
-    column: $table.sessionPeriod,
+  ColumnOrderings<String> get discipline => $composableBuilder(
+    column: $table.discipline,
     builder: (column) => ColumnOrderings(column),
   );
 
-  ColumnOrderings<int> get durationMin => $composableBuilder(
-    column: $table.durationMin,
+  ColumnOrderings<String> get kind => $composableBuilder(
+    column: $table.kind,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get seqNo => $composableBuilder(
+    column: $table.seqNo,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get bodyJson => $composableBuilder(
+    column: $table.bodyJson,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get renderedText => $composableBuilder(
+    column: $table.renderedText,
     builder: (column) => ColumnOrderings(column),
   );
 
@@ -3780,18 +3231,8 @@ class $$TreatmentRecordsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
-  ColumnOrderings<String> get patientResponseJson => $composableBuilder(
-    column: $table.patientResponseJson,
-    builder: (column) => ColumnOrderings(column),
-  );
-
   ColumnOrderings<String> get status => $composableBuilder(
     column: $table.status,
-    builder: (column) => ColumnOrderings(column),
-  );
-
-  ColumnOrderings<int> get seqNo => $composableBuilder(
-    column: $table.seqNo,
     builder: (column) => ColumnOrderings(column),
   );
 
@@ -3824,11 +3265,6 @@ class $$TreatmentRecordsTableOrderingComposer
     column: $table.syncStatus,
     builder: (column) => ColumnOrderings(column),
   );
-
-  ColumnOrderings<String> get pendingItemsJson => $composableBuilder(
-    column: $table.pendingItemsJson,
-    builder: (column) => ColumnOrderings(column),
-  );
 }
 
 class $$TreatmentRecordsTableAnnotationComposer
@@ -3856,29 +3292,30 @@ class $$TreatmentRecordsTableAnnotationComposer
     builder: (column) => column,
   );
 
-  GeneratedColumn<String> get sessionPeriod => $composableBuilder(
-    column: $table.sessionPeriod,
+  GeneratedColumn<String> get discipline => $composableBuilder(
+    column: $table.discipline,
     builder: (column) => column,
   );
 
-  GeneratedColumn<int> get durationMin => $composableBuilder(
-    column: $table.durationMin,
+  GeneratedColumn<String> get kind =>
+      $composableBuilder(column: $table.kind, builder: (column) => column);
+
+  GeneratedColumn<int> get seqNo =>
+      $composableBuilder(column: $table.seqNo, builder: (column) => column);
+
+  GeneratedColumn<String> get bodyJson =>
+      $composableBuilder(column: $table.bodyJson, builder: (column) => column);
+
+  GeneratedColumn<String> get renderedText => $composableBuilder(
+    column: $table.renderedText,
     builder: (column) => column,
   );
 
   GeneratedColumn<String> get note =>
       $composableBuilder(column: $table.note, builder: (column) => column);
 
-  GeneratedColumn<String> get patientResponseJson => $composableBuilder(
-    column: $table.patientResponseJson,
-    builder: (column) => column,
-  );
-
   GeneratedColumn<String> get status =>
       $composableBuilder(column: $table.status, builder: (column) => column);
-
-  GeneratedColumn<int> get seqNo =>
-      $composableBuilder(column: $table.seqNo, builder: (column) => column);
 
   GeneratedColumn<int> get editCount =>
       $composableBuilder(column: $table.editCount, builder: (column) => column);
@@ -3903,11 +3340,6 @@ class $$TreatmentRecordsTableAnnotationComposer
 
   GeneratedColumn<String> get syncStatus => $composableBuilder(
     column: $table.syncStatus,
-    builder: (column) => column,
-  );
-
-  GeneratedColumn<String> get pendingItemsJson => $composableBuilder(
-    column: $table.pendingItemsJson,
     builder: (column) => column,
   );
 }
@@ -3953,37 +3385,37 @@ class $$TreatmentRecordsTableTableManager
                 Value<String> patientNo = const Value.absent(),
                 Value<int> therapistId = const Value.absent(),
                 Value<String> recordDate = const Value.absent(),
-                Value<String?> sessionPeriod = const Value.absent(),
-                Value<int?> durationMin = const Value.absent(),
-                Value<String?> note = const Value.absent(),
-                Value<String?> patientResponseJson = const Value.absent(),
-                Value<String> status = const Value.absent(),
+                Value<String> discipline = const Value.absent(),
+                Value<String> kind = const Value.absent(),
                 Value<int?> seqNo = const Value.absent(),
+                Value<String> bodyJson = const Value.absent(),
+                Value<String> renderedText = const Value.absent(),
+                Value<String?> note = const Value.absent(),
+                Value<String> status = const Value.absent(),
                 Value<int> editCount = const Value.absent(),
                 Value<int> revision = const Value.absent(),
                 Value<bool> isTemporary = const Value.absent(),
                 Value<int?> originalTherapistId = const Value.absent(),
                 Value<String?> clientUuid = const Value.absent(),
                 Value<String> syncStatus = const Value.absent(),
-                Value<String?> pendingItemsJson = const Value.absent(),
               }) => TreatmentRecordsCompanion(
                 id: id,
                 patientNo: patientNo,
                 therapistId: therapistId,
                 recordDate: recordDate,
-                sessionPeriod: sessionPeriod,
-                durationMin: durationMin,
-                note: note,
-                patientResponseJson: patientResponseJson,
-                status: status,
+                discipline: discipline,
+                kind: kind,
                 seqNo: seqNo,
+                bodyJson: bodyJson,
+                renderedText: renderedText,
+                note: note,
+                status: status,
                 editCount: editCount,
                 revision: revision,
                 isTemporary: isTemporary,
                 originalTherapistId: originalTherapistId,
                 clientUuid: clientUuid,
                 syncStatus: syncStatus,
-                pendingItemsJson: pendingItemsJson,
               ),
           createCompanionCallback:
               ({
@@ -3991,37 +3423,37 @@ class $$TreatmentRecordsTableTableManager
                 required String patientNo,
                 required int therapistId,
                 required String recordDate,
-                Value<String?> sessionPeriod = const Value.absent(),
-                Value<int?> durationMin = const Value.absent(),
-                Value<String?> note = const Value.absent(),
-                Value<String?> patientResponseJson = const Value.absent(),
-                Value<String> status = const Value.absent(),
+                required String discipline,
+                required String kind,
                 Value<int?> seqNo = const Value.absent(),
+                Value<String> bodyJson = const Value.absent(),
+                Value<String> renderedText = const Value.absent(),
+                Value<String?> note = const Value.absent(),
+                Value<String> status = const Value.absent(),
                 Value<int> editCount = const Value.absent(),
                 Value<int> revision = const Value.absent(),
                 Value<bool> isTemporary = const Value.absent(),
                 Value<int?> originalTherapistId = const Value.absent(),
                 Value<String?> clientUuid = const Value.absent(),
                 Value<String> syncStatus = const Value.absent(),
-                Value<String?> pendingItemsJson = const Value.absent(),
               }) => TreatmentRecordsCompanion.insert(
                 id: id,
                 patientNo: patientNo,
                 therapistId: therapistId,
                 recordDate: recordDate,
-                sessionPeriod: sessionPeriod,
-                durationMin: durationMin,
-                note: note,
-                patientResponseJson: patientResponseJson,
-                status: status,
+                discipline: discipline,
+                kind: kind,
                 seqNo: seqNo,
+                bodyJson: bodyJson,
+                renderedText: renderedText,
+                note: note,
+                status: status,
                 editCount: editCount,
                 revision: revision,
                 isTemporary: isTemporary,
                 originalTherapistId: originalTherapistId,
                 clientUuid: clientUuid,
                 syncStatus: syncStatus,
-                pendingItemsJson: pendingItemsJson,
               ),
           withReferenceMapper: (p0) => p0
               .map(
@@ -4055,274 +3487,6 @@ typedef $$TreatmentRecordsTableProcessedTableManager =
         BaseReferences<_$AppDatabase, $TreatmentRecordsTable, TreatmentRecord>,
       ),
       TreatmentRecord,
-      PrefetchHooks Function()
-    >;
-typedef $$RecordItemsTableCreateCompanionBuilder =
-    RecordItemsCompanion Function({
-      Value<int> id,
-      required int recordId,
-      required int mainItemId,
-      required int subItemId,
-      Value<String?> subItemNameSnapshot,
-      required String paramsJson,
-      Value<String?> paramsSnapshotJson,
-      Value<int> sort,
-    });
-typedef $$RecordItemsTableUpdateCompanionBuilder =
-    RecordItemsCompanion Function({
-      Value<int> id,
-      Value<int> recordId,
-      Value<int> mainItemId,
-      Value<int> subItemId,
-      Value<String?> subItemNameSnapshot,
-      Value<String> paramsJson,
-      Value<String?> paramsSnapshotJson,
-      Value<int> sort,
-    });
-
-class $$RecordItemsTableFilterComposer
-    extends Composer<_$AppDatabase, $RecordItemsTable> {
-  $$RecordItemsTableFilterComposer({
-    required super.$db,
-    required super.$table,
-    super.joinBuilder,
-    super.$addJoinBuilderToRootComposer,
-    super.$removeJoinBuilderFromRootComposer,
-  });
-  ColumnFilters<int> get id => $composableBuilder(
-    column: $table.id,
-    builder: (column) => ColumnFilters(column),
-  );
-
-  ColumnFilters<int> get recordId => $composableBuilder(
-    column: $table.recordId,
-    builder: (column) => ColumnFilters(column),
-  );
-
-  ColumnFilters<int> get mainItemId => $composableBuilder(
-    column: $table.mainItemId,
-    builder: (column) => ColumnFilters(column),
-  );
-
-  ColumnFilters<int> get subItemId => $composableBuilder(
-    column: $table.subItemId,
-    builder: (column) => ColumnFilters(column),
-  );
-
-  ColumnFilters<String> get subItemNameSnapshot => $composableBuilder(
-    column: $table.subItemNameSnapshot,
-    builder: (column) => ColumnFilters(column),
-  );
-
-  ColumnFilters<String> get paramsJson => $composableBuilder(
-    column: $table.paramsJson,
-    builder: (column) => ColumnFilters(column),
-  );
-
-  ColumnFilters<String> get paramsSnapshotJson => $composableBuilder(
-    column: $table.paramsSnapshotJson,
-    builder: (column) => ColumnFilters(column),
-  );
-
-  ColumnFilters<int> get sort => $composableBuilder(
-    column: $table.sort,
-    builder: (column) => ColumnFilters(column),
-  );
-}
-
-class $$RecordItemsTableOrderingComposer
-    extends Composer<_$AppDatabase, $RecordItemsTable> {
-  $$RecordItemsTableOrderingComposer({
-    required super.$db,
-    required super.$table,
-    super.joinBuilder,
-    super.$addJoinBuilderToRootComposer,
-    super.$removeJoinBuilderFromRootComposer,
-  });
-  ColumnOrderings<int> get id => $composableBuilder(
-    column: $table.id,
-    builder: (column) => ColumnOrderings(column),
-  );
-
-  ColumnOrderings<int> get recordId => $composableBuilder(
-    column: $table.recordId,
-    builder: (column) => ColumnOrderings(column),
-  );
-
-  ColumnOrderings<int> get mainItemId => $composableBuilder(
-    column: $table.mainItemId,
-    builder: (column) => ColumnOrderings(column),
-  );
-
-  ColumnOrderings<int> get subItemId => $composableBuilder(
-    column: $table.subItemId,
-    builder: (column) => ColumnOrderings(column),
-  );
-
-  ColumnOrderings<String> get subItemNameSnapshot => $composableBuilder(
-    column: $table.subItemNameSnapshot,
-    builder: (column) => ColumnOrderings(column),
-  );
-
-  ColumnOrderings<String> get paramsJson => $composableBuilder(
-    column: $table.paramsJson,
-    builder: (column) => ColumnOrderings(column),
-  );
-
-  ColumnOrderings<String> get paramsSnapshotJson => $composableBuilder(
-    column: $table.paramsSnapshotJson,
-    builder: (column) => ColumnOrderings(column),
-  );
-
-  ColumnOrderings<int> get sort => $composableBuilder(
-    column: $table.sort,
-    builder: (column) => ColumnOrderings(column),
-  );
-}
-
-class $$RecordItemsTableAnnotationComposer
-    extends Composer<_$AppDatabase, $RecordItemsTable> {
-  $$RecordItemsTableAnnotationComposer({
-    required super.$db,
-    required super.$table,
-    super.joinBuilder,
-    super.$addJoinBuilderToRootComposer,
-    super.$removeJoinBuilderFromRootComposer,
-  });
-  GeneratedColumn<int> get id =>
-      $composableBuilder(column: $table.id, builder: (column) => column);
-
-  GeneratedColumn<int> get recordId =>
-      $composableBuilder(column: $table.recordId, builder: (column) => column);
-
-  GeneratedColumn<int> get mainItemId => $composableBuilder(
-    column: $table.mainItemId,
-    builder: (column) => column,
-  );
-
-  GeneratedColumn<int> get subItemId =>
-      $composableBuilder(column: $table.subItemId, builder: (column) => column);
-
-  GeneratedColumn<String> get subItemNameSnapshot => $composableBuilder(
-    column: $table.subItemNameSnapshot,
-    builder: (column) => column,
-  );
-
-  GeneratedColumn<String> get paramsJson => $composableBuilder(
-    column: $table.paramsJson,
-    builder: (column) => column,
-  );
-
-  GeneratedColumn<String> get paramsSnapshotJson => $composableBuilder(
-    column: $table.paramsSnapshotJson,
-    builder: (column) => column,
-  );
-
-  GeneratedColumn<int> get sort =>
-      $composableBuilder(column: $table.sort, builder: (column) => column);
-}
-
-class $$RecordItemsTableTableManager
-    extends
-        RootTableManager<
-          _$AppDatabase,
-          $RecordItemsTable,
-          RecordItem,
-          $$RecordItemsTableFilterComposer,
-          $$RecordItemsTableOrderingComposer,
-          $$RecordItemsTableAnnotationComposer,
-          $$RecordItemsTableCreateCompanionBuilder,
-          $$RecordItemsTableUpdateCompanionBuilder,
-          (
-            RecordItem,
-            BaseReferences<_$AppDatabase, $RecordItemsTable, RecordItem>,
-          ),
-          RecordItem,
-          PrefetchHooks Function()
-        > {
-  $$RecordItemsTableTableManager(_$AppDatabase db, $RecordItemsTable table)
-    : super(
-        TableManagerState(
-          db: db,
-          table: table,
-          createFilteringComposer: () =>
-              $$RecordItemsTableFilterComposer($db: db, $table: table),
-          createOrderingComposer: () =>
-              $$RecordItemsTableOrderingComposer($db: db, $table: table),
-          createComputedFieldComposer: () =>
-              $$RecordItemsTableAnnotationComposer($db: db, $table: table),
-          updateCompanionCallback:
-              ({
-                Value<int> id = const Value.absent(),
-                Value<int> recordId = const Value.absent(),
-                Value<int> mainItemId = const Value.absent(),
-                Value<int> subItemId = const Value.absent(),
-                Value<String?> subItemNameSnapshot = const Value.absent(),
-                Value<String> paramsJson = const Value.absent(),
-                Value<String?> paramsSnapshotJson = const Value.absent(),
-                Value<int> sort = const Value.absent(),
-              }) => RecordItemsCompanion(
-                id: id,
-                recordId: recordId,
-                mainItemId: mainItemId,
-                subItemId: subItemId,
-                subItemNameSnapshot: subItemNameSnapshot,
-                paramsJson: paramsJson,
-                paramsSnapshotJson: paramsSnapshotJson,
-                sort: sort,
-              ),
-          createCompanionCallback:
-              ({
-                Value<int> id = const Value.absent(),
-                required int recordId,
-                required int mainItemId,
-                required int subItemId,
-                Value<String?> subItemNameSnapshot = const Value.absent(),
-                required String paramsJson,
-                Value<String?> paramsSnapshotJson = const Value.absent(),
-                Value<int> sort = const Value.absent(),
-              }) => RecordItemsCompanion.insert(
-                id: id,
-                recordId: recordId,
-                mainItemId: mainItemId,
-                subItemId: subItemId,
-                subItemNameSnapshot: subItemNameSnapshot,
-                paramsJson: paramsJson,
-                paramsSnapshotJson: paramsSnapshotJson,
-                sort: sort,
-              ),
-          withReferenceMapper: (p0) => p0
-              .map(
-                (e) => (
-                  e.readTable<$RecordItemsTable, RecordItem>(table),
-                  BaseReferences<_$AppDatabase, $RecordItemsTable, RecordItem>(
-                    db,
-                    table,
-                    e,
-                  ),
-                ),
-              )
-              .toList(),
-          prefetchHooksCallback: null,
-        ),
-      );
-}
-
-typedef $$RecordItemsTableProcessedTableManager =
-    ProcessedTableManager<
-      _$AppDatabase,
-      $RecordItemsTable,
-      RecordItem,
-      $$RecordItemsTableFilterComposer,
-      $$RecordItemsTableOrderingComposer,
-      $$RecordItemsTableAnnotationComposer,
-      $$RecordItemsTableCreateCompanionBuilder,
-      $$RecordItemsTableUpdateCompanionBuilder,
-      (
-        RecordItem,
-        BaseReferences<_$AppDatabase, $RecordItemsTable, RecordItem>,
-      ),
-      RecordItem,
       PrefetchHooks Function()
     >;
 typedef $$ChangeQueueTableCreateCompanionBuilder =
@@ -4958,8 +4122,6 @@ class $AppDatabaseManager {
       $$PatientsTableTableManager(_db, _db.patients);
   $$TreatmentRecordsTableTableManager get treatmentRecords =>
       $$TreatmentRecordsTableTableManager(_db, _db.treatmentRecords);
-  $$RecordItemsTableTableManager get recordItems =>
-      $$RecordItemsTableTableManager(_db, _db.recordItems);
   $$ChangeQueueTableTableManager get changeQueue =>
       $$ChangeQueueTableTableManager(_db, _db.changeQueue);
   $$SyncStateTableTableManager get syncState =>

@@ -2,23 +2,26 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:rehab_app/core/date_utils.dart';
-import 'package:rehab_app/core/worktime.dart';
 import 'package:rehab_app/data/remote/record_dto.dart';
 import 'package:rehab_app/features/records/record_providers.dart';
 
-/// 治疗记录页（阶段 3 核心）。
+/// 治疗记录页（SOAP 模板驱动，2026-10-05 脊柱级改造）。
 ///
-/// ## 三个刻意的设计决定
+/// ## 这一版为什么长这样
 ///
-/// 1. **不自己算"上次值/默认值"**：服务端 `GET /records/form` 已按 5 级带入
-///    （上次值 → 个人选项集 → 科室 → 全局 → 字典默认）填好 `current_value`。
-///    客户端重算一遍只会与服务端产生分歧。
-/// 2. **草稿允许残缺**：必填校验**只在"提交"时做**。床旁先记一半（甚至只记
-///    "做了关节松动"就被人叫走）是常态，强行挡住会让人放弃记录。
-/// 3. **先本地 + 入队，再尽力推送**：床旁弱网/无网必须能存下来。
+/// 用户的原始诉求是「点好多次，不容易使用」——旧版是「字典树 → 主项目 →
+/// 子项目 → 参数表」四层展开，记一次治疗要点十几下。新版把它压成**一屏**：
 ///
-/// 编辑器是**单例** provider（不是 family），所以进入时要在 `initState` 里
-/// `start(args)`；见 `RecordEditorController` 上的说明。
+/// 1. **按 `soap[]` 分段渲染**，每段就是「段名：若干 chip」——
+///    点一下就是选中，不展开、不弹窗、不进二级页；
+/// 2. `single` / `multi` 都是 chip（再点一下取消），选项多时（运动 58 项）
+///    给搜索框，并把**最近用过的排到最前**（`recent_options` 本地记忆）；
+/// 3. 只剩三个数字框与备注是键盘输入；
+/// 4. **不自己判断该填哪份文书**：`kind` / `pending_document` / `prefill`
+///    全由服务端 `GET /records/form` 算好，客户端照渲染（缺首评/复评时
+///    服务端返回的就是那份文书）；
+/// 5. 草稿允许残缺，必填校验只在提交时做（本地预检一次 + 服务端 422 兜底，
+///    服务端给的 `details.missing` 是中文标签，直接标在字段上）。
 class RecordPage extends ConsumerStatefulWidget {
   const RecordPage({super.key, required this.args});
 
@@ -44,7 +47,13 @@ class _RecordPageState extends ConsumerState<RecordPage> {
   Widget build(BuildContext context) {
     final state = ref.watch(recordEditorProvider);
     final controller = ref.read(recordEditorProvider.notifier);
-    final theme = Theme.of(context);
+
+    // 出院办完就回患者页（那边会刷新状态）。
+    ref.listen(recordEditorProvider, (previous, next) {
+      if (next.discharged && previous?.discharged != true && mounted) {
+        Navigator.of(context).pop(true);
+      }
+    });
 
     return PopScope(
       // 有未保存改动时先问一句，避免床旁误返回把刚写的丢掉。
@@ -56,13 +65,13 @@ class _RecordPageState extends ConsumerState<RecordPage> {
       },
       child: Scaffold(
         appBar: AppBar(
-          title: Text(state.form?.patientName ?? '治疗记录'),
+          title: Text(state.form?.title ?? '治疗记录'),
           actions: [
             if (state.formFromCache)
               const Padding(
                 padding: EdgeInsets.only(right: 8),
                 child: Tooltip(
-                  message: '离线：表单取自本地缓存，带入值可能不是最新',
+                  message: '离线：表单取自本地缓存，预填值可能不是最新',
                   child: Icon(Icons.cloud_off_outlined),
                 ),
               ),
@@ -70,7 +79,7 @@ class _RecordPageState extends ConsumerState<RecordPage> {
           bottom: state.message == null && state.error == null
               ? null
               : PreferredSize(
-                  preferredSize: const Size.fromHeight(30),
+                  preferredSize: const Size.fromHeight(34),
                   child: _Bar(
                     text: state.error ?? state.message!,
                     isError: state.error != null,
@@ -85,7 +94,7 @@ class _RecordPageState extends ConsumerState<RecordPage> {
                     message: state.error ?? '表单加载失败',
                     onRetry: controller.retry,
                   )
-                : _Body(state: state, controller: controller, theme: theme),
+                : _SoapForm(state: state, controller: controller),
         bottomNavigationBar: state.form == null
             ? null
             : _BottomBar(state: state, controller: controller),
@@ -120,70 +129,89 @@ class _RecordPageState extends ConsumerState<RecordPage> {
   }
 }
 
-class _Body extends StatelessWidget {
-  const _Body({required this.state, required this.controller, required this.theme});
+class _SoapForm extends StatelessWidget {
+  const _SoapForm({required this.state, required this.controller});
 
   final RecordEditorState state;
   final RecordEditorController controller;
-  final ThemeData theme;
 
   @override
   Widget build(BuildContext context) {
     final form = state.form!;
+    final body = controller.buildBody(form);
+    final filled = body.length;
+    final total = form.allFields.length;
+
     return ListView(
       padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
       children: [
-        _PatientCard(state: state, controller: controller, form: form),
-        const SizedBox(height: 12),
-
-        _SectionTitle('可做的治疗项目', subtitle: '点参数直接加一项；同一项目可以加多次'),
-        for (final main in form.mainItems)
-          _MainItemCard(main: main, controller: controller),
-        const SizedBox(height: 12),
-
-        _SectionTitle(
-          '本次治疗内容',
-          subtitle: state.items.isEmpty ? '还没有加任何项目' : '共 ${state.items.length} 项',
-        ),
-        if (state.items.isEmpty)
-          _Hint('在上面选一个项目的参数加进来；也可以只写患者反应。')
-        else
-          for (var i = 0; i < state.items.length; i++)
-            _ItemEditor(
-              index: i,
-              item: state.items[i],
-              form: form,
-              controller: controller,
-            ),
-        const SizedBox(height: 12),
-
-        _SectionTitle('患者反应', subtitle: '按反应定义填写；不填表示未评估'),
-        _ResponseEditor(state: state, controller: controller),
-        const SizedBox(height: 12),
-
-        _SectionTitle('备注与时长'),
-        TextField(
-          controller: TextEditingController(text: state.note),
-          minLines: 2,
-          maxLines: 4,
-          decoration: const InputDecoration(
-            hintText: '本次治疗的补充说明（可留空）',
-            border: OutlineInputBorder(),
+        _HeaderCard(state: state, controller: controller, form: form),
+        if (form.patientPendingDischarge) ...[
+          const SizedBox(height: 10),
+          const _Notice(
+            icon: Icons.logout,
+            text: '该患者已提交出院小结（待出院），不能再记新治疗记录。',
+            isError: true,
           ),
-          onChanged: controller.setNote,
-        ),
+        ],
+        if (form.pendingDocument != null) ...[
+          const SizedBox(height: 10),
+          _Notice(
+            icon: Icons.assignment_late_outlined,
+            text: '本次需先完成「${form.pendingDocumentLabel ?? form.pendingDocument}」：'
+                '${form.kindLabel}是独立的评估文书，不能跳过。'
+                '填完保存后回到患者页再点一次这个大类，就能记当天的日常治疗记录。',
+          ),
+        ],
         const SizedBox(height: 10),
-        _DurationPicker(
-          value: state.durationMin,
-          onChanged: controller.setDuration,
-        ),
+        _ProgressCard(filled: filled, total: total),
+        const SizedBox(height: 10),
+        for (final section in form.soap)
+          _SectionCard(
+            section: section,
+            state: state,
+            controller: controller,
+          ),
+        if (form.footer.isNotEmpty) ...[
+          const SizedBox(height: 4),
+          for (final line in form.footer)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(line,
+                  style: TextStyle(
+                      fontSize: 12, color: Theme.of(context).colorScheme.outline)),
+            ),
+        ],
+        const SizedBox(height: 12),
+        _PreviewCard(text: controller.previewText(form, body)),
+        // 出院小结**已经提交过**、但出院还没办：给一个直接办理的入口
+        //（离线写完小结后回到线上时的补救路径，不必重填）。
+        if (form.isDischarge &&
+            form.existing != null &&
+            !form.existing!.isDraft) ...[
+          const SizedBox(height: 12),
+          FilledButton.icon(
+            onPressed: state.saving
+                ? null
+                : () => controller.requestDischarge(
+                      serverRecordId: form.existing!.id,
+                    ),
+            icon: const Icon(Icons.logout),
+            label: const Text('这份出院小结已提交 · 直接办理出院'),
+          ),
+        ],
       ],
     );
   }
 }
 
-class _PatientCard extends StatelessWidget {
-  const _PatientCard({required this.state, required this.controller, required this.form});
+/// 抬头：患者、文书形态、序号、复评倒计时、日期。
+class _HeaderCard extends StatelessWidget {
+  const _HeaderCard({
+    required this.state,
+    required this.controller,
+    required this.form,
+  });
 
   final RecordEditorState state;
   final RecordEditorController controller;
@@ -192,8 +220,6 @@ class _PatientCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final note = form.adminNote?.trim() ?? '';
-
     return Card(
       margin: EdgeInsets.zero,
       child: Padding(
@@ -201,28 +227,6 @@ class _PatientCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (note.isNotEmpty) ...[
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.errorContainer,
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  children: [
-                    Icon(Icons.warning_amber_rounded,
-                        size: 18, color: theme.colorScheme.onErrorContainer),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(note,
-                          style: TextStyle(color: theme.colorScheme.onErrorContainer)),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 10),
-            ],
             Row(
               children: [
                 Expanded(
@@ -232,18 +236,32 @@ class _PatientCard extends StatelessWidget {
                         ?.copyWith(fontWeight: FontWeight.bold),
                   ),
                 ),
-                // 服务端按已完成次数给序号，这里只做提示。
                 Chip(
                   visualDensity: VisualDensity.compact,
-                  label: Text('第 ${form.nextSeqNo} 次'),
+                  label: Text(form.kindLabel),
                 ),
               ],
             ),
-            if (form.diagnosis != null) ...[
-              const SizedBox(height: 2),
-              Text(form.diagnosis!,
-                  style: TextStyle(color: theme.colorScheme.outline, fontSize: 13)),
-            ],
+            const SizedBox(height: 6),
+            Wrap(
+              spacing: 8,
+              runSpacing: 4,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                // ★ 评估文书**不显示序号**（评定不占日常次数）。
+                if (form.showsSeqNo)
+                  _Tag(text: '第 ${form.nextSeq} 次'),
+                if (form.showsSeqNo)
+                  _Tag(
+                    text: form.sessionsUntilReassessment > 0
+                        ? '距复评还差 ${form.sessionsUntilReassessment} 次'
+                        : '已到复评点',
+                  ),
+                _Tag(text: form.disciplineName),
+                if (form.templateVersion > 1)
+                  _Tag(text: '模板 v${form.templateVersion}'),
+              ],
+            ),
             const Divider(height: 20),
             Row(
               children: [
@@ -262,19 +280,17 @@ class _PatientCard extends StatelessWidget {
                 ),
                 const SizedBox(width: 10),
                 Expanded(
-                  child: DropdownButtonFormField<String?>(
-                    initialValue: state.sessionPeriod,
+                  child: InputDecorator(
                     decoration: const InputDecoration(
-                      labelText: '半日',
+                      labelText: '内容',
                       isDense: true,
                       border: OutlineInputBorder(),
                     ),
-                    items: [
-                      const DropdownMenuItem(value: null, child: Text('未指定')),
-                      for (final p in kPeriods)
-                        DropdownMenuItem(value: p, child: Text(periodLabel(p))),
-                    ],
-                    onChanged: controller.setPeriod,
+                    child: Text(
+                      '${form.allFields.length} 个字段（必填 '
+                      '${form.allFields.where((f) => f.required).length}）',
+                      style: const TextStyle(fontSize: 13),
+                    ),
                   ),
                 ),
               ],
@@ -297,138 +313,56 @@ class _PatientCard extends StatelessWidget {
   }
 }
 
-class _MainItemCard extends StatelessWidget {
-  const _MainItemCard({required this.main, required this.controller});
-
-  final FormMainItem main;
-  final RecordEditorController controller;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Card(
-      margin: const EdgeInsets.only(bottom: 8),
-      child: ExpansionTile(
-        title: Text(main.display, style: const TextStyle(fontWeight: FontWeight.w600)),
-        subtitle: Text('${main.subItems.length} 个子项目',
-            style: TextStyle(fontSize: 12, color: theme.colorScheme.outline)),
-        childrenPadding: const EdgeInsets.fromLTRB(8, 0, 8, 10),
-        children: [
-          for (final sub in main.subItems)
-            _SubItemRow(main: main, sub: sub, controller: controller),
-        ],
-      ),
-    );
-  }
-}
-
-class _SubItemRow extends StatelessWidget {
-  const _SubItemRow({required this.main, required this.sub, required this.controller});
-
-  final FormMainItem main;
-  final FormSubItem sub;
-  final RecordEditorController controller;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(sub.name),
-                if (sub.params.isNotEmpty)
-                  Text(
-                    // 把带入值显示出来：治疗师一眼能确认"上次就是这么做的"。
-                    sub.params
-                        .map((p) => '${p.paramName}=${_displayValue(p.currentValue) ?? '—'}')
-                        .join('  '),
-                    style: TextStyle(fontSize: 11, color: theme.colorScheme.outline),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                  )
-                else
-                  Text('无参数', style: TextStyle(fontSize: 11, color: theme.colorScheme.outline)),
-              ],
-            ),
-          ),
-          IconButton(
-            tooltip: '加一项「${sub.name}」',
-            icon: const Icon(Icons.add_circle_outline),
-            onPressed: () => controller.addSubItem(main, sub),
-          ),
-        ],
-      ),
-    );
-  }
-
-  static String? _displayValue(dynamic v) {
-    if (v == null) return null;
-    if (v is List) return v.join('、');
-    return '$v';
-  }
-}
-
-/// 一条已加入的明细：可改参数、可删。
-class _ItemEditor extends ConsumerWidget {
-  const _ItemEditor({
-    required this.index,
-    required this.item,
-    required this.form,
+/// 一段（S / O / A / P）：段名 + 该段的字段。
+class _SectionCard extends StatelessWidget {
+  const _SectionCard({
+    required this.section,
+    required this.state,
     required this.controller,
   });
 
-  final int index;
-  final RecordItemDraft item;
-  final RecordFormData form;
+  final SoapSection section;
+  final RecordEditorState state;
   final RecordEditorController controller;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final main = form.mainItems.where((m) => m.id == item.mainItemId).firstOrNull;
-    final sub = main?.subItems.where((s) => s.id == item.subItemId).firstOrNull;
+  Widget build(BuildContext context) {
     final theme = Theme.of(context);
-
+    final filled = section.fields
+        .where((f) => SoapField.hasValue(state.values[f.key]))
+        .length;
     return Card(
-      margin: const EdgeInsets.only(bottom: 8),
+      margin: const EdgeInsets.only(bottom: 10),
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 8, 4, 12),
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               children: [
-                Expanded(
-                  child: Text(
-                    sub?.name ?? item.subItemName,
-                    style: const TextStyle(fontWeight: FontWeight.bold),
-                  ),
+                Text(
+                  '${section.heading}：',
+                  style: theme.textTheme.titleSmall
+                      ?.copyWith(fontWeight: FontWeight.bold),
                 ),
-                if (main != null)
-                  Text(main.display,
-                      style: TextStyle(fontSize: 11, color: theme.colorScheme.outline)),
-                IconButton(
-                  tooltip: '移除这一项',
-                  icon: const Icon(Icons.delete_outline, size: 20),
-                  onPressed: () => controller.removeItemAt(index),
+                Text(
+                  section.label,
+                  style: TextStyle(fontSize: 11, color: theme.colorScheme.outline),
+                ),
+                const Spacer(),
+                Text(
+                  '$filled/${section.fields.length}',
+                  style: TextStyle(fontSize: 11, color: theme.colorScheme.outline),
                 ),
               ],
             ),
-            if (sub == null)
-              Text('字典里已找不到这个子项目（可能被停用），参数无法编辑',
-                  style: TextStyle(fontSize: 12, color: theme.colorScheme.error))
-            else
-              for (final p in sub.params)
-                _ParamField(
-                  param: p,
-                  value: item.params[p.paramKey],
-                  onChanged: (v) => controller.setItemParam(index, p.paramKey, v),
-                ),
+            const SizedBox(height: 6),
+            for (final field in section.fields)
+              _FieldBlock(
+                field: field,
+                state: state,
+                controller: controller,
+              ),
           ],
         ),
       ),
@@ -436,35 +370,246 @@ class _ItemEditor extends ConsumerWidget {
   }
 }
 
-/// 单个参数控件：按 `input_type` 渲染。
-class _ParamField extends StatefulWidget {
-  const _ParamField({required this.param, required this.value, required this.onChanged});
+/// 单个字段：标签 + 控件（chip / 数字 / 文本）。
+class _FieldBlock extends StatelessWidget {
+  const _FieldBlock({
+    required this.field,
+    required this.state,
+    required this.controller,
+  });
 
-  final FormParam param;
+  final SoapField field;
+  final RecordEditorState state;
+  final RecordEditorController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final value = state.values[field.key];
+    final isMissing = state.missingLabels.contains(field.label);
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Text(field.label, style: const TextStyle(fontSize: 13)),
+              if (field.required)
+                Text(' *', style: TextStyle(color: theme.colorScheme.error)),
+              if (field.unit != null && field.isNumber)
+                Text(' (${field.unit})',
+                    style: TextStyle(fontSize: 11, color: theme.colorScheme.outline)),
+              const Spacer(),
+              if (field.auto)
+                Text('自动生成',
+                    style: TextStyle(fontSize: 10, color: theme.colorScheme.outline)),
+            ],
+          ),
+          const SizedBox(height: 4),
+          if (isMissing)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 4),
+              child: Text(
+                '服务端说这一项必填，还没填',
+                style: TextStyle(fontSize: 11, color: theme.colorScheme.error),
+              ),
+            ),
+          _control(context, value),
+        ],
+      ),
+    );
+  }
+
+  Widget _control(BuildContext context, dynamic value) {
+    // 自动生成的字段（如出院小结的「治疗过程汇总」）由服务端算好，只读。
+    if (field.auto) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Text(
+          SoapField.hasValue(value) ? SoapField.display(value) : '（服务端未给出内容）',
+          style: const TextStyle(fontSize: 13),
+        ),
+      );
+    }
+
+    if (field.isSingle) {
+      return _ChipRow(
+        field: field,
+        selected: {SoapField.display(value)},
+        isMulti: false,
+        controller: controller,
+      );
+    }
+
+    if (field.isMulti) {
+      final selected = <String>{
+        if (value is List) ...value.map((e) => '$e'),
+      };
+      return _ChipRow(
+        field: field,
+        selected: selected,
+        isMulti: true,
+        controller: controller,
+      );
+    }
+
+    if (field.isNumber) {
+      return _NumberField(
+        key: ValueKey('num:${field.key}'),
+        field: field,
+        value: value,
+        onChanged: (v) => controller.setValue(field, v),
+      );
+    }
+
+    return _TextField(
+      key: ValueKey('text:${field.key}'),
+      field: field,
+      value: value,
+      onChanged: (v) => controller.setValue(field, v),
+    );
+  }
+}
+
+/// 一排可点的 chip（单选 / 多选共用）。
+///
+/// 选项多时（如运动的 58 个疗法）自动出现**搜索框**，并把**最近用过的排最前**
+/// ——用户的痛点就是"点好多次"，每天重复的那几项必须一点就到。
+class _ChipRow extends StatefulWidget {
+  const _ChipRow({
+    required this.field,
+    required this.selected,
+    required this.isMulti,
+    required this.controller,
+  });
+
+  final SoapField field;
+  final Set<String> selected;
+  final bool isMulti;
+  final RecordEditorController controller;
+
+  @override
+  State<_ChipRow> createState() => _ChipRowState();
+}
+
+class _ChipRowState extends State<_ChipRow> {
+  final _search = TextEditingController();
+  String _query = '';
+
+  /// 超过这个数量就给搜索框（吞咽只有 4 项，搜索框反而是干扰）。
+  static const int _searchThreshold = 10;
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final field = widget.field;
+    final ordered = widget.controller.orderedOptions(field);
+    final query = _query.trim();
+    final visible = query.isEmpty
+        ? ordered
+        : ordered.where((o) => o.toLowerCase().contains(query.toLowerCase())).toList();
+    final showSearch = widget.isMulti && ordered.length > _searchThreshold;
+    // 单选也可能很多（如"本次训练项目"以外的长清单），一样给搜索。
+    final showSingleSearch = !widget.isMulti && ordered.length > _searchThreshold;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (showSearch || showSingleSearch) ...[
+          TextField(
+            controller: _search,
+            decoration: InputDecoration(
+              isDense: true,
+              border: const OutlineInputBorder(),
+              prefixIcon: const Icon(Icons.search, size: 18),
+              hintText: '搜索（共 ${ordered.length} 项）',
+              suffixIcon: query.isEmpty
+                  ? null
+                  : IconButton(
+                      icon: const Icon(Icons.close, size: 18),
+                      onPressed: () {
+                        _search.clear();
+                        setState(() => _query = '');
+                      },
+                    ),
+            ),
+            onChanged: (v) => setState(() => _query = v),
+          ),
+          const SizedBox(height: 6),
+        ],
+        if (visible.isEmpty)
+          Text('没有匹配的选项',
+              style: TextStyle(
+                  fontSize: 12, color: Theme.of(context).colorScheme.outline))
+        else
+          Wrap(
+            spacing: 6,
+            runSpacing: 4,
+            children: [
+              for (final option in visible)
+                widget.isMulti
+                    ? FilterChip(
+                        label: Text(option),
+                        selected: widget.selected.contains(option),
+                        avatar: widget.controller.isRecent(field, option)
+                            ? const Icon(Icons.history, size: 14)
+                            : null,
+                        onSelected: (_) =>
+                            widget.controller.toggleMulti(field, option),
+                      )
+                    : ChoiceChip(
+                        label: Text(option),
+                        selected: widget.selected.contains(option),
+                        avatar: widget.controller.isRecent(field, option)
+                            ? const Icon(Icons.history, size: 14)
+                            : null,
+                        // 再点一下取消选择。
+                        onSelected: (_) =>
+                            widget.controller.toggleSingle(field, option),
+                      ),
+            ],
+          ),
+      ],
+    );
+  }
+}
+
+/// 数字输入（带 `unit` 后缀）。
+class _NumberField extends StatefulWidget {
+  const _NumberField({
+    super.key,
+    required this.field,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final SoapField field;
   final dynamic value;
   final ValueChanged<dynamic> onChanged;
 
   @override
-  State<_ParamField> createState() => _ParamFieldState();
+  State<_NumberField> createState() => _NumberFieldState();
 }
 
-class _ParamFieldState extends State<_ParamField> {
+class _NumberFieldState extends State<_NumberField> {
   late final TextEditingController _text;
 
   @override
   void initState() {
     super.initState();
     _text = TextEditingController(text: widget.value?.toString() ?? '');
-  }
-
-  @override
-  void didUpdateWidget(covariant _ParamField old) {
-    super.didUpdateWidget(old);
-    // 外部值变了（如"继续编辑"读回草稿）要同步到输入框，否则显示的是旧值。
-    final incoming = widget.value?.toString() ?? '';
-    if (incoming != _text.text && !_text.selection.isValid) {
-      _text.text = incoming;
-    }
   }
 
   @override
@@ -475,245 +620,184 @@ class _ParamFieldState extends State<_ParamField> {
 
   @override
   Widget build(BuildContext context) {
-    final p = widget.param;
-    final theme = Theme.of(context);
-    final sourceLabel = p.valueSourceLabel ?? p.optionsSourceLabel;
-
-    return Padding(
-      padding: const EdgeInsets.only(right: 8, bottom: 10),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Text(p.paramName, style: const TextStyle(fontSize: 13)),
-              if (p.required) Text(' *', style: TextStyle(color: theme.colorScheme.error)),
-              if (p.unit != null)
-                Text(' (${p.unit})',
-                    style: TextStyle(fontSize: 11, color: theme.colorScheme.outline)),
-              const Spacer(),
-              // 标注这个值是怎么来的 —— 治疗师需要知道"这是上次的值"还是"默认值"。
-              if (sourceLabel != null)
-                Text(sourceLabel,
-                    style: TextStyle(fontSize: 10, color: theme.colorScheme.outline)),
-            ],
-          ),
-          const SizedBox(height: 4),
-          _control(p),
-        ],
-      ),
-    );
-  }
-
-  Widget _control(FormParam p) {
-    final candidates = p.candidates;
-
-    if (p.isSelect && candidates.isNotEmpty) {
-      if (p.isMulti) {
-        // 初始值可能是数组，也可能是"空格/顿号分隔的字符串"（last_value 走库时）
-        // —— 统一按 normalizeValue 解析，否则初始选中态显示不出来。
-        final normalized = p.normalizeValue(widget.value);
-        final selected = normalized is List
-            ? normalized.map((e) => '$e').toSet()
-            : <String>{};
-        return Wrap(
-          spacing: 6,
-          runSpacing: 4,
-          children: [
-            for (final o in candidates)
-              FilterChip(
-                label: Text(o.label),
-                selected: selected.contains(o.value),
-                onSelected: (on) {
-                  final next = {...selected};
-                  on ? next.add(o.value) : next.remove(o.value);
-                  // 多选**始终提交数组**：服务端对 multi_select 要求数组。
-                  widget.onChanged(next.toList());
-                  setState(() {});
-                },
-              ),
-          ],
-        );
-      }
-      return Wrap(
-        spacing: 6,
-        runSpacing: 4,
-        children: [
-          for (final o in candidates)
-            ChoiceChip(
-              label: Text(o.label),
-              selected: '${widget.value}' == o.value,
-              onSelected: (on) => widget.onChanged(on ? o.value : null),
-            ),
-        ],
-      );
-    }
-
-    if (p.isBool) {
-      return SwitchListTile(
-        contentPadding: EdgeInsets.zero,
-        dense: true,
-        title: const Text('是', style: TextStyle(fontSize: 13)),
-        value: widget.value == true || widget.value == 'true' || widget.value == 1,
-        onChanged: (v) => widget.onChanged(v),
-      );
-    }
-
-    // number / text / 没有候选值的 select 都退化成一个输入框。
     return TextField(
       controller: _text,
-      keyboardType: p.isNumber
-          ? const TextInputType.numberWithOptions(decimal: true, signed: true)
-          : TextInputType.text,
-      decoration: const InputDecoration(isDense: true, border: OutlineInputBorder()),
+      keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
+      decoration: InputDecoration(
+        isDense: true,
+        border: const OutlineInputBorder(),
+        suffixText: widget.field.unit,
+        hintText: widget.field.hint,
+      ),
       onChanged: (v) {
-        if (p.isNumber) {
-          final parsed = num.tryParse(v);
-          // 数字字段存成数字，别把 "3" 当字符串存进去（服务端按类型解析）。
-          widget.onChanged(parsed ?? (v.isEmpty ? null : v));
-        } else {
-          widget.onChanged(v);
-        }
+        // 数字存成数字（服务端按类型解析），空串表示"没填"。
+        widget.onChanged(num.tryParse(v) ?? (v.isEmpty ? null : v));
       },
     );
   }
 }
 
-class _ResponseEditor extends StatefulWidget {
-  const _ResponseEditor({required this.state, required this.controller});
+/// 多行文本（`hint` 当 placeholder）。
+class _TextField extends StatefulWidget {
+  const _TextField({
+    super.key,
+    required this.field,
+    required this.value,
+    required this.onChanged,
+  });
 
-  final RecordEditorState state;
-  final RecordEditorController controller;
+  final SoapField field;
+  final dynamic value;
+  final ValueChanged<dynamic> onChanged;
 
   @override
-  State<_ResponseEditor> createState() => _ResponseEditorState();
+  State<_TextField> createState() => _TextFieldState();
 }
 
-class _ResponseEditorState extends State<_ResponseEditor> {
-  final _texts = <String, TextEditingController>{};
+class _TextFieldState extends State<_TextField> {
+  late final TextEditingController _text;
+
+  @override
+  void initState() {
+    super.initState();
+    _text = TextEditingController(text: widget.value?.toString() ?? '');
+  }
 
   @override
   void dispose() {
-    for (final c in _texts.values) {
-      c.dispose();
-    }
+    _text.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final defs = widget.state.form!.responseDefs;
-    if (defs.isEmpty) {
-      return const _Hint('字典里还没有配置患者反应定义');
-    }
-    return Card(
-      margin: EdgeInsets.zero,
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            for (final d in defs) ...[
-              Text(d.label, style: const TextStyle(fontSize: 13)),
-              const SizedBox(height: 4),
-              _control(d),
-              const SizedBox(height: 10),
-            ],
-          ],
-        ),
+    return TextField(
+      controller: _text,
+      minLines: 2,
+      maxLines: 4,
+      decoration: InputDecoration(
+        isDense: true,
+        border: const OutlineInputBorder(),
+        hintText: widget.field.hint,
       ),
+      onChanged: widget.onChanged,
     );
-  }
-
-  Widget _control(ResponseDef d) {
-    switch (d.valueType) {
-      case 'tag':
-        // tag 型：多选标签。选项来自定义本身，也可能为空（退化成输入框）。
-        if (d.options.isEmpty) {
-          return const _Hint('该反应未配置选项');
-        }
-        return Wrap(
-          spacing: 6,
-          runSpacing: 4,
-          children: [
-            for (final o in d.options)
-              FilterChip(
-                label: Text(o),
-                selected: widget.state.responseTags.contains(o),
-                onSelected: (_) {
-                  widget.controller.toggleResponseTag(o);
-                  setState(() {});
-                },
-              ),
-          ],
-        );
-
-      case 'select':
-        return DropdownButtonFormField<String?>(
-          initialValue:
-              widget.state.responseItems[d.code]?.toString(),
-          decoration: const InputDecoration(isDense: true, border: OutlineInputBorder()),
-          items: [
-            const DropdownMenuItem(value: null, child: Text('未选择')),
-            for (final o in d.options) DropdownMenuItem(value: o, child: Text(o)),
-          ],
-          onChanged: (v) {
-            widget.controller.setResponseItem(d.code, v);
-            setState(() {});
-          },
-        );
-
-      case 'number':
-        final ctrl = _texts.putIfAbsent(d.code, () => TextEditingController());
-        return TextField(
-          controller: ctrl,
-          keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
-          decoration: InputDecoration(
-            isDense: true,
-            border: const OutlineInputBorder(),
-            suffixText: d.valueUnit,
-            helperText: (d.valueMin != null || d.valueMax != null)
-                ? '范围 ${d.valueMin ?? '-∞'} ~ ${d.valueMax ?? '+∞'}'
-                : null,
-          ),
-          onChanged: (v) => widget.controller
-              .setResponseItem(d.code, num.tryParse(v) ?? (v.isEmpty ? null : v)),
-        );
-
-      default:
-        final ctrl = _texts.putIfAbsent(d.code, () => TextEditingController());
-        return TextField(
-          controller: ctrl,
-          decoration: const InputDecoration(isDense: true, border: OutlineInputBorder()),
-          onChanged: (v) => widget.controller.setResponseItem(d.code, v),
-        );
-    }
   }
 }
 
-class _DurationPicker extends StatelessWidget {
-  const _DurationPicker({required this.value, required this.onChanged});
+/// 填写进度（"还差几项"一眼可见，减少来回找）。
+class _ProgressCard extends StatelessWidget {
+  const _ProgressCard({required this.filled, required this.total});
 
-  final int? value;
-  final ValueChanged<int?> onChanged;
-
-  static const _presets = [15, 20, 30, 45, 60];
+  final int filled;
+  final int total;
 
   @override
   Widget build(BuildContext context) {
-    return Wrap(
-      spacing: 6,
-      runSpacing: 4,
-      crossAxisAlignment: WrapCrossAlignment.center,
+    final theme = Theme.of(context);
+    return Row(
       children: [
-        const Text('治疗时长', style: TextStyle(fontSize: 13)),
-        for (final m in _presets)
-          ChoiceChip(
-            label: Text('$m 分钟'),
-            selected: value == m,
-            onSelected: (on) => onChanged(on ? m : null),
-          ),
+        Icon(Icons.checklist, size: 16, color: theme.colorScheme.outline),
+        const SizedBox(width: 6),
+        Text('已填 $filled/$total 项',
+            style: TextStyle(fontSize: 12, color: theme.colorScheme.outline)),
+        const SizedBox(width: 8),
+        Text('点一下就是选中，不必展开',
+            style: TextStyle(fontSize: 11, color: theme.colorScheme.outline)),
       ],
+    );
+  }
+}
+
+/// 记录预览：与服务端渲染出来的 SOAP 文本同一排版（段名：字段；字段）。
+class _PreviewCard extends StatelessWidget {
+  const _PreviewCard({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      margin: EdgeInsets.zero,
+      child: ExpansionTile(
+        title: const Text('记录预览', style: TextStyle(fontSize: 14)),
+        subtitle: Text('输出就是这段文本（不是表格）',
+            style: TextStyle(fontSize: 11, color: theme.colorScheme.outline)),
+        childrenPadding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+        children: [
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: SelectableText(
+              text,
+              style: const TextStyle(fontSize: 12, height: 1.5),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _Tag extends StatelessWidget {
+  const _Tag({required this.text});
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.secondaryContainer,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Text(text, style: const TextStyle(fontSize: 11)),
+    );
+  }
+}
+
+class _Notice extends StatelessWidget {
+  const _Notice({required this.icon, required this.text, this.isError = false});
+
+  final IconData icon;
+  final String text;
+  final bool isError;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: isError ? scheme.errorContainer : scheme.tertiaryContainer,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon,
+              size: 18,
+              color: isError ? scheme.onErrorContainer : scheme.onTertiaryContainer),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              text,
+              style: TextStyle(
+                fontSize: 12,
+                color: isError ? scheme.onErrorContainer : scheme.onTertiaryContainer,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -726,6 +810,8 @@ class _BottomBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isDischarge = state.form?.isDischarge == true;
+    final pending = state.form?.patientPendingDischarge == true;
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
@@ -741,63 +827,20 @@ class _BottomBar extends StatelessWidget {
             Expanded(
               flex: 2,
               child: FilledButton(
-                onPressed: state.saving ? null : () => controller.save(submit: true),
+                onPressed: state.saving || pending
+                    ? null
+                    : () => controller.save(submit: true),
                 child: state.saving
                     ? const SizedBox(
-                        width: 20, height: 20,
+                        width: 20,
+                        height: 20,
                         child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Text('提交'),
+                    : Text(isDischarge ? '提交并办理出院' : '提交'),
               ),
             ),
           ],
         ),
       ),
-    );
-  }
-}
-
-class _SectionTitle extends StatelessWidget {
-  const _SectionTitle(this.title, {this.subtitle});
-
-  final String title;
-  final String? subtitle;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6, top: 4),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          Text(title,
-              style: theme.textTheme.titleSmall
-                  ?.copyWith(fontWeight: FontWeight.bold)),
-          if (subtitle != null) ...[
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(subtitle!,
-                  style: TextStyle(fontSize: 11, color: theme.colorScheme.outline)),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class _Hint extends StatelessWidget {
-  const _Hint(this.text);
-
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Text(text,
-          style: TextStyle(
-              fontSize: 12, color: Theme.of(context).colorScheme.outline)),
     );
   }
 }
@@ -818,9 +861,17 @@ class _Bar extends StatelessWidget {
       padding: const EdgeInsets.only(left: 12, right: 4),
       child: Row(
         children: [
-          Icon(isError ? Icons.warning_amber_outlined : Icons.cloud_done_outlined, size: 16),
+          Icon(isError ? Icons.warning_amber_outlined : Icons.cloud_done_outlined,
+              size: 16),
           const SizedBox(width: 8),
-          Expanded(child: Text(text, style: const TextStyle(fontSize: 13))),
+          Expanded(
+            child: Text(
+              text,
+              style: const TextStyle(fontSize: 12),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
           IconButton(
             icon: const Icon(Icons.close, size: 16),
             onPressed: onDismiss,

@@ -365,13 +365,66 @@ class SyncEngine {
     final revision = item.revision;
     // 2026-10-05：`appointment` 实体随排期功能下线，现在只剩治疗记录可离线写。
     if (item.entity == 'treatment_record') {
-      await _db.customStatement(
-        'UPDATE treatment_records SET revision = ?, sync_status = ? WHERE client_uuid = ?',
-        <Object?>[revision ?? 0, 'synced', item.clientUuid],
+      await _promoteLocalRecord(
+        clientUuid: item.clientUuid,
+        serverId: _asInt(item.entityId),
+        revision: revision ?? 0,
       );
     }
     await _db.delete(_db.changeQueue)
         .delete(ChangeQueueCompanion(clientUuid: Value(item.clientUuid)));
+  }
+
+  /// 把本地新建草稿的**负数占位 id 换成服务端 id**。
+  ///
+  /// 为什么必须换：本地新建时用负数占位（避免与服务端自增 id 撞号），
+  /// 推送成功后如果不换：
+  ///   1. 随后 `pull` 回来的那条记录（正数 id）会**再插一行** —— 同一条记录
+  ///      在本地变两条，患者页看起来"记了两次"；
+  ///   2. 出院流程拿不到这条小结的服务端 id，而
+  ///      `POST /patients/{no}/discharge` 的入参就是它。
+  /// 两件事都真实存在，所以这一步不是锦上添花。
+  ///
+  /// 万一服务端那条**已经被 pull 落库**（同一行已在），就删掉本地占位行，
+  /// 避免主键冲突。
+  Future<void> _promoteLocalRecord({
+    required String clientUuid,
+    required int? serverId,
+    required int revision,
+  }) async {
+    final row = await (_db.select(_db.treatmentRecords)
+          ..where((t) => t.clientUuid.equals(clientUuid)))
+        .getSingleOrNull();
+    if (row == null) return;
+
+    if (serverId == null || row.id == serverId) {
+      await _db.customStatement(
+        'UPDATE treatment_records SET revision = ?, sync_status = ? WHERE client_uuid = ?',
+        <Object?>[revision, 'synced', clientUuid],
+      );
+      return;
+    }
+
+    final clash = await (_db.select(_db.treatmentRecords)
+          ..where((t) => t.id.equals(serverId)))
+        .getSingleOrNull();
+    if (clash != null) {
+      // 服务端版本已经在本地了：本地这份占位草稿是重复的，删掉。
+      await (_db.delete(_db.treatmentRecords)
+            ..where((t) => t.clientUuid.equals(clientUuid)))
+          .go();
+      return;
+    }
+
+    await _db.customStatement(
+      'UPDATE treatment_records SET id = ?, revision = ?, sync_status = ? WHERE client_uuid = ?',
+      <Object?>[serverId, revision, 'synced', clientUuid],
+    );
+  }
+
+  static int? _asInt(Object? raw) {
+    if (raw is num) return raw.toInt();
+    return int.tryParse('$raw');
   }
 
   // ------------------------------------------------------------------------- //
@@ -454,8 +507,15 @@ class SyncEngine {
 
   /// 应用一条服务端变更到本地库。
   ///
-  /// payload 是**完整快照**（治疗记录还带 `items`），所以可以做幂等 upsert，
-  /// 不必先查本地（协议 §5.4）。
+  /// payload 是**完整快照**，所以可以做幂等 upsert，不必先查本地（协议 §5.4）。
+  ///
+  /// ★ 两个坑（2026-10-05 实测）：
+  ///  1. 记录 id 要取变更里的 **`entity_id`**，不能只看 `payload['id']` ——
+  ///     离线推送路径写进 `change_log` 的 payload 就是客户端那份
+  ///     （没有 `id`，也没有 `rendered_text`），只有 `entity_id` 是权威的；
+  ///  2. payload 里可能缺 `therapist_id` 等列 —— 缺就**保留本地已有的值**，
+  ///     实在没有才退化成 0，否则 `(json['therapist_id'] as num)` 会直接抛
+  ///     类型错误，把整批变更的应用打断。
   Future<void> applyChange(Map<String, dynamic> change) async {
     final entity = change['entity'] as String?;
     final op = change['op'] as String? ?? 'update';
@@ -470,7 +530,10 @@ class SyncEngine {
                 ..where((t) => t.id.equals(int.parse(entityId))))
               .go();
         } else if (payload is Map) {
-          await _upsertRecord(Map<String, dynamic>.from(payload));
+          await _upsertRecord(
+            int.parse(entityId),
+            Map<String, dynamic>.from(payload),
+          );
         }
       case 'patient':
         // 服务端当前不会写 patient 变更（协议 §1），这里留一个警告便于早发现。
@@ -490,49 +553,46 @@ class SyncEngine {
     }
   }
 
-  Future<void> _upsertRecord(Map<String, dynamic> json) async {
-    final id = (json['id'] as num).toInt();
+  /// 落一条记录（SOAP 模型：没有"明细"了，内容就是一列 `body_json`）。
+  Future<void> _upsertRecord(int id, Map<String, dynamic> json) async {
+    final existing = await (_db.select(_db.treatmentRecords)
+          ..where((t) => t.id.equals(id)))
+        .getSingleOrNull();
+
     await _db.into(_db.treatmentRecords).insertOnConflictUpdate(
           TreatmentRecordsCompanion.insert(
             id: Value(id),
-            patientNo: json['patient_no'] as String,
-            therapistId: (json['therapist_id'] as num).toInt(),
-            recordDate: json['record_date'] as String,
-            sessionPeriod: Value(json['session_period'] as String?),
-            durationMin: Value((json['duration_min'] as num?)?.toInt()),
-            note: Value(json['note'] as String?),
-            patientResponseJson: Value(
-              json['patient_response'] == null ? null : jsonEncode(json['patient_response']),
+            patientNo: (json['patient_no'] as String?) ?? existing?.patientNo ?? '',
+            therapistId: (json['therapist_id'] as num?)?.toInt() ??
+                existing?.therapistId ??
+                0,
+            recordDate: (json['record_date'] as String?) ??
+                existing?.recordDate ??
+                '',
+            discipline:
+                (json['discipline'] as String?) ?? existing?.discipline ?? '',
+            kind: (json['kind'] as String?) ?? existing?.kind ?? 'daily',
+            seqNo: Value((json['seq_no'] as num?)?.toInt() ?? existing?.seqNo),
+            bodyJson: Value(
+              json['body'] == null
+                  ? (existing?.bodyJson ?? '{}')
+                  : jsonEncode(json['body']),
             ),
-            status: Value(json['status'] as String? ?? 'draft'),
-            seqNo: Value((json['seq_no'] as num?)?.toInt()),
+            // ★ 离线推送路径的 payload 里没有 `rendered_text`（服务端记的是客户端
+            //   那份），这时**保留本地已有的预览文本**，不要覆盖成空。
+            renderedText: Value(
+              (json['rendered_text'] as String?)?.isNotEmpty == true
+                  ? json['rendered_text'] as String
+                  : (existing?.renderedText ?? ''),
+            ),
+            note: Value((json['note'] as String?) ?? existing?.note),
+            status: Value((json['status'] as String?) ?? 'draft'),
             editCount: Value((json['edit_count'] as num?)?.toInt() ?? 0),
             revision: Value((json['revision'] as num?)?.toInt() ?? 0),
+            clientUuid: Value(
+              (json['client_uuid'] as String?) ?? existing?.clientUuid,
+            ),
           ),
         );
-
-    final items = json['items'];
-    if (items is List) {
-      // 明细整体替换：payload 是完整快照，先删后插最简单也最不容易错。
-      await (_db.delete(_db.recordItems)..where((t) => t.recordId.equals(id))).go();
-      var sort = 0;
-      for (final raw in items.whereType<Map>()) {
-        final item = Map<String, dynamic>.from(raw);
-        await _db.into(_db.recordItems).insertOnConflictUpdate(
-              RecordItemsCompanion.insert(
-                id: Value((item['id'] as num).toInt()),
-                recordId: id,
-                mainItemId: (item['main_item_id'] as num).toInt(),
-                subItemId: (item['sub_item_id'] as num).toInt(),
-                subItemNameSnapshot: Value(item['sub_item_name_snapshot'] as String?),
-                paramsJson: jsonEncode(item['params'] ?? const <String, dynamic>{}),
-                paramsSnapshotJson: Value(
-                  item['params_snapshot'] == null ? null : jsonEncode(item['params_snapshot']),
-                ),
-                sort: Value(sort++),
-              ),
-            );
-      }
-    }
   }
 }

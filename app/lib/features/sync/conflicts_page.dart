@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import 'package:rehab_app/core/worktime.dart';
+import 'package:rehab_app/core/disciplines.dart';
 import 'package:rehab_app/features/sync/conflict_providers.dart';
 
 /// 离线冲突处理页。
@@ -169,8 +169,9 @@ class _ConflictCard extends StatelessWidget {
             ),
             const SizedBox(height: 6),
             Text(
-              '患者 ${item.patientNo ?? '—'}'
-              '${item.itemCount > 0 ? ' · ${item.itemCount} 个项目' : ''}',
+              '患者 ${item.patientNo ?? '—'} · ${item.kindLabel}'
+              '${item.discipline == null ? '' : ' · ${Discipline.nameOf(item.discipline!)}'}'
+              '${item.itemCount > 0 ? ' · 填了 ${item.itemCount} 项' : ''}',
               style: const TextStyle(fontSize: 13),
             ),
             const SizedBox(height: 6),
@@ -251,33 +252,27 @@ class _PayloadView extends StatelessWidget {
     if (p['record_date'] != null || p['date'] != null) {
       rows.add(('日期', '${p['record_date'] ?? p['date']}'));
     }
-    if (p['session_period'] != null) {
-      rows.add(('半日', periodLabel('${p['session_period']}')));
+    if (p['kind'] != null) {
+      rows.add(('形态', item.kindLabel));
+    }
+    if (p['discipline'] != null) {
+      rows.add(('大类', Discipline.nameOf('${p['discipline']}')));
     }
     if (p['status'] != null) rows.add(('状态', '${p['status']}'));
-    if (p['duration_min'] != null) rows.add(('时长', '${p['duration_min']} 分钟'));
     if (p['note'] != null && '${p['note']}'.isNotEmpty) {
       rows.add(('备注', '${p['note']}'));
     }
-    if (p['patient_response'] != null) {
-      final r = p['patient_response'];
-      final tags = (r is Map ? r['tags'] : null);
-      final items = (r is Map ? r['items'] : null);
-      final parts = <String>[
-        if (tags is List && tags.isNotEmpty) '标签 ${tags.join('、')}',
-        if (items is List && items.isNotEmpty) '${items.length} 项取值',
-      ];
-      if (parts.isNotEmpty) rows.add(('患者反应', parts.join('；')));
-    }
-    if (item.itemCount > 0) {
-      final items = p['items'];
-      if (items is List) {
-        final names = items
-            .whereType<Map>()
-            .map((e) => '子项目#${e['sub_item_id']}')
-            .join('、');
-        rows.add(('治疗项目', '$names（${items.length} 项）'));
-      }
+    // SOAP 模型：内容就是一整个 `body`（`{field_key: value}`）。
+    final body = p['body'];
+    if (body is Map && body.isNotEmpty) {
+      final parts = body.entries
+          .map((e) {
+            final value = e.value;
+            final text = value is List ? value.join('/') : '$value';
+            return '${e.key}=$text';
+          })
+          .join('；');
+      rows.add(('内容', parts));
     }
 
     if (rows.isEmpty) {

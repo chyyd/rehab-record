@@ -42,11 +42,11 @@ void main() {
             entity: entity,
             op: const Value('update'),
             baseRevision: Value(baseRevision),
-            payloadJson: '{"patient_no":"S2B","record_date":"2027-07-08",'
-                '"session_period":"am","status":"submitted",'
-                '"items":[{"main_item_id":1,"sub_item_id":1,"params":{}}]}',
+            payloadJson: '{"patient_no":"S2B","record_date":"2026-10-06",'
+                '"discipline":"PT","kind":"daily","status":"submitted",'
+                '"body":{"mental":"良好","therapy_items":["偏瘫肢体综合训练"]}}',
             syncStatus: Value(status),
-            createdAt: '2027-07-08T00:00:00Z',
+            createdAt: '2026-10-06T00:00:00Z',
           ),
         );
   }
@@ -236,17 +236,19 @@ void main() {
 
     test('解析载荷并给出中文标签', () {
       final item = ConflictItem.fromRow(row(payload: '''
-{"patient_no":"S2B","record_date":"2027-07-08","session_period":"am",
- "status":"submitted","duration_min":45,"note":"首次",
- "items":[{"main_item_id":1,"sub_item_id":1,"params":{}},
-          {"main_item_id":1,"sub_item_id":2,"params":{}}]}
+{"patient_no":"S2B","record_date":"2026-10-06","discipline":"PT","kind":"daily",
+ "status":"submitted","note":"首次",
+ "body":{"mental":"良好","vas":2,"therapy_items":["偏瘫肢体综合训练"]}}
 '''));
 
       expect(item.entityLabel, '治疗记录');
       expect(item.opLabel, '修改');
       expect(item.patientNo, 'S2B');
-      expect(item.dateLabel, '2027-07-08');
-      expect(item.itemCount, 2);
+      expect(item.dateLabel, '2026-10-06');
+      expect(item.kindLabel, '日常记录');
+      expect(item.discipline, 'PT');
+      // SOAP 模型：内容就是一整个 body，数它的键。
+      expect(item.itemCount, 3);
     });
 
     test('载荷损坏时不崩，并如实说明无法解析', () {
@@ -275,16 +277,18 @@ void main() {
         entity: 'treatment_record',
         op: 'insert',
         baseRevision: null,
-        payloadJson: '{"patient_no":"S2B","record_date":"2027-07-09","session_period":"pm"}',
+        payloadJson:
+            '{"patient_no":"S2B","record_date":"2026-10-07","discipline":"ST_SP","kind":"reassessment"}',
         syncStatus: 'conflict',
         retryCount: 0,
         lastError: null,
-        createdAt: '2027-07-08T00:00:00Z',
+        createdAt: '2026-10-06T00:00:00Z',
       ));
       expect(item.entityLabel, '治疗记录');
       expect(item.opLabel, '新建');
-      expect(item.dateLabel, '2027-07-09');
-      expect(item.itemCount, 0, reason: '这条载荷没带明细项');
+      expect(item.dateLabel, '2026-10-07');
+      expect(item.kindLabel, '复评');
+      expect(item.itemCount, 0, reason: '这条载荷没带 body');
     });
   });
 }

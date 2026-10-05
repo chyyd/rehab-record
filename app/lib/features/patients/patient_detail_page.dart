@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:rehab_app/core/date_utils.dart';
-import 'package:rehab_app/core/worktime.dart';
+import 'package:rehab_app/core/disciplines.dart';
+import 'package:rehab_app/data/local/app_database.dart' as local;
+import 'package:rehab_app/data/repo/record_repository.dart';
 import 'package:rehab_app/features/patients/patients_providers.dart';
 import 'package:rehab_app/features/records/record_page.dart';
 import 'package:rehab_app/features/records/record_providers.dart';
@@ -10,10 +12,19 @@ import 'package:rehab_app/features/timeline/patient_summary_page.dart';
 
 /// 患者详情。
 ///
-/// **注意事项（`admin_note`）要醒目**：治疗师只读、由管理员维护，
-/// 床旁最怕漏看"注意防跌倒"这类信息，所以放在最上面且用错误色。
+/// ## "记录治疗"区域为什么是四个大类按钮
 ///
-/// 记录列表走**本地库**（响应式）：离线也能看历史、继续写没写完的草稿。
+/// 用户原话：「患者详情中的治疗记录部分的内容，现在太过于繁琐，需要点好多次，
+/// 不容易使用，改成类似模板这样」。所以这里**不再有二级选择**：
+/// 四个大类**竖排**直接点，点进去就是一屏 chip 表单。
+/// 每个按钮上直接写出「已记录 N 次」与「距复评还差 M 次」——
+/// 治疗师不用进去才知道该记第几次、该不该复评。
+///
+/// ## 出院按钮
+///
+/// 用户原话：「在 app 记录治疗的**左侧对称位置**添加出院按钮，
+/// 所有治疗师都可以有出院的权限，点击后就是出院小结」。
+/// 所以它就在四个大类按钮**左边**，同一条横带上，任何治疗师都可见可用。
 class PatientDetailPage extends ConsumerWidget {
   const PatientDetailPage({super.key, required this.inpatientNo});
 
@@ -40,11 +51,6 @@ class PatientDetailPage extends ConsumerWidget {
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _openRecord(context, null),
-        icon: const Icon(Icons.edit_note),
-        label: const Text('记录治疗'),
-      ),
       body: patient.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => Center(child: Text('$e')),
@@ -55,9 +61,10 @@ class PatientDetailPage extends ConsumerWidget {
 
           final note = p.adminNote?.trim() ?? '';
           final records = ref.watch(localRecordsProvider(inpatientNo));
+          final summaries = ref.watch(disciplineSummariesProvider(inpatientNo));
 
           return ListView(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
             children: [
               if (note.isNotEmpty)
                 Container(
@@ -107,15 +114,7 @@ class PatientDetailPage extends ConsumerWidget {
               const SizedBox(height: 16),
 
               _InfoRow(label: '诊断', value: p.diagnosis ?? '—'),
-              _InfoRow(
-                label: '状态',
-                value: switch (p.status) {
-                  'in_hospital' => '在院',
-                  'paused' => '暂停',
-                  'discharged' => '已出院',
-                  _ => p.status,
-                },
-              ),
+              _InfoRow(label: '状态', value: _statusLabel(p.status)),
               _InfoRow(
                 label: '归属',
                 value: p.assignedTherapistId == null
@@ -124,10 +123,39 @@ class PatientDetailPage extends ConsumerWidget {
               ),
 
               const Divider(height: 32),
+              Text('记录治疗', style: theme.textTheme.titleMedium),
+              const SizedBox(height: 4),
+              Text(
+                '点大类直接记录；一屏勾选，点一下就是选中',
+                style: TextStyle(fontSize: 12, color: theme.colorScheme.outline),
+              ),
+              const SizedBox(height: 10),
+              if (p.status == 'pending_discharge' || p.status == 'discharged')
+                _DischargedNotice(status: p.status)
+              else
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // ★ 用户："在记录治疗的左侧对称位置添加出院按钮"。
+                    _DischargeButton(
+                      patientNo: inpatientNo,
+                      summaries: summaries.value ?? const [],
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: _DisciplineButtons(
+                        patientNo: inpatientNo,
+                        summaries: summaries,
+                      ),
+                    ),
+                  ],
+                ),
+
+              const Divider(height: 32),
               Text('治疗记录', style: theme.textTheme.titleMedium),
               const SizedBox(height: 4),
               Text(
-                '按日期倒序；未上传的草稿标「待上传」',
+                '按日期倒序；内容是 SOAP 文本（草稿未上传时标「待上传」）',
                 style: TextStyle(fontSize: 12, color: theme.colorScheme.outline),
               ),
               const SizedBox(height: 8),
@@ -146,34 +174,10 @@ class PatientDetailPage extends ConsumerWidget {
                     : Column(
                         children: [
                           for (final r in rows)
-                            ListTile(
-                              contentPadding: EdgeInsets.zero,
-                              leading: CircleAvatar(
-                                radius: 18,
-                                child: Text('${r.seqNo ?? '草'}',
-                                    style: const TextStyle(fontSize: 12)),
-                              ),
-                              title: Text(
-                                '${shortDateFromIso(r.recordDate)}'
-                                '${r.sessionPeriod == null ? '' : ' ${periodLabel(r.sessionPeriod!)}'}'
-                                ' · ${r.status == 'draft' ? '草稿' : '已提交'}',
-                              ),
-                              subtitle: Text(
-                                [
-                                  if (r.seqNo != null) '第 ${r.seqNo} 次',
-                                  if (r.durationMin != null) '${r.durationMin} 分钟',
-                                  if (r.note != null && r.note!.isNotEmpty) r.note!,
-                                  if (r.syncStatus == 'pending') '待上传',
-                                ].join(' · '),
-                              ),
-                              trailing: r.syncStatus == 'pending'
-                                  ? Icon(Icons.cloud_upload_outlined,
-                                      size: 18, color: theme.colorScheme.outline)
-                                  : const Icon(Icons.chevron_right),
-                              // 只允许继续编辑本地草稿；已推送的记录属于"时间轴/修正"
-                              // 的范畴，留到下一步做（避免这里出现半套编辑语义）。
-                              onTap: r.id < 0
-                                  ? () => _openRecord(context, r.id)
+                            _RecordTile(
+                              record: r,
+                              onTap: r.status == 'draft'
+                                  ? () => _openExisting(context, r)
                                   : null,
                             ),
                         ],
@@ -186,19 +190,369 @@ class PatientDetailPage extends ConsumerWidget {
     );
   }
 
-  void _openRecord(BuildContext context, int? existingId) {
+  static String _statusLabel(String status) => switch (status) {
+        'in_hospital' => '在院',
+        'paused' => '暂停',
+        'pending_discharge' => '待出院（已提交出院小结）',
+        'discharged' => '已出院',
+        _ => status,
+      };
+
+  /// 继续编辑一条本地草稿。
+  void _openExisting(BuildContext context, local.TreatmentRecord row) {
     Navigator.of(context).push(
-      MaterialPageRoute<void>(
+      MaterialPageRoute<bool>(
         builder: (_) => RecordPage(
           args: RecordEditorArgs(
             patientNo: inpatientNo,
-            existingId: existingId,
+            discipline: row.discipline,
+            existingId: row.id,
+            recordDate: row.recordDate,
+            kind: row.kind == 'daily' ? null : row.kind,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// 出院按钮：与四个大类按钮同一条横带，在**左侧**。
+///
+/// 点它 → 直接取出院小结表单（`kind=discharge`）。出院小结是**按大类**写的
+/// （每个大类有自己的 `discharge.json`，里面的"治疗过程汇总"只汇总该大类），
+/// 所以大类多于一个有记录时，先问一句要写哪个大类的；只有一个就直接进，
+/// 不再多一次点击。
+class _DischargeButton extends ConsumerWidget {
+  const _DischargeButton({required this.patientNo, required this.summaries});
+
+  final String patientNo;
+  final List<DisciplineSummary> summaries;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    return SizedBox(
+      width: 96,
+      child: OutlinedButton(
+        style: OutlinedButton.styleFrom(
+          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 6),
+          foregroundColor: theme.colorScheme.error,
+          side: BorderSide(color: theme.colorScheme.error.withValues(alpha: 0.6)),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ),
+        onPressed: () => _start(context, ref),
+        child: const Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.logout, size: 22),
+            SizedBox(height: 6),
+            Text('出院', style: TextStyle(fontWeight: FontWeight.bold)),
+            SizedBox(height: 2),
+            Text('出院小结', style: TextStyle(fontSize: 10)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _start(BuildContext context, WidgetRef ref) async {
+    // 摘要还没回来（离线且没缓存过）时也要能进：退回四大类的静态名单，
+    // 点哪个大类就写哪个大类的出院小结。
+    final rows = summaries.isEmpty
+        ? [
+            for (final d in Discipline.all)
+              DisciplineSummary(key: d.key, name: d.name),
+          ]
+        : summaries;
+    final withRecords =
+        rows.where((s) => s.totalDaily > 0 || s.needsDocument).toList();
+    final only = withRecords.length == 1
+        ? withRecords.single
+        : (rows.length == 1 ? rows.single : null);
+
+    var picked = only;
+    picked ??= await showModalBottomSheet<DisciplineSummary>(
+        context: context,
+        builder: (ctx) => SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 16, 16, 4),
+                child: Text('出院小结写在哪个大类下？',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
+              ),
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
+                child: Text(
+                  '每个大类有自己的出院小结（"治疗过程汇总"只汇总该大类）。',
+                  style: TextStyle(fontSize: 12),
+                ),
+              ),
+              for (final s in rows)
+                ListTile(
+                  leading: const Icon(Icons.description_outlined),
+                  title: Text(s.name),
+                  subtitle: Text(
+                    s.error != null
+                        ? s.error!
+                        : '已记录 ${s.totalDaily} 次'
+                            '${s.needsDocument ? ' · 待（${s.pendingDocumentLabel}）' : ''}',
+                  ),
+                  onTap: () => Navigator.pop(ctx, s),
+                ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        ),
+      );
+    if (picked == null || !context.mounted) return;
+
+    await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (_) => RecordPage(
+          args: RecordEditorArgs(
+            patientNo: patientNo,
+            discipline: picked!.key,
+            kind: 'discharge',
             recordDate: formatDate(DateTime.now()),
           ),
         ),
       ),
     );
   }
+}
+
+/// 竖排四个大类按钮（用户要求"竖排"），每个显示次数与复评倒计时。
+class _DisciplineButtons extends ConsumerWidget {
+  const _DisciplineButtons({required this.patientNo, required this.summaries});
+
+  final String patientNo;
+  final AsyncValue<List<DisciplineSummary>> summaries;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return summaries.when(
+      loading: () => const Padding(
+        padding: EdgeInsets.symmetric(vertical: 12),
+        child: Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))),
+      ),
+      // 摘要取不到（离线且没缓存）时**仍然画出四个按钮**：点进去会自己再取一次。
+      error: (e, _) => _buttons(
+        context,
+        [for (final d in Discipline.all) DisciplineSummary(key: d.key, name: d.name, error: '$e')],
+      ),
+      data: (rows) => _buttons(context, rows),
+    );
+  }
+
+  Widget _buttons(BuildContext context, List<DisciplineSummary> rows) {
+    return Column(
+      children: [
+        for (final s in rows)
+          _DisciplineButton(patientNo: patientNo, summary: s),
+      ],
+    );
+  }
+}
+
+class _DisciplineButton extends ConsumerWidget {
+  const _DisciplineButton({required this.patientNo, required this.summary});
+
+  final String patientNo;
+  final DisciplineSummary summary;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final subtitle = summary.error != null
+        ? summary.error!
+        : [
+            '已记录 ${summary.totalDaily} 次',
+            summary.sessionsUntilReassessment > 0
+                ? '距复评还差 ${summary.sessionsUntilReassessment} 次'
+                : '已到复评点',
+            if (summary.needsDocument) '需先填${summary.pendingDocumentLabel ?? ''}',
+          ].join(' · ');
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Material(
+        color: theme.colorScheme.primaryContainer,
+        borderRadius: BorderRadius.circular(10),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(10),
+          onTap: () => _open(context, ref),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        summary.name,
+                        style: const TextStyle(
+                            fontWeight: FontWeight.bold, fontSize: 15),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        subtitle,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: theme.colorScheme.onPrimaryContainer
+                              .withValues(alpha: 0.75),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (summary.needsDocument)
+                  Icon(Icons.assignment_late_outlined,
+                      size: 18, color: theme.colorScheme.error),
+                const SizedBox(width: 4),
+                const Icon(Icons.chevron_right, size: 20),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _open(BuildContext context, WidgetRef ref) async {
+    await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (_) => RecordPage(
+          args: RecordEditorArgs(
+            patientNo: patientNo,
+            discipline: summary.key,
+            recordDate: formatDate(DateTime.now()),
+          ),
+        ),
+      ),
+    );
+    // 记完之后次数/复评倒计时会变，重新取一次摘要。
+    ref.invalidate(disciplineSummariesProvider(patientNo));
+  }
+}
+
+class _DischargedNotice extends StatelessWidget {
+  const _DischargedNotice({required this.status});
+
+  final String status;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.secondaryContainer,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.info_outline),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              status == 'discharged'
+                  ? '该患者已出院，不能继续记录治疗。'
+                  : '该患者已提交出院小结，处于「待出院」状态，不能再记新记录。'
+                      '（管理员确认或满 7 天后正式出院；期间可取消待出院）',
+              style: const TextStyle(fontSize: 13),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// 一条本地记录：展示 SOAP 文本摘要（不再是"N 项"表格）。
+class _RecordTile extends StatelessWidget {
+  const _RecordTile({required this.record, this.onTap});
+
+  final local.TreatmentRecord record;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final body = RecordRepository.decodeBody(record.bodyJson);
+    final kindLabel = _kindLabel(record.kind);
+    final summary = record.renderedText.trim().isNotEmpty
+        ? _firstContentLine(record.renderedText)
+        : _bodyLine(body);
+
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: CircleAvatar(
+        radius: 18,
+        child: Text(
+          record.seqNo?.toString() ?? _shortKind(record.kind),
+          style: const TextStyle(fontSize: 11),
+        ),
+      ),
+      title: Text(
+        '${shortDateFromIso(record.recordDate)} · $kindLabel'
+        '${record.status == 'draft' ? ' · 草稿' : ''}',
+      ),
+      subtitle: Text(
+        [
+          if (record.seqNo != null) '第 ${record.seqNo} 次',
+          if (summary.isNotEmpty) summary,
+          if (record.syncStatus == 'pending') '待上传',
+        ].join(' · '),
+        maxLines: 3,
+        overflow: TextOverflow.ellipsis,
+      ),
+      trailing: record.syncStatus == 'pending'
+          ? Icon(Icons.cloud_upload_outlined,
+              size: 18, color: theme.colorScheme.outline)
+          : (onTap == null ? null : const Icon(Icons.edit_outlined, size: 18)),
+      onTap: onTap,
+    );
+  }
+
+  /// 本地草稿还没有服务端渲染文本时的**退化摘要**：`键=值` 连接。
+  ///
+  /// 只用键名（`complaint` 这类 key 没有中文标签可用）—— 它出现在"草稿还没
+  /// 上传"的行里，治疗师点进去能看到完整表单，这里只求"这条记的是啥"有迹可循。
+  static String _bodyLine(Map<String, dynamic> body) {
+    if (body.isEmpty) return '';
+    return body.entries.map((e) => '${e.key}=${e.value}').join('；');
+  }
+
+  /// 跳过标题行，取第一段正文（与服务端 `rendered_excerpt` 同口径）。
+  static String _firstContentLine(String text) {
+    for (final line in text.split('\n')) {
+      final trimmed = line.trim();
+      if (trimmed.isEmpty) continue;
+      if (trimmed.startsWith('治疗日期')) continue;
+      if (trimmed.contains('：')) return trimmed;
+    }
+    return text.split('\n').first;
+  }
+
+  static String _kindLabel(String kind) => switch (kind) {
+        'initial' => '首评',
+        'reassessment' => '复评',
+        'discharge' => '出院小结',
+        _ => '日常记录',
+      };
+
+  static String _shortKind(String kind) => switch (kind) {
+        'initial' => '首',
+        'reassessment' => '复',
+        'discharge' => '出',
+        _ => '日',
+      };
 }
 
 class _InfoRow extends StatelessWidget {

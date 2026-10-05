@@ -7,6 +7,12 @@ import 'package:rehab_app/data/repo/timeline_repository.dart';
 
 import 'support.dart';
 
+/// 时间轴与汇总的响应（**SOAP 纯文本口径**）。
+///
+/// 记录内容不再是"主项目 / 子项目 / 参数 / 患者反应"表格，而是服务端冻结的
+/// `rendered_text`；汇总的 `item_count` / `total_duration_min` /
+/// `main_item_counts` 也换成了 `record_count` / `patient_count` /
+/// `therapist_counts` / `discipline_counts`。
 Map<String, dynamic> timelineJson() => {
       'items': [
         {
@@ -15,13 +21,17 @@ Map<String, dynamic> timelineJson() => {
           'patient_name': '阶段五患者甲',
           'therapist_id': 3,
           'therapist_name': '张三',
-          'record_date': '2027-07-08',
-          'session_period': 'pm',
+          'record_date': '2026-10-06',
+          'discipline': 'PT',
+          'discipline_name': '运动',
+          'kind': 'daily',
+          'kind_label': '日常治疗记录',
           'seq_no': 4,
           'status': 'submitted',
           'edit_count': 1,
-          'item_count': 2,
-          'main_item_names': ['运动功能障碍训练'],
+          'rendered_text': '康复治疗记录（PT运动）\n治疗日期：2026-10-06   第 4 次\n\n'
+              '主观资料：精神状态：良好；主诉：乏力\n\n客观资料：本次训练项目：偏瘫肢体综合训练',
+          'rendered_excerpt': '主观资料：精神状态：良好；主诉：乏力',
         },
         {
           'id': 131,
@@ -29,12 +39,14 @@ Map<String, dynamic> timelineJson() => {
           'patient_name': '阶段五患者甲',
           'therapist_id': 3,
           'therapist_name': '张三',
-          'record_date': '2027-07-05',
-          'session_period': 'am',
+          'record_date': '2026-10-05',
+          'discipline': 'PT',
+          'discipline_name': '运动',
+          'kind': 'initial',
+          'kind_label': '首评',
           'seq_no': null,
           'status': 'draft',
-          'item_count': 1,
-          'main_item_names': <String>[],
+          'rendered_text': '康复初始评定（PT运动）\n治疗日期：2026-10-05\n\n主观资料：自觉症状：肢体无力',
         },
       ],
       'total': 17,
@@ -43,29 +55,38 @@ Map<String, dynamic> timelineJson() => {
     };
 
 Map<String, dynamic> dateSummaryJson() => {
-      'date': '2027-07-08',
+      'date': '2026-10-06',
       'group_by': 'therapist',
       'totals': {
         'record_count': 5,
-        'item_count': 9,
-        'total_duration_min': 140,
         'patient_count': 4,
-        'main_item_counts': {'运动功能障碍训练': 5, '言语功能障碍训练': 4},
-        'sub_item_counts': {'偏瘫肢体综合训练': 3},
         'therapist_counts': {'张三': 3, '李四': 2},
+        'discipline_counts': {'运动': 4, '吞咽': 1},
       },
       'groups': [
         {
           'key': '张三',
-          'label': '张三',
           'totals': {
             'record_count': 3,
-            'item_count': 5,
-            'total_duration_min': 80,
             'patient_count': 2,
-            'sub_item_counts': {'偏瘫肢体综合训练': 3},
+            'discipline_counts': {'运动': 3},
           },
-          'patient_nos': ['S5A', 'S2B'],
+          'rows': [
+            {
+              'record_id': 132,
+              'record_date': '2026-10-06',
+              'patient_no': 'S5A',
+              'patient_name': '阶段五患者甲',
+              'therapist_name': '张三',
+              'discipline': 'PT',
+              'discipline_name': '运动',
+              'kind': 'daily',
+              'kind_label': '日常治疗记录',
+              'seq_no': 4,
+              'status': 'submitted',
+              'rendered_text': '康复治疗记录（PT运动）\n\n主观资料：精神状态：良好',
+            },
+          ],
         },
       ],
     };
@@ -75,53 +96,69 @@ Map<String, dynamic> patientDailyJson() => {
         'inpatient_no': 'S2B',
         'name': '阶段二患者乙',
         'diagnosis': '脑卒中恢复期',
+        'status': 'in_hospital',
       },
-      'date_from': '2027-07-01',
-      'date_to': '2027-07-08',
+      'date_from': '2026-10-01',
+      'date_to': '2026-10-06',
       'totals': {
         'record_count': 2,
-        'item_count': 3,
-        'total_duration_min': 60,
         'patient_count': 1,
+        'discipline_counts': {'运动': 2},
       },
       'days': [
         {
-          'record_date': '2027-07-08',
-          'session_periods': ['am', 'pm'],
+          'record_date': '2026-10-06',
+          'record_count': 1,
           'therapists': ['张三'],
-          'main_items': ['运动功能障碍训练'],
-          'sub_items': ['偏瘫肢体综合训练'],
-          'params': ['side=左'],
-          'responses': ['疼痛=2 分'],
-          'notes': ['首次'],
-          'duration_min': 45,
+          'disciplines': ['运动', '言语'],
           'temporary': true,
+          'records': [
+            {
+              'record_id': 132,
+              'record_date': '2026-10-06',
+              'discipline': 'PT',
+              'discipline_name': '运动',
+              'kind': 'initial',
+              'kind_label': '首评',
+              'status': 'submitted',
+              'therapist_name': '张三',
+              'is_temporary': 1,
+              'rendered_text': '康复初始评定（PT运动）\n\n主观资料：自觉症状：肢体无力',
+            },
+          ],
+          'texts': ['康复初始评定（PT运动）\n\n主观资料：自觉症状：肢体无力'],
         },
       ],
     };
 
 void main() {
   group('时间轴 DTO', () {
-    test('解析条目与分页信息', () {
-      final page = TimelinePage.fromJson(timelineJson());
+    test('解析条目与分页信息（含大类与形态）', () {
+      final page = TimelinePageData.fromJson(timelineJson());
       expect(page.total, 17);
       expect(page.items, hasLength(2));
       expect(page.items.first.displayName, '阶段五患者甲');
-      expect(page.items.first.mainItemNames, ['运动功能障碍训练']);
+      expect(page.items.first.disciplineName, '运动');
+      expect(page.items.first.kindLabel, '日常治疗记录');
       expect(page.items.first.statusLabel, '已提交');
+      // ★ 内容是 SOAP 文本，不再是"N 项"。
+      expect(page.items.first.renderedExcerpt, contains('主观资料'));
+      expect(page.items.first.line, contains('精神状态'));
       // 17 条、每页 2 条 → 还有更多。
       expect(page.hasMore, isTrue);
     });
 
-    test('草稿没有序号时不造数据', () {
-      final draft = TimelinePage.fromJson(timelineJson()).items[1];
-      expect(draft.seqNo, isNull);
-      expect(draft.statusLabel, '草稿');
-      expect(draft.mainItemNames, isEmpty);
+    test('评估文书没有序号时不造数据', () {
+      final initial = TimelinePageData.fromJson(timelineJson()).items[1];
+      expect(initial.seqNo, isNull);
+      expect(initial.kind, 'initial');
+      expect(initial.statusLabel, '草稿');
+      // 没有 rendered_excerpt 时从 rendered_text 里截第一段正文。
+      expect(initial.line, contains('自觉症状'));
     });
 
     test('最后一页 hasMore 为 false', () {
-      final page = TimelinePage.fromJson({
+      final page = TimelinePageData.fromJson({
         ...timelineJson(),
         'total': 2,
       });
@@ -131,52 +168,49 @@ void main() {
     test('患者名为空时回落到住院号', () {
       final item = TimelineItem.fromJson({
         'id': 1, 'patient_no': 'X1', 'therapist_id': 1,
-        'record_date': '2027-07-08', 'status': 'draft',
+        'record_date': '2026-10-06', 'status': 'draft',
       });
       expect(item.displayName, 'X1');
+      expect(item.line, isEmpty);
     });
   });
 
-  group('汇总 DTO', () {
-    test('按日期汇总：总计与分组', () {
+  group('汇总 DTO（SOAP 文本口径）', () {
+    test('按日期汇总：总计、分组、逐条文书', () {
       final s = DateSummary.fromJson(dateSummaryJson());
-      expect(s.date, '2027-07-08');
+      expect(s.date, '2026-10-06');
       expect(s.groupBy, 'therapist');
       expect(s.totals.recordCount, 5);
       expect(s.totals.patientCount, 4);
-      expect(s.totals.mainItemCounts['运动功能障碍训练'], 5);
+      // ★ 口径换成大类分布（主项目/子项目计数已随字典树删除）。
+      expect(s.totals.disciplineCounts['运动'], 4);
+      expect(s.totals.therapistCounts['李四'], 2);
       expect(s.groups.single.label, '张三');
-      expect(s.groups.single.patientNos, ['S5A', 'S2B']);
-    });
-
-    test('时长格式化：分钟/小时/小时+分/零', () {
-      SummaryTotals t(int m) =>
-          SummaryTotals.fromJson({'total_duration_min': m});
-      expect(t(0).durationLabel, '0 分钟');
-      expect(t(45).durationLabel, '45 分钟');
-      expect(t(60).durationLabel, '1 小时');
-      expect(t(140).durationLabel, '2 小时 20 分');
+      expect(s.groups.single.rows.single.renderedText, contains('主观资料'));
     });
 
     test('缺失的计数对象不崩（服务端可能省略）', () {
       final t = SummaryTotals.fromJson({'record_count': 1});
-      expect(t.mainItemCounts, isEmpty);
+      expect(t.disciplineCounts, isEmpty);
       expect(t.therapistCounts, isEmpty);
-      expect(t.itemCount, 0);
+      expect(t.patientCount, 0);
     });
 
-    test('患者每日汇总：天、半日、临时治疗标记', () {
+    test('患者每日汇总：天、大类、临时治疗标记、SOAP 文本', () {
       final s = PatientDailySummary.fromJson(patientDailyJson());
       expect(s.patient.inpatientNo, 'S2B');
-      expect(s.days.single.sessionPeriods, ['am', 'pm']);
-      expect(s.days.single.durationMin, 45);
+      expect(s.patient.status, 'in_hospital');
+      expect(s.days.single.disciplines, ['运动', '言语']);
+      expect(s.days.single.recordCount, 1);
       expect(s.days.single.temporary, isTrue,
           reason: '临时治疗要能识别出来（记录人 ≠ 患者归属人）');
+      expect(s.days.single.records.single.isTemporary, isTrue);
+      expect(s.days.single.texts.single, contains('康复初始评定'));
     });
   });
 
   group('时间轴仓库', () {
-    test('查询参数按契约拼装（scope / 分页 / 日期区间）', () async {
+    test('查询参数按契约拼装（scope / 分页 / 日期 / 大类 / 形态）', () async {
       final adapter = ScriptedAdapter({kTimeline: (200, timelineJson())});
       final repo = TimelineRepository(
         client: buildScriptedClient({}, adapter: adapter),
@@ -186,8 +220,10 @@ void main() {
         page: 2,
         pageSize: 20,
         scope: 'mine',
-        dateFrom: '2027-07-01',
-        dateTo: '2027-07-08',
+        dateFrom: '2026-10-01',
+        dateTo: '2026-10-06',
+        discipline: 'PT',
+        kind: 'daily',
       );
 
       final q = adapter.seen.single.queryParameters;
@@ -195,19 +231,23 @@ void main() {
       expect(q['page_size'], 20);
       // 注意：`scope=temp` 已按用户决定删除；现在只有 visible / mine。
       expect(q['scope'], 'mine');
-      expect(q['from'], '2027-07-01');
-      expect(q['to'], '2027-07-08');
-      // 没传主项目就不该带这个参数（服务端按存在与否判断）。
+      expect(q['from'], '2026-10-01');
+      expect(q['to'], '2026-10-06');
+      expect(q['discipline'], 'PT');
+      expect(q['kind'], 'daily');
+      // 旧的主项目筛选参数已随字典树删除，不该再出现。
       expect(q.containsKey('main_item_id'), isFalse);
     });
 
-    test('主项目筛选传了就带 main_item_id', () async {
+    test('没传大类/形态就不带这两个参数（服务端按存在与否判断）', () async {
       final adapter = ScriptedAdapter({kTimeline: (200, timelineJson())});
       final repo = TimelineRepository(
         client: buildScriptedClient({}, adapter: adapter),
       );
-      await repo.fetchTimeline(mainItemId: 2);
-      expect(adapter.seen.single.queryParameters['main_item_id'], 2);
+      await repo.fetchTimeline();
+      final q = adapter.seen.single.queryParameters;
+      expect(q.containsKey('discipline'), isFalse);
+      expect(q.containsKey('kind'), isFalse);
     });
 
     test('汇总请求带 date 与 group_by', () async {
@@ -215,9 +255,9 @@ void main() {
       final repo = TimelineRepository(
         client: buildScriptedClient({}, adapter: adapter),
       );
-      await repo.fetchDateSummary(date: '2027-07-08', groupBy: 'patient');
+      await repo.fetchDateSummary(date: '2026-10-06', groupBy: 'patient');
       final q = adapter.seen.single.queryParameters;
-      expect(q['date'], '2027-07-08');
+      expect(q['date'], '2026-10-06');
       expect(q['group_by'], 'patient');
     });
 
@@ -241,17 +281,17 @@ void main() {
         binaryResponses: {kPrintSummaryDate: (200, pdf)},
       );
       final client = buildScriptedClient({}, adapter: adapter);
-      final bytes = await client.requestBytes(kPrintSummaryDate, query: {'date': '2027-07-08'});
+      final bytes = await client.requestBytes(kPrintSummaryDate, query: {'date': '2026-10-06'});
       expect(bytes, pdf);
       expect(String.fromCharCodes(bytes.take(4)), '%PDF');
       // 日期要带上，否则打出来的是别的日子。
-      expect(adapter.seen.single.queryParameters['date'], '2027-07-08');
+      expect(adapter.seen.single.queryParameters['date'], '2026-10-06');
     });
 
     test('打印地址拼装（供排查：能直接看到打的是哪一天）', () {
       final repo = TimelineRepository(client: buildScriptedClient({}));
-      final url = repo.pdfUrl(kPrintSummaryDate, query: {'date': '2027-07-08'});
-      expect(url, 'http://test.local/api/v1/print/summary/date?date=2027-07-08');
+      final url = repo.pdfUrl(kPrintSummaryDate, query: {'date': '2026-10-06'});
+      expect(url, 'http://test.local/api/v1/print/summary/date?date=2026-10-06');
     });
   });
 }

@@ -21,13 +21,19 @@ class TimelineRepository {
   final ApiClient _client;
 
   /// 时间轴（按日期倒序，分页）。
-  Future<TimelinePage> fetchTimeline({
+  ///
+  /// `scope` 只有 `visible`（我能看到的患者）与 `mine`（我写的）——
+  /// 曾经的 `temp` 已随临时指派下线（2026-10-05）。
+  /// 筛选维度是 `discipline`（四大类）与 `kind`（形态），
+  /// **不再有** `main_item_id`：字典树与主项目已随迁移 011 删除。
+  Future<TimelinePageData> fetchTimeline({
     int page = 1,
     int pageSize = 20,
     String? dateFrom,
     String? dateTo,
     String scope = 'visible',
-    int? mainItemId,
+    String? discipline,
+    String? kind,
   }) async {
     final data = await _client.request(kTimeline, query: {
       'page': page,
@@ -35,9 +41,10 @@ class TimelineRepository {
       'scope': scope,
       if (dateFrom != null) 'from': dateFrom,
       if (dateTo != null) 'to': dateTo,
-      if (mainItemId != null) 'main_item_id': mainItemId,
+      if (discipline != null) 'discipline': discipline,
+      if (kind != null) 'kind': kind,
     });
-    return TimelinePage.fromJson(Map<String, dynamic>.from(data as Map));
+    return TimelinePageData.fromJson(Map<String, dynamic>.from(data as Map));
   }
 
   /// 按日期汇总（`group_by` = therapist / patient）。

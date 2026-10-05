@@ -3,7 +3,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:rehab_app/core/api_endpoints.dart';
 import 'package:rehab_app/core/date_utils.dart';
-import 'package:rehab_app/core/worktime.dart';
 import 'package:rehab_app/data/remote/timeline_dto.dart';
 import 'package:rehab_app/features/timeline/pdf_export.dart';
 import 'package:rehab_app/features/timeline/timeline_providers.dart';
@@ -84,9 +83,10 @@ class PatientSummaryPage extends ConsumerWidget {
                       Row(
                         children: [
                           _Metric(label: '治疗天数', value: '${s.days.length}'),
-                          _Metric(label: '记录', value: '${s.totals.recordCount}'),
-                          _Metric(label: '项目', value: '${s.totals.itemCount}'),
-                          _Metric(label: '总时长', value: s.totals.durationLabel),
+                          _Metric(label: '治疗次数', value: '${s.totals.recordCount}'),
+                          _Metric(
+                              label: '大类', value: '${s.totals.disciplineCounts.length}'),
+                          _Metric(label: '文书', value: '${_documentCount(s)}'),
                         ],
                       ),
                     ],
@@ -110,18 +110,22 @@ class PatientSummaryPage extends ConsumerWidget {
       ),
     );
   }
+
+  /// 文书总条数（含首评/复评/出院小结 —— 它们不计入治疗次数）。
+  static int _documentCount(PatientDailySummary s) =>
+      s.days.fold(0, (sum, day) => sum + day.records.length);
 }
 
 class _DayCard extends StatelessWidget {
   const _DayCard({required this.day});
 
-  final PatientDailyRow day;
+  final PatientDailyDay day;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final d = parseDate(day.recordDate);
-    final periods = day.sessionPeriods.map(periodLabel).join('、');
+    final chips = day.disciplines.join('、');
 
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
@@ -133,9 +137,9 @@ class _DayCard extends StatelessWidget {
               '${d == null ? '' : ' ${weekdayLabel(d)}'}',
               style: const TextStyle(fontWeight: FontWeight.w600),
             ),
-            if (periods.isNotEmpty) ...[
+            if (chips.isNotEmpty) ...[
               const SizedBox(width: 6),
-              Text(periods,
+              Text(chips,
                   style: TextStyle(fontSize: 11, color: theme.colorScheme.outline)),
             ],
             if (day.temporary) ...[
@@ -154,46 +158,38 @@ class _DayCard extends StatelessWidget {
         subtitle: Text(
           [
             if (day.therapists.isNotEmpty) day.therapists.join('、'),
-            if (day.durationMin > 0) '${day.durationMin} 分钟',
+            '${day.recordCount} 次治疗',
+            '${day.records.length} 份文书',
           ].join(' · '),
           style: const TextStyle(fontSize: 12),
         ),
         childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
         children: [
-          _Line(label: '主项目', values: day.mainItems),
-          _Line(label: '子项目', values: day.subItems),
-          _Line(label: '参数', values: day.params),
-          _Line(label: '患者反应', values: day.responses),
-          _Line(label: '备注', values: day.notes),
-        ],
-      ),
-    );
-  }
-}
-
-class _Line extends StatelessWidget {
-  const _Line({required this.label, required this.values});
-
-  final String label;
-  final List<String> values;
-
-  @override
-  Widget build(BuildContext context) {
-    if (values.isEmpty) return const SizedBox.shrink();
-    final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 64,
-            child: Text(label,
-                style: TextStyle(fontSize: 12, color: theme.colorScheme.outline)),
-          ),
-          Expanded(
-            child: Text(values.join('；'), style: const TextStyle(fontSize: 12)),
-          ),
+          // ★ 一天的内容就是当天各份文书的 SOAP 纯文本，按时间顺序往下排。
+          for (final row in day.records)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (row.isTemporary)
+                    Text('（临时治疗）',
+                        style: TextStyle(
+                            fontSize: 11, color: theme.colorScheme.tertiary)),
+                  SelectableText(
+                    row.renderedText.isEmpty ? '（无内容）' : row.renderedText,
+                    style: const TextStyle(fontSize: 12, height: 1.5),
+                  ),
+                ],
+              ),
+            ),
+          if (day.records.isEmpty)
+            for (final text in day.texts)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: SelectableText(text,
+                    style: const TextStyle(fontSize: 12, height: 1.5)),
+              ),
         ],
       ),
     );

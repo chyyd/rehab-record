@@ -1,6 +1,7 @@
 import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:rehab_app/core/api_endpoints.dart';
 import 'package:rehab_app/data/local/app_database.dart';
 import 'package:rehab_app/sync/sync_engine.dart';
 
@@ -105,7 +106,7 @@ void main() {
   });
 
   group('应用服务端变更（payload 是完整快照 → 幂等 upsert）', () {
-    test('治疗记录 insert 落库', () async {
+    test('治疗记录 insert 落库（SOAP 模型：body + rendered_text）', () async {
       await engine.applyChange({
         'id': 11,
         'entity': 'treatment_record',
@@ -116,9 +117,12 @@ void main() {
           'id': 11,
           'patient_no': 'ZY001',
           'therapist_id': 2,
-          'record_date': '2027-03-01',
-          'session_period': 'am',
-          'duration_min': 30,
+          'record_date': '2026-10-06',
+          'discipline': 'PT',
+          'kind': 'daily',
+          'seq_no': 4,
+          'body': {'mental': '良好', 'therapy_items': ['偏瘫肢体综合训练']},
+          'rendered_text': '康复治疗记录（PT运动）\n\n主观资料：精神状态：良好',
           'status': 'draft',
           'revision': 1,
         },
@@ -127,8 +131,66 @@ void main() {
       final row = await db.select(db.treatmentRecords).getSingle();
       expect(row.id, 11);
       expect(row.patientNo, 'ZY001');
-      expect(row.sessionPeriod, 'am');
+      expect(row.discipline, 'PT');
+      expect(row.kind, 'daily');
+      expect(row.seqNo, 4);
+      expect(row.bodyJson, contains('偏瘫肢体综合训练'));
+      expect(row.renderedText, contains('主观资料'));
       expect(row.revision, 1);
+    });
+
+    test('★ 离线推送路径的 payload（没有 id / therapist_id / rendered_text）不崩', () async {
+      // 服务端 `_push_treatment_record` 写进 change_log 的 payload 就是**客户端那份**：
+      // 没有 id、没有 therapist_id、没有 rendered_text，只有 entity_id 是权威的。
+      // 老代码在这里 `(json['therapist_id'] as num)` 会直接抛类型错误，
+      // 把整批变更的应用打断。
+      await engine.applyChange({
+        'id': 21,
+        'entity': 'treatment_record',
+        'entity_id': '21',
+        'op': 'insert',
+        'revision': 1,
+        'payload': {
+          'patient_no': 'ZY002',
+          'record_date': '2026-10-06',
+          'discipline': 'OT',
+          'kind': 'daily',
+          'body': {'mental': '一般'},
+          'status': 'submitted',
+        },
+      });
+
+      final row = await db.select(db.treatmentRecords).getSingle();
+      expect(row.id, 21, reason: 'id 取 entity_id');
+      expect(row.therapistId, 0, reason: 'payload 里没有就退化成 0，而不是抛异常');
+      expect(row.kind, 'daily');
+      expect(row.status, 'submitted');
+    });
+
+    test('payload 缺 rendered_text 时保留本地已有的预览文本', () async {
+      await db.into(db.treatmentRecords).insertOnConflictUpdate(
+            TreatmentRecordsCompanion.insert(
+              id: const Value(31),
+              patientNo: 'ZY003',
+              therapistId: 2,
+              recordDate: '2026-10-06',
+              discipline: 'PT',
+              kind: 'daily',
+              renderedText: const Value('本地预览文本'),
+            ),
+          );
+
+      await engine.applyChange({
+        'entity': 'treatment_record',
+        'entity_id': '31',
+        'op': 'update',
+        'revision': 2,
+        'payload': {'status': 'submitted', 'body': {'mental': '良好'}},
+      });
+
+      final row = await db.select(db.treatmentRecords).getSingle();
+      expect(row.renderedText, '本地预览文本');
+      expect(row.status, 'submitted');
     });
 
     test('同一实体重复应用不产生重复行（弱网重放安全）', () async {
@@ -142,77 +204,23 @@ void main() {
           'id': 12,
           'patient_no': 'ZY002',
           'therapist_id': 3,
-          'record_date': '2027-03-01',
-          'session_period': 'pm',
-          'duration_min': 45,
+          'record_date': '2026-10-06',
+          'discipline': 'PT',
+          'kind': 'daily',
           'status': 'draft',
           'revision': 1,
         },
       };
       await engine.applyChange(change);
-      await engine.applyChange({...change, 'revision': 2, 'payload': {...change['payload']! as Map, 'revision': 2}});
+      await engine.applyChange({
+        ...change,
+        'revision': 2,
+        'payload': {...change['payload']! as Map, 'revision': 2},
+      });
 
       final rows = await db.select(db.treatmentRecords).get();
       expect(rows.length, 1);
       expect(rows.single.revision, 2, reason: '第二次应用应更新成新版本');
-    });
-
-    test('治疗记录带 items 一起落库（明细整体替换）', () async {
-      await engine.applyChange({
-        'id': 21,
-        'entity': 'treatment_record',
-        'entity_id': '21',
-        'op': 'insert',
-        'revision': 1,
-        'payload': {
-          'id': 21,
-          'patient_no': 'ZY001',
-          'therapist_id': 2,
-          'record_date': '2027-03-01',
-          'status': 'submitted',
-          'revision': 1,
-          'items': [
-            {'id': 101, 'main_item_id': 1, 'sub_item_id': 11, 'params': {'side': '左'}},
-            {'id': 102, 'main_item_id': 1, 'sub_item_id': 12, 'params': {'side': '右'}},
-          ],
-        },
-      });
-
-      final record = await db.select(db.treatmentRecords).getSingle();
-      expect(record.status, 'submitted');
-      final items = await db.select(db.recordItems).get();
-      expect(items.length, 2);
-      expect(items.map((i) => i.recordId), everyElement(21));
-    });
-
-    test('记录更新后明细被整体替换，不残留旧明细', () async {
-      Map<String, dynamic> payload(List<Map<String, dynamic>> items) => {
-            'id': 31,
-            'patient_no': 'ZY001',
-            'therapist_id': 2,
-            'record_date': '2027-03-01',
-            'status': 'draft',
-            'revision': 1,
-            'items': items,
-          };
-
-      await engine.applyChange({
-        'id': 31, 'entity': 'treatment_record', 'entity_id': '31', 'op': 'insert', 'revision': 1,
-        'payload': payload([
-          {'id': 201, 'main_item_id': 1, 'sub_item_id': 11, 'params': const {}},
-          {'id': 202, 'main_item_id': 1, 'sub_item_id': 12, 'params': const {}},
-        ]),
-      });
-      await engine.applyChange({
-        'id': 32, 'entity': 'treatment_record', 'entity_id': '31', 'op': 'update', 'revision': 2,
-        'payload': payload([
-          {'id': 201, 'main_item_id': 1, 'sub_item_id': 11, 'params': const {}},
-        ]),
-      });
-
-      final items = await db.select(db.recordItems).get();
-      expect(items.length, 1, reason: '明细按快照整体替换');
-      expect(items.single.id, 201);
     });
 
     test('delete 变更移除本地行', () async {
@@ -220,7 +228,8 @@ void main() {
         'id': 41, 'entity': 'treatment_record', 'entity_id': '41', 'op': 'insert', 'revision': 1,
         'payload': {
           'id': 41, 'patient_no': 'ZY009', 'therapist_id': 2,
-          'record_date': '2027-03-05', 'session_period': 'am', 'status': 'draft', 'revision': 1,
+          'record_date': '2026-10-05', 'discipline': 'PT', 'kind': 'daily',
+          'status': 'draft', 'revision': 1,
         },
       });
       expect((await db.select(db.treatmentRecords).get()).length, 1);
@@ -247,11 +256,111 @@ void main() {
         'id': 61, 'entity': 'appointment', 'entity_id': '61', 'op': 'insert', 'revision': 1,
         'payload': {
           'id': 61, 'patient_no': 'ZY009', 'therapist_id': 2,
-          'date': '2027-03-05', 'period': 'am', 'status': 'planned', 'revision': 1,
+          'date': '2026-10-05', 'period': 'am', 'status': 'planned', 'revision': 1,
         },
       });
       expect(await db.select(db.treatmentRecords).get(), isEmpty);
-      expect(await db.select(db.recordItems).get(), isEmpty);
+    });
+  });
+
+  group('★ 推送成功后把本地占位 id 换成服务端 id', () {
+    /// 造一条本地新建（负数占位）的草稿 + 一条待推送的队列条目。
+    Future<void> seedLocalDraft({required int localId, required String uuid}) async {
+      await db.into(db.treatmentRecords).insertOnConflictUpdate(
+            TreatmentRecordsCompanion.insert(
+              id: Value(localId),
+              patientNo: 'ZY001',
+              therapistId: 2,
+              recordDate: '2026-10-06',
+              discipline: 'PT',
+              kind: 'daily',
+              clientUuid: Value(uuid),
+              syncStatus: const Value('pending'),
+            ),
+          );
+      await engine.enqueueInsert(
+        entity: 'treatment_record',
+        clientUuid: uuid,
+        payload: {'patient_no': 'ZY001'},
+      );
+    }
+
+    test('两条记录不重复：占位行被改名而不是新插一行', () async {
+      await seedLocalDraft(localId: -1, uuid: 'u-local');
+
+      final engineWithServer = SyncEngine(
+        client: buildScriptedClient({
+          kSyncPush: (
+            200,
+            {
+              'applied': [
+                {
+                  'client_uuid': 'u-local',
+                  'entity': 'treatment_record',
+                  'entity_id': 77,
+                  'revision': 4,
+                },
+              ],
+              'skipped': <Object?>[],
+              'conflicts': <Object?>[],
+              'cursor': 9,
+            },
+          ),
+        }),
+        db: db,
+      );
+
+      await engineWithServer.pushPending();
+
+      final rows = await db.select(db.treatmentRecords).get();
+      expect(rows.length, 1, reason: '同一 uuid 只能有一行');
+      expect(rows.single.id, 77, reason: '本地占位 id → 服务端 id（出院要用它）');
+      expect(rows.single.syncStatus, 'synced');
+      expect(rows.single.revision, 4);
+    });
+
+    test('服务端那条已经被 pull 落库时，删掉本地占位行而不是撞主键', () async {
+      // pull 先到（正数 id 已在本地），随后 push 成功。
+      await db.into(db.treatmentRecords).insertOnConflictUpdate(
+            TreatmentRecordsCompanion.insert(
+              id: const Value(77),
+              patientNo: 'ZY001',
+              therapistId: 2,
+              recordDate: '2026-10-06',
+              discipline: 'PT',
+              kind: 'daily',
+            ),
+          );
+      await seedLocalDraft(localId: -1, uuid: 'u-local');
+
+      final engineWithServer = SyncEngine(
+        client: buildScriptedClient({
+          kSyncPush: (
+            200,
+            {
+              'applied': [
+                {
+                  'client_uuid': 'u-local',
+                  'entity': 'treatment_record',
+                  'entity_id': 77,
+                  'revision': 4,
+                },
+              ],
+              'skipped': <Object?>[],
+              'conflicts': <Object?>[],
+              'cursor': 9,
+            },
+          ),
+        }),
+        db: db,
+      );
+
+      await engineWithServer.pushPending();
+
+      final rows = await db.select(db.treatmentRecords).get();
+      expect(rows.length, 1);
+      expect(rows.single.id, 77);
+      expect(rows.single.clientUuid, isNull);
     });
   });
 }

@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:rehab_app/core/date_utils.dart';
-import 'package:rehab_app/core/worktime.dart';
+import 'package:rehab_app/core/disciplines.dart';
 import 'package:rehab_app/data/remote/timeline_dto.dart';
 import 'package:rehab_app/features/patients/patient_detail_page.dart';
 import 'package:rehab_app/features/timeline/summary_page.dart';
@@ -132,6 +132,20 @@ class _ScopeBar extends StatelessWidget {
             ' – '
             '${filter.dateTo == null ? '…' : shortDateFromIso(filter.dateTo!)}'
         : null;
+    final extra = [
+      if (filter.discipline != null) Discipline.nameOf(filter.discipline!),
+      if (filter.kind != null)
+        switch (filter.kind!) {
+          'initial' => '首评',
+          'reassessment' => '复评',
+          'discharge' => '出院小结',
+          _ => '日常',
+        },
+    ].join(' · ');
+    final filterLabel = [
+      ?range,
+      if (extra.isNotEmpty) extra,
+    ].join(' · ');
 
     return Column(
       children: [
@@ -152,7 +166,7 @@ class _ScopeBar extends StatelessWidget {
               const SizedBox(width: 4),
               ActionChip(
                 avatar: const Icon(Icons.filter_list, size: 18),
-                label: Text(range ?? '筛选'),
+                label: Text(filterLabel.isEmpty ? '筛选' : filterLabel),
                 onPressed: onOpenFilter,
               ),
             ],
@@ -163,7 +177,10 @@ class _ScopeBar extends StatelessWidget {
   }
 }
 
-/// 筛选面板：日期区间 + 主项目。
+/// 筛选面板：日期区间 + 大类 + 形态。
+///
+/// 只筛**大类**与**形态**：旧的"主项目"筛选依赖字典树，而字典树已随迁移 011
+/// 删除（模板改成 `templates/*.json`），所以那一栏整个去掉了。
 class _FilterSheet extends ConsumerWidget {
   const _FilterSheet();
 
@@ -238,17 +255,47 @@ class _FilterSheet extends ConsumerWidget {
               ),
             ],
             const Divider(height: 28),
-            // 主项目筛选先留说明：它的选项来自字典树，而时间轴响应里只带名称。
-            Text(
-              filter.mainItemName == null
-                  ? '主项目筛选：未设置'
-                  : '主项目筛选：${filter.mainItemName}',
-              style: const TextStyle(fontWeight: FontWeight.bold),
+            const Text('大类', style: TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 6),
+            Wrap(
+              spacing: 8,
+              children: [
+                ChoiceChip(
+                  label: const Text('全部'),
+                  selected: filter.discipline == null,
+                  onSelected: (_) => controller.setDiscipline(null),
+                ),
+                for (final d in Discipline.all)
+                  ChoiceChip(
+                    label: Text(d.name),
+                    selected: filter.discipline == d.key,
+                    onSelected: (on) => controller.setDiscipline(on ? d.key : null),
+                  ),
+              ],
             ),
-            const SizedBox(height: 4),
-            Text(
-              '时间轴按主项目筛选需要先选定字典里的项目（下一步接入字典选择器）。',
-              style: TextStyle(fontSize: 12, color: theme.colorScheme.outline),
+            const SizedBox(height: 12),
+            const Text('形态', style: TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 6),
+            Wrap(
+              spacing: 8,
+              children: [
+                ChoiceChip(
+                  label: const Text('全部'),
+                  selected: filter.kind == null,
+                  onSelected: (_) => controller.setKind(null),
+                ),
+                for (final k in const [
+                  ('daily', '日常记录'),
+                  ('initial', '首评'),
+                  ('reassessment', '复评'),
+                  ('discharge', '出院小结'),
+                ])
+                  ChoiceChip(
+                    label: Text(k.$2),
+                    selected: filter.kind == k.$1,
+                    onSelected: (on) => controller.setKind(on ? k.$1 : null),
+                  ),
+              ],
             ),
             const SizedBox(height: 16),
             Row(
@@ -329,12 +376,16 @@ class _TimelineTile extends ConsumerWidget {
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(fontWeight: FontWeight.w600)),
           ),
-          if (item.sessionPeriod != null) ...[
+          if (item.disciplineName?.isNotEmpty == true) ...[
             const SizedBox(width: 6),
-            Text(periodLabel(item.sessionPeriod!),
+            Text(item.disciplineName!,
                 style: TextStyle(fontSize: 11, color: theme.colorScheme.outline)),
           ],
-          if (item.seqNo != null) ...[
+          const SizedBox(width: 6),
+          Text(item.kindLabel ?? '',
+              style: TextStyle(fontSize: 11, color: theme.colorScheme.outline)),
+          // 评估文书不显示序号（它们不占日常次数）。
+          if (item.kind == 'daily' && item.seqNo != null) ...[
             const SizedBox(width: 6),
             Text('第 ${item.seqNo} 次',
                 style: TextStyle(fontSize: 11, color: theme.colorScheme.outline)),
@@ -353,20 +404,23 @@ class _TimelineTile extends ConsumerWidget {
             ].join(' · '),
             style: const TextStyle(fontSize: 12),
           ),
-          if (item.mainItemNames.isNotEmpty)
+          // ★ 记录内容是 SOAP 纯文本，不再是"N 项"表格。
+          if (item.line.isNotEmpty)
             Padding(
               padding: const EdgeInsets.only(top: 2),
               child: Text(
-                item.mainItemNames.join('、'),
+                item.line,
                 style: TextStyle(fontSize: 12, color: theme.colorScheme.primary),
-                maxLines: 1,
+                maxLines: 2,
                 overflow: TextOverflow.ellipsis,
               ),
             ),
         ],
       ),
-      trailing: Text('${item.itemCount} 项',
-          style: TextStyle(fontSize: 12, color: theme.colorScheme.outline)),
+      trailing: item.status == 'draft'
+          ? Icon(Icons.edit_note, size: 18, color: theme.colorScheme.tertiary)
+          : null,
+      isThreeLine: item.line.isNotEmpty,
     );
   }
 }

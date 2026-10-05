@@ -28,37 +28,46 @@ enum TimelineScope {
 }
 
 /// 时间轴筛选条件。
+///
+/// 维度是**大类**（运动/生活技能/吞咽/言语）与**形态**（日常/首评/复评/出院小结）——
+/// 旧的"主项目"筛选随字典树一起删除了（迁移 011）。
 class TimelineFilter {
   const TimelineFilter({
     this.scope = TimelineScope.visible,
     this.dateFrom,
     this.dateTo,
-    this.mainItemId,
-    this.mainItemName,
+    this.discipline,
+    this.kind,
   });
 
   final TimelineScope scope;
   final String? dateFrom;
   final String? dateTo;
-  final int? mainItemId;
-  final String? mainItemName;
+
+  /// `PT` / `OT` / `ST_SW` / `ST_SP`。
+  final String? discipline;
+
+  /// `daily` / `initial` / `reassessment` / `discharge`。
+  final String? kind;
 
   bool get hasDateRange => dateFrom != null || dateTo != null;
+
+  bool get hasExtraFilter => discipline != null || kind != null;
 
   TimelineFilter copyWith({
     TimelineScope? scope,
     Object? dateFrom = _sentinel,
     Object? dateTo = _sentinel,
-    Object? mainItemId = _sentinel,
-    Object? mainItemName = _sentinel,
+    Object? discipline = _sentinel,
+    Object? kind = _sentinel,
   }) =>
       TimelineFilter(
         scope: scope ?? this.scope,
         dateFrom: dateFrom == _sentinel ? this.dateFrom : dateFrom as String?,
         dateTo: dateTo == _sentinel ? this.dateTo : dateTo as String?,
-        mainItemId: mainItemId == _sentinel ? this.mainItemId : mainItemId as int?,
-        mainItemName:
-            mainItemName == _sentinel ? this.mainItemName : mainItemName as String?,
+        discipline:
+            discipline == _sentinel ? this.discipline : discipline as String?,
+        kind: kind == _sentinel ? this.kind : kind as String?,
       );
 
   /// 与 [other] 是否"同一批数据"（用于判断要不要重置分页）。
@@ -66,7 +75,8 @@ class TimelineFilter {
       other.scope == scope &&
       other.dateFrom == dateFrom &&
       other.dateTo == dateTo &&
-      other.mainItemId == mainItemId;
+      other.discipline == discipline &&
+      other.kind == kind;
 }
 
 const Object _sentinel = Object();
@@ -119,7 +129,8 @@ class TimelineController extends AsyncNotifier<TimelineState> {
       scope: filter.scope.wire,
       dateFrom: filter.dateFrom,
       dateTo: filter.dateTo,
-      mainItemId: filter.mainItemId,
+      discipline: filter.discipline,
+      kind: filter.kind,
     );
     return TimelineState(
       items: page.items,
@@ -152,7 +163,8 @@ class TimelineController extends AsyncNotifier<TimelineState> {
         scope: filter.scope.wire,
         dateFrom: filter.dateFrom,
         dateTo: filter.dateTo,
-        mainItemId: filter.mainItemId,
+        discipline: filter.discipline,
+        kind: filter.kind,
       );
       state = AsyncData(TimelineState(
         items: [...current.items, ...page.items],
@@ -196,8 +208,10 @@ class TimelineFilterController extends Notifier<TimelineFilter> {
 
   void clearDateRange() => state = state.copyWith(dateFrom: null, dateTo: null);
 
-  void setMainItem(int? id, String? name) =>
-      state = state.copyWith(mainItemId: id, mainItemName: name);
+  void setDiscipline(String? discipline) =>
+      state = state.copyWith(discipline: discipline);
+
+  void setKind(String? kind) => state = state.copyWith(kind: kind);
 
   void reset() => state = const TimelineFilter();
 }

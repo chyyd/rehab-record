@@ -20,7 +20,6 @@ part 'app_database.g.dart';
   tables: [
     Patients,
     TreatmentRecords,
-    RecordItems,
     ChangeQueue,
     SyncState,
     RefCache,
@@ -33,7 +32,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 4;
+  int get schemaVersion => 5;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -43,8 +42,15 @@ class AppDatabase extends _$AppDatabase {
         onUpgrade: (Migrator m, int from, int to) async {
           // v2：记录页的离线草稿要把"尚未推送的明细"整体存成一列 JSON
           //（本地新建的草稿没有服务端 id，走不了 record_items 表）。
+          //
+          // 该列在 v5 已随整张表重建删掉，`TreatmentRecords` 里不再有它的定义，
+          // 所以这里只能按**列名**写 SQL —— 拿不到 GeneratedColumn 引用
+          //（同 v3/v4 里按名字删列的理由）。历史迁移必须保持可执行：
+          // 从 v1 升上来的设备仍会走这一句。
           if (from < 2) {
-            await m.addColumn(treatmentRecords, treatmentRecords.pendingItemsJson);
+            await customStatement(
+              'ALTER TABLE treatment_records ADD COLUMN pending_items_json TEXT',
+            );
           }
           // v3：排期功能整体下线（2026-10-05），本地镜像表随之删除；
           // 记录表里那个只为"从排期进入"存在的 appointment_id 一并去掉。
@@ -65,6 +71,25 @@ class AppDatabase extends _$AppDatabase {
           // 该列已从 `Patients` 表定义里移除，Drift 不再认识它。
           if (from < 4) {
             await m.dropColumn(patients, 'visibility_state');
+          }
+          // v5：治疗记录改成 SOAP 模板驱动（服务端迁移 011/012 之后）。
+          //
+          // ★ **本地旧记录直接丢弃，不做数据搬运**。理由有三条，缺一不可：
+          //   1. 旧行是「主项目 + 子项目 + 参数」结构，新模型是「大类 + 形态 + body」——
+          //      两者之间**没有可计算的映射**（子项目 id → 模板字段 key 根本不存在）；
+          //   2. 服务端已清空重建（迁移 011）；本地留着一批新模型解释不了的旧行，
+          //      只会让记录列表显示出一堆打不开的幽灵记录；
+          //   3. 用户已确认「清掉重来」（离线草稿本来就只是"还没上传的草稿"，
+          //      上传过的记录在服务端仍在，重新同步即可回来）。
+          //
+          // 实现上**重建表**而不是逐列 addColumn：新增的 `discipline` / `kind` 是
+          // NOT NULL 且没有默认值，SQLite 的 `ALTER TABLE ADD COLUMN` 不允许
+          // （即便表里已经没有行）；`record_items` 表也整体不再需要（没有"明细"了），
+          // 按表名删掉，避免留下无人使用的孤儿表（同 v3 的 appointments）。
+          if (from < 5) {
+            await m.deleteTable('treatment_records');
+            await m.createTable(treatmentRecords);
+            await m.deleteTable('record_items');
           }
         },
         beforeOpen: (details) async {

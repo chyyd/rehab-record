@@ -1,197 +1,127 @@
-/// 治疗记录与记录表单的传输模型。
+/// 治疗记录的传输模型（**SOAP 模板驱动**，迁移 011 之后的新契约）。
 ///
 /// 字段名沿用后端 snake_case（与管理后台、`docs/sync-protocol.md` 同一约定）。
 ///
-/// ★ 表单**不自己算"上次值/默认值"**：服务端 `GET /records/form` 已经按
-/// 5 级带入（上次值 → 个人选项集 → 科室 → 全局 → 字典默认）填好了
-/// `current_value` / `value_source` / `options_resolved`。客户端重算一遍
-/// 只会与服务端产生分歧，所以这里只做**原样透传**。
+/// ★ 与旧模型的区别（2026-10-05 脊柱级改造）：
+///  - **没有**字典树 / 子项目 / 参数 / 选项集 / 患者反应 —— 那些表已随迁移 011/012 删除；
+///  - 记录页的数据源只有一个：`GET /api/v1/records/form`，它直接返回
+///    「这次该填哪份文书 + 四段字段定义 + 预填值 + 已存在的那条」；
+///  - 记录内容是一个扁平的 `body`：`{field_key: value}`，键就是模板里的 `key`；
+///  - 展示用**服务端冻结的 SOAP 纯文本** `rendered_text`，客户端不再拼表格。
+///
+/// ★ 客户端**不自己算**"该填什么/预填什么"：`kind`（含"缺评估文书时先弹那份"）、
+/// `prefill`、`prefill_source`、`next_seq`、`sessions_until_reassessment`
+/// 全部由服务端算好。客户端重算一遍只会与服务端分歧。
 // ignore_for_file: use_null_aware_elements
 library;
 
-/// 一个参数字段（含服务端解析好的当前值与选项）。
-class FormParam {
-  const FormParam({
-    required this.id,
-    required this.subItemId,
-    required this.paramKey,
-    required this.paramName,
-    required this.inputType,
-    required this.required,
+/// SOAP 里的一个字段定义（模板 `soap[].fields[]` 的原样透传）。
+///
+/// `type` 只有四种：`single`（单选 chip）/ `multi`（多选 chip）/
+/// `number`（数值 + `unit`）/ `text`（多行文本）。
+class SoapField {
+  const SoapField({
+    required this.key,
+    required this.type,
+    required this.label,
     this.options = const [],
-    this.defaultValue,
+    this.required = false,
     this.unit,
-    this.sort = 0,
-    this.optionsResolved,
-    this.currentValue,
-    this.valueSource,
-    this.lastValue,
+    this.hint,
+    this.allowOther = false,
+    this.auto = false,
   });
 
-  final int id;
-  final int subItemId;
-  final String paramKey;
-  final String paramName;
+  /// 提交时 `body` 的键。
+  final String key;
 
-  /// `select` / `multi_select` / `number` / `text` / `date` / `bool` …
-  final String inputType;
+  /// `single` / `multi` / `number` / `text`。
+  final String type;
+
+  /// 中文标签（渲染与 422 的 `details.missing` 都用它）。
+  final String label;
+
+  /// `single` / `multi` 的候选项（服务端已把 `options_source` 展开成真实清单，
+  /// 例如把 `therapy_options` 展开成该大类的 58 个疗法名）。
+  final List<String> options;
 
   final bool required;
 
-  /// 字典里的静态候选值（`options_resolved` 为空时用它）。
-  final List<String> options;
-
-  final String? defaultValue;
+  /// `number` 的单位（如 `分` / `s` / `级`）。
   final String? unit;
-  final int sort;
 
-  /// 服务端解析出的选项集：`{source, option_set_name, options:[{value,label}], defaults:[…]}`。
-  final Map<String, dynamic>? optionsResolved;
+  /// `text` 的输入提示（placeholder）。
+  final String? hint;
 
-  /// 服务端带入的当前值（可能是 String / List / num）。
-  final dynamic currentValue;
+  /// 允许"其他"自由输入 —— 有它时 `single`/`multi` 也允许不在 `options` 里的值。
+  final bool allowOther;
 
-  /// 值来源，用于在界面上小字标注"来自上次/个人/科室/全局/默认"。
-  final String? valueSource;
+  /// 自动生成的字段（如出院小结的「治疗过程汇总」）：只读，由服务端算好。
+  final bool auto;
 
-  final dynamic lastValue;
+  bool get isSingle => type == 'single';
+  bool get isMulti => type == 'multi';
+  bool get isNumber => type == 'number';
 
-  factory FormParam.fromJson(Map<String, dynamic> json) => FormParam(
-        id: (json['id'] as num).toInt(),
-        subItemId: (json['sub_item_id'] as num).toInt(),
-        paramKey: json['param_key'] as String,
-        paramName: json['param_name'] as String,
-        inputType: json['input_type'] as String,
-        required: (json['required'] as num?)?.toInt() == 1,
+  /// 未知类型一律按文本处理（服务端将来加类型时至少不崩、不至于丢数据）。
+  bool get isText => !isSingle && !isMulti && !isNumber;
+
+  bool get hasOptions => options.isNotEmpty;
+
+  factory SoapField.fromJson(Map<String, dynamic> json) => SoapField(
+        key: '${json['key']}',
+        type: '${json['type'] ?? 'text'}',
+        label: '${json['label'] ?? json['key']}',
         options: ((json['options'] as List?) ?? const []).map((e) => '$e').toList(),
-        defaultValue: json['default_value'] as String?,
+        required: json['required'] == true,
         unit: json['unit'] as String?,
-        sort: (json['sort'] as num?)?.toInt() ?? 0,
-        optionsResolved: json['options_resolved'] == null
-            ? null
-            : Map<String, dynamic>.from(json['options_resolved'] as Map),
-        currentValue: json['current_value'],
-        valueSource: json['value_source'] as String?,
-        lastValue: json['last_value'],
+        hint: json['hint'] as String?,
+        allowOther: json['allow_other'] == true,
+        // `auto` 是字符串（如 `latest_vs_initial`）而不是布尔，凡非空即自动字段。
+        auto: json['auto'] != null && json['auto'] != false,
       );
 
-  /// 界面上可选的候选项：优先选项集解析结果，其次字典静态选项。
-  List<FormOption> get candidates {
-    final resolved = optionsResolved;
-    if (resolved != null) {
-      final list = (resolved['options'] as List?) ?? const [];
-      final items = list
-          .whereType<Map>()
-          .map((e) => FormOption(
-                value: '${e['value']}',
-                label: '${e['label'] ?? e['value']}',
-              ))
-          .toList();
-      if (items.isNotEmpty) return items;
-    }
-    return options.map((o) => FormOption(value: o, label: o)).toList();
-  }
-
-  /// 选项集来源（个人/科室/全局/内置），供界面标注。
-  String? get optionsSourceLabel {
-    final source = optionsResolved?['source'] as String?;
-    return switch (source) {
-      'personal' => '个人选项集',
-      'dept' => '科室选项集',
-      'global' => '全局选项集',
-      'builtin' => '字典默认',
-      _ => null,
-    };
-  }
-
-  /// 值来源的中文标注。
-  String? get valueSourceLabel => switch (valueSource) {
-        'last_value' => '上次值',
-        'option_set_default' => '选项集默认',
-        'dict_default' => '字典默认',
-        _ => null,
-      };
-
-  /// 回写成服务端形状（供离线缓存整份表单）。
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'sub_item_id': subItemId,
-        'param_key': paramKey,
-        'param_name': paramName,
-        'input_type': inputType,
-        'options': options,
-        if (defaultValue != null) 'default_value': defaultValue,
-        'required': required ? 1 : 0,
+        'key': key,
+        'type': type,
+        'label': label,
+        if (options.isNotEmpty) 'options': options,
+        if (required) 'required': true,
         if (unit != null) 'unit': unit,
-        'sort': sort,
-        if (optionsResolved != null) 'options_resolved': optionsResolved,
-        'current_value': currentValue,
-        if (valueSource != null) 'value_source': valueSource,
-        'last_value': lastValue,
+        if (hint != null) 'hint': hint,
+        if (allowOther) 'allow_other': true,
+        if (auto) 'auto': true,
       };
 
-  bool get isMulti => inputType == 'multi_select';
-  bool get isNumber => inputType == 'number';
-  bool get isBool => inputType == 'bool';
-  bool get isSelect => inputType == 'select' || isMulti;
-  bool get isText => inputType == 'text' || (!isSelect && !isNumber && !isBool);
-
-  /// 带入值是否**能直接提交**。
+  /// 该值算不算"填了"（与后端 `record_template._has_value` 同口径）。
   ///
-  /// ★ 实测（2026-10-05）服务端的带入值与选项集**可能自相矛盾**：
-  /// `GET /records/form` 给出 `current_value = 部分辅助`（来源 `dict_default`），
-  /// 但同一响应里 `options_resolved` 的合法选项是
-  /// `完全辅助/最大辅助/中等辅助/最小辅助/监护/独立` —— 照表单预填直接提交必被
-  /// 422「取值不在选项内」。全量表里 **89 个参数中有 19 个**（21%）如此，
-  /// 集中在 `assistance_level`(7)、`train_content`(4)、`body_part`(2)、
-  /// `items`(2)、`assist_mode`/`food_texture`/`scene`/`train_mode`(各 1)。
-  ///
-  /// 根因在**后端种子**：`option_seed.json` 里这些 `param_key` 只定义了
-  /// `variant: 0`（`is_primary: true`），而同一个 `param_key` 在不同子项目下
-  /// 语义完全不同（`body_part` 在「口腔感觉训练」是舌/腭，在「肌力训练」是肩/肘/腕…），
-  /// 却共用同一个全局选项集。客户端的词典默认值（如"部分辅助"）因此落在选项集之外。
-  ///
-  /// 在后端修种子/解析前，客户端**必须**自己挡住：预填一个提交必被拒的值，
-  /// 比不预填糟糕得多 —— 治疗师会填完整张表单才发现提交失败。
-  bool isValueSubmittable(dynamic value) {
+  /// `0` 算填了（VAS 0 分是真实数据），空串不算，空数组不算。
+  static bool hasValue(dynamic value) {
     if (value == null) return false;
-    if (isSelect) {
-      final allowed = candidates.map((c) => c.value).toSet();
-      // 没有候选项（如 builtin 选项集）时无法判断，交给服务端。
-      if (allowed.isEmpty) return true;
-      if (value is List) {
-        if (value.isEmpty) return false;
-        return value.every((v) => allowed.contains('$v'));
-      }
-      return allowed.contains('$value');
-    }
-    if (isNumber) return num.tryParse('$value') != null;
-    if (value is String && value.trim().isEmpty) return false;
+    if (value is String) return value.trim().isNotEmpty;
+    if (value is List) return value.any(hasValue);
     return true;
   }
 
-  /// 把带入值归一化成**可直接提交**的类型。
+  /// 把界面上的值归一化成**可直接提交**的类型。
   ///
-  /// 归一化两件事：
-  ///  1. 类型：`multi_select` 必须是数组（后端 `_validate_value` 明确要求，
-  ///     传字符串会 422「多选参数取值必须是数组」）；
-  ///  2. 合法性：不在候选项内的值直接丢掉（见 [isValueSubmittable]）。
-  dynamic normalizeValue(dynamic raw) {
-    if (raw == null) return null;
-    final normalized = _coerce(raw);
-    if (normalized == null) return null;
-    return isValueSubmittable(normalized) ? normalized : null;
-  }
-
-  /// 只做类型归一化，不判合法性。
-  dynamic _coerce(dynamic raw) {
+  /// - `multi` 必须是数组（后端渲染器按多选处理，传字符串会被当成单值）；
+  /// - `number` 存成数字（`3分` 的 `3` 要参与后续统计与对比）；
+  /// - 其余原样（空串 / 空数组 → null，表示"没填"，不写进 body）。
+  dynamic normalize(dynamic raw) {
+    if (!hasValue(raw)) return null;
     if (isMulti) {
-      if (raw is List) return raw.isEmpty ? null : raw;
+      if (raw is List) {
+        final values = raw.map((e) => '$e').where((e) => e.trim().isNotEmpty).toList();
+        return values.isEmpty ? null : values;
+      }
       final text = '$raw'.trim();
       if (text.isEmpty) return null;
-      // 两种分隔符都见过：空格与顿号。
-      final parts =
-          text.split(RegExp(r'[、,\s]+')).where((e) => e.isNotEmpty).toList();
+      // 两种分隔符都见过：`/`（渲染时用的）与顿号/空格。
+      final parts = text
+          .split(RegExp(r'[/、,\s]+'))
+          .where((e) => e.isNotEmpty)
+          .toList();
       return parts.isEmpty ? null : parts;
     }
     if (isNumber) {
@@ -200,288 +130,368 @@ class FormParam {
       if (text.isEmpty) return null;
       return num.tryParse(text) ?? text;
     }
-    if (isBool) {
-      if (raw is bool) return raw;
-      return '$raw' == 'true' || '$raw' == '1';
+    if (raw is String) {
+      final text = raw.trim();
+      return text.isEmpty ? null : text;
     }
-    if (raw is String && raw.trim().isEmpty) return null;
     return raw;
+  }
+
+  /// 界面上显示的文本（多选用 `/` 连接，与渲染器一致）。
+  static String display(dynamic value) {
+    if (!hasValue(value)) return '';
+    if (value is List) return value.map((e) => '$e').join('/');
+    return '$value';
   }
 }
 
-/// 一个候选项。
-class FormOption {
-  const FormOption({required this.value, required this.label});
-  final String value;
-  final String label;
-}
-
-/// 子项目（一次治疗里的一项操作）。
-class FormSubItem {
-  const FormSubItem({
-    required this.id,
-    required this.mainItemId,
-    required this.name,
-    this.code,
-    this.alias,
-    this.sort = 0,
-    this.params = const [],
-  });
-
-  final int id;
-  final int mainItemId;
-  final String name;
-  final String? code;
-  final String? alias;
-  final int sort;
-  final List<FormParam> params;
-
-  factory FormSubItem.fromJson(Map<String, dynamic> json) => FormSubItem(
-        id: (json['id'] as num).toInt(),
-        mainItemId: (json['main_item_id'] as num).toInt(),
-        name: json['name'] as String,
-        code: json['code'] as String?,
-        alias: json['alias'] as String?,
-        sort: (json['sort'] as num?)?.toInt() ?? 0,
-        params: ((json['params'] as List?) ?? const [])
-            .whereType<Map>()
-            .map((e) => FormParam.fromJson(Map<String, dynamic>.from(e)))
-            .toList(),
-      );
-
-  Map<String, dynamic> toJson() => {
-        'id': id,
-        'main_item_id': mainItemId,
-        'name': name,
-        if (code != null) 'code': code,
-        if (alias != null) 'alias': alias,
-        'sort': sort,
-        'params': params.map((p) => p.toJson()).toList(),
-      };
-}
-
-/// 主项目（一类治疗）。
-class FormMainItem {
-  const FormMainItem({
-    required this.id,
-    required this.name,
-    this.code,
-    this.alias,
-    this.sort = 0,
-    this.subItems = const [],
-  });
-
-  final int id;
-  final String name;
-  final String? code;
-  final String? alias;
-  final int sort;
-  final List<FormSubItem> subItems;
-
-  factory FormMainItem.fromJson(Map<String, dynamic> json) => FormMainItem(
-        id: (json['id'] as num).toInt(),
-        name: json['name'] as String,
-        code: json['code'] as String?,
-        alias: json['alias'] as String?,
-        sort: (json['sort'] as num?)?.toInt() ?? 0,
-        subItems: ((json['sub_items'] as List?) ?? const [])
-            .whereType<Map>()
-            .map((e) => FormSubItem.fromJson(Map<String, dynamic>.from(e)))
-            .toList(),
-      );
-
-  Map<String, dynamic> toJson() => {
-        'id': id,
-        'name': name,
-        if (code != null) 'code': code,
-        if (alias != null) 'alias': alias,
-        'sort': sort,
-        'sub_items': subItems.map((s) => s.toJson()).toList(),
-      };
-
-  String get display => (alias?.isNotEmpty == true ? alias! : name);
-}
-
-/// 患者反应定义（三种控件：tag / number / select / text）。
-class ResponseDef {
-  const ResponseDef({
-    required this.id,
-    required this.code,
+/// SOAP 里的一段（S / O / A / P）。
+class SoapSection {
+  const SoapSection({
+    required this.key,
     required this.label,
-    required this.valueType,
-    this.mainItemId,
-    this.valueKey,
-    this.valueUnit,
-    this.valueMin,
-    this.valueMax,
-    this.options = const [],
+    required this.heading,
+    this.fields = const [],
   });
 
-  final int id;
-  final String code;
+  /// `s` / `o` / `a` / `p`。
+  final String key;
+
+  /// `S` / `O` / `A` / `P`。
   final String label;
 
-  /// `tag` / `number` / `select` / `text`。
-  final String valueType;
+  /// 中文段名（`主观资料`…），渲染时是「段名：字段；字段」。
+  final String heading;
 
-  final int? mainItemId;
-  final String? valueKey;
-  final String? valueUnit;
-  final double? valueMin;
-  final double? valueMax;
-  final List<String> options;
+  final List<SoapField> fields;
 
-  factory ResponseDef.fromJson(Map<String, dynamic> json) => ResponseDef(
-        id: (json['id'] as num).toInt(),
-        code: json['code'] as String,
-        label: json['label'] as String,
-        valueType: json['value_type'] as String? ?? 'tag',
-        mainItemId: (json['main_item_id'] as num?)?.toInt(),
-        valueKey: json['value_key'] as String?,
-        valueUnit: json['value_unit'] as String?,
-        valueMin: (json['value_min'] as num?)?.toDouble(),
-        valueMax: (json['value_max'] as num?)?.toDouble(),
-        options: ((json['options'] as List?) ?? const []).map((e) => '$e').toList(),
+  factory SoapSection.fromJson(Map<String, dynamic> json) => SoapSection(
+        key: '${json['key']}',
+        label: '${json['label'] ?? json['key']}',
+        heading: '${json['heading'] ?? json['label'] ?? json['key']}',
+        fields: ((json['fields'] as List?) ?? const [])
+            .whereType<Map>()
+            .map((e) => SoapField.fromJson(Map<String, dynamic>.from(e)))
+            .toList(),
       );
 
-  /// 该定义是否适用于某个主项目。
-  ///
-  /// 定义自身没绑主项目（`mainItemId == null`）表示**通用**，适用于所有项目。
-  bool appliesTo(int? mainItemId) =>
-      this.mainItemId == null || this.mainItemId == mainItemId;
-
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'code': code,
+        'key': key,
         'label': label,
-        'value_type': valueType,
-        if (mainItemId != null) 'main_item_id': mainItemId,
-        if (valueKey != null) 'value_key': valueKey,
-        if (valueUnit != null) 'value_unit': valueUnit,
-        if (valueMin != null) 'value_min': valueMin,
-        if (valueMax != null) 'value_max': valueMax,
-        'options': options,
+        'heading': heading,
+        'fields': fields.map((f) => f.toJson()).toList(),
       };
 }
 
-/// 记录表单（服务端已算好带入值）。
+/// 一条治疗记录（`RecordOut` / 列表项 / 离线草稿都用它）。
+///
+/// `body` 是 `{field_key: value}`；`renderedText` 是服务端在落库时**冻结**的
+/// SOAP 纯文本（历史病历的措辞不随模板后续修改而变）。
+class RecordData {
+  const RecordData({
+    required this.id,
+    required this.patientNo,
+    required this.therapistId,
+    required this.recordDate,
+    required this.discipline,
+    required this.kind,
+    required this.status,
+    this.disciplineName,
+    this.kindLabel,
+    this.seqNo,
+    this.spanSeq,
+    this.body = const {},
+    this.renderedText = '',
+    this.renderedExcerpt = '',
+    this.note,
+    this.editCount = 0,
+    this.revision = 1,
+    this.clientUuid,
+    this.isTemporary = false,
+  });
+
+  final int id;
+  final String patientNo;
+  final int therapistId;
+  final String recordDate;
+
+  /// `PT` / `OT` / `ST_SW` / `ST_SP`。
+  final String discipline;
+  final String? disciplineName;
+
+  /// `initial` / `daily` / `reassessment` / `discharge`。
+  final String kind;
+  final String? kindLabel;
+
+  /// 第几次**日常**记录；评估文书不占次数，所以它们是 null。
+  final int? seqNo;
+
+  /// 评估文书挂靠的日常序号。
+  final int? spanSeq;
+
+  final Map<String, dynamic> body;
+
+  /// 冻结的 SOAP 纯文本（列表与详情都直接显示它）。
+  final String renderedText;
+
+  /// 列表用的一行摘要（服务端算好）。
+  final String renderedExcerpt;
+
+  final String? note;
+  final String status;
+  final int editCount;
+  final int revision;
+  final String? clientUuid;
+  final bool isTemporary;
+
+  bool get isDraft => status == 'draft';
+  bool get isSubmitted => status == 'submitted';
+  bool get isLocked => status == 'locked';
+
+  String get statusLabel => switch (status) {
+        'draft' => '草稿',
+        'submitted' => '已提交',
+        'locked' => '已锁定',
+        _ => status,
+      };
+
+  /// 只有**日常记录**才有"第 N 次"（评估文书不占次数，用户 2026-10-05 纠正）。
+  bool get countsAsSession => kind == 'daily';
+
+  factory RecordData.fromJson(Map<String, dynamic> json) => RecordData(
+        id: (json['id'] as num?)?.toInt() ?? 0,
+        patientNo: '${json['patient_no'] ?? ''}',
+        therapistId: (json['therapist_id'] as num?)?.toInt() ?? 0,
+        recordDate: '${json['record_date'] ?? ''}',
+        discipline: '${json['discipline'] ?? ''}',
+        disciplineName: json['discipline_name'] as String?,
+        kind: '${json['kind'] ?? 'daily'}',
+        kindLabel: json['kind_label'] as String?,
+        seqNo: (json['seq_no'] as num?)?.toInt(),
+        spanSeq: (json['span_seq'] as num?)?.toInt(),
+        body: Map<String, dynamic>.from((json['body'] as Map?) ?? const {}),
+        renderedText: '${json['rendered_text'] ?? ''}',
+        renderedExcerpt: '${json['rendered_excerpt'] ?? ''}',
+        note: json['note'] as String?,
+        status: '${json['status'] ?? 'draft'}',
+        editCount: (json['edit_count'] as num?)?.toInt() ?? 0,
+        revision: (json['revision'] as num?)?.toInt() ?? 1,
+        clientUuid: json['client_uuid'] as String?,
+        isTemporary: (json['is_temporary'] as num?)?.toInt() == 1 ||
+            json['is_temporary'] == true,
+      );
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'patient_no': patientNo,
+        'therapist_id': therapistId,
+        'record_date': recordDate,
+        'discipline': discipline,
+        if (disciplineName != null) 'discipline_name': disciplineName,
+        'kind': kind,
+        if (kindLabel != null) 'kind_label': kindLabel,
+        if (seqNo != null) 'seq_no': seqNo,
+        if (spanSeq != null) 'span_seq': spanSeq,
+        'body': body,
+        'rendered_text': renderedText,
+        if (renderedExcerpt.isNotEmpty) 'rendered_excerpt': renderedExcerpt,
+        if (note != null) 'note': note,
+        'status': status,
+        'edit_count': editCount,
+        'revision': revision,
+        if (clientUuid != null) 'client_uuid': clientUuid,
+        'is_temporary': isTemporary ? 1 : 0,
+      };
+
+  /// 列表里显示的一行文本：优先服务端摘要，退化成 `rendered_text` 的第一段。
+  String get summaryLine {
+    if (renderedExcerpt.isNotEmpty) return renderedExcerpt;
+    for (final line in renderedText.split('\n')) {
+      final text = line.trim();
+      if (text.isNotEmpty && !text.startsWith('治疗日期') && text.contains('：')) {
+        return text.length <= 80 ? text : '${text.substring(0, 79)}…';
+      }
+    }
+    return '';
+  }
+}
+
+/// 记录表单（`GET /api/v1/records/form`）。
+///
+/// 一次请求回答四个问题：该填哪份文书、长什么样、预填什么、是不是已经在填了。
 class RecordFormData {
   const RecordFormData({
     required this.patientNo,
     required this.patientName,
-    required this.mainItems,
-    required this.responseDefs,
-    required this.lastCompletedSeqNo,
-    this.diagnosis,
-    this.adminNote,
-    this.referenceDate,
+    required this.discipline,
+    required this.disciplineName,
+    required this.kind,
+    required this.kindLabel,
+    required this.title,
+    this.patientStatus,
+    this.nextSeq = 1,
+    this.totalDaily = 0,
+    this.sessionsUntilReassessment = 0,
+    this.pendingDocument,
+    this.pendingDocumentLabel,
+    this.templateVersion = 1,
+    this.soap = const [],
+    this.prefill = const {},
+    this.prefillSource = const {},
+    this.footer = const [],
+    this.existing,
   });
 
   final String patientNo;
   final String patientName;
-  final String? diagnosis;
-  final String? adminNote;
-  final List<FormMainItem> mainItems;
-  final List<ResponseDef> responseDefs;
 
-  /// 该患者已完成治疗次数；本次是第 `lastCompletedSeqNo + 1` 次。
-  final int lastCompletedSeqNo;
+  /// `in_hospital` / `paused` / `pending_discharge` / `discharged`。
+  final String? patientStatus;
 
-  final String? referenceDate;
+  final String discipline;
+  final String disciplineName;
+
+  /// 本次要填的形态：**缺评估文书时它就是那份评估文书**（服务端门禁决定）。
+  final String kind;
+  final String kindLabel;
+
+  /// 文书标题（如「康复治疗记录（PT运动）」）。
+  final String title;
+
+  /// 这次是第几次日常（评估文书不占次数，这里仍是它挂靠的那次）。
+  final int nextSeq;
+
+  /// 该大类已完成（含草稿）的日常记录数。
+  final int totalDaily;
+
+  /// 距下一次复评还差几次日常。
+  final int sessionsUntilReassessment;
+
+  /// 还缺哪份评估文书（`initial` / `reassessment`），null = 不缺。
+  final String? pendingDocument;
+  final String? pendingDocumentLabel;
+
+  final int templateVersion;
+
+  /// 四段字段定义，**直接渲染**。
+  final List<SoapSection> soap;
+
+  /// 服务端预填的答案（`{field_key: value}`）。
+  final Map<String, dynamic> prefill;
+
+  /// 每个预填值来自哪里（`last_daily` / `same_day_first` / `last_assessment` / `auto`）。
+  final Map<String, String> prefillSource;
+
+  final List<String> footer;
+
+  /// 已存在的那条记录（非 null → **继续编辑**而不是重复新建）。
+  final RecordData? existing;
+
+  /// 是否评估文书（首评 / 复评 / 出院小结）。评估文书**不显示序号**。
+  bool get isAssessment => kind != 'daily';
+
+  bool get isDischarge => kind == 'discharge';
+
+  /// 是否显示「第 N 次」——只有日常记录显示（后端渲染器同一规则）。
+  bool get showsSeqNo => kind == 'daily';
+
+  /// 患者待出院时不能再记新记录（服务端 409）。
+  bool get patientPendingDischarge => patientStatus == 'pending_discharge';
+
+  List<SoapField> get allFields =>
+      [for (final s in soap) ...s.fields];
+
+  SoapField? field(String key) {
+    for (final f in allFields) {
+      if (f.key == key) return f;
+    }
+    return null;
+  }
+
+  /// 422 的 `details.missing` 只给**中文标签**，靠这张表把标签映射回字段。
+  Map<String, SoapField> get byLabel => {for (final f in allFields) f.label: f};
+
+  /// 界面的初值：服务端 `prefill` + （若有）已存在记录的内容。
+  ///
+  /// 已存在的那条**覆盖**预填：治疗师要接着改自己刚写的东西，
+  /// 而不是看着服务端从"上次日常"带出来的值。
+  Map<String, dynamic> initialValues() {
+    final values = <String, dynamic>{};
+    for (final f in allFields) {
+      final raw = prefill[f.key];
+      final value = f.normalize(raw);
+      if (value != null) values[f.key] = value;
+    }
+    final existingBody = existing?.body;
+    if (existingBody != null) {
+      for (final f in allFields) {
+        if (!existingBody.containsKey(f.key)) continue;
+        final value = f.normalize(existingBody[f.key]);
+        if (value == null) {
+          values.remove(f.key);
+        } else {
+          values[f.key] = value;
+        }
+      }
+    }
+    return values;
+  }
 
   factory RecordFormData.fromJson(Map<String, dynamic> json) {
     final p = Map<String, dynamic>.from((json['patient'] as Map?) ?? const {});
+    final existing = json['existing'];
     return RecordFormData(
-      patientNo: '${p['inpatient_no']}',
-      patientName: '${p['name']}',
-      diagnosis: p['diagnosis'] as String?,
-      adminNote: p['admin_note'] as String?,
-      mainItems: ((json['main_items'] as List?) ?? const [])
+      patientNo: '${p['inpatient_no'] ?? ''}',
+      patientName: '${p['name'] ?? ''}',
+      patientStatus: p['status'] as String?,
+      discipline: '${json['discipline'] ?? ''}',
+      disciplineName: '${json['discipline_name'] ?? ''}',
+      kind: '${json['kind'] ?? 'daily'}',
+      kindLabel: '${json['kind_label'] ?? ''}',
+      title: '${json['title'] ?? '治疗记录'}',
+      nextSeq: (json['next_seq'] as num?)?.toInt() ?? 1,
+      totalDaily: (json['total_daily'] as num?)?.toInt() ?? 0,
+      sessionsUntilReassessment:
+          (json['sessions_until_reassessment'] as num?)?.toInt() ?? 0,
+      pendingDocument: json['pending_document'] as String?,
+      pendingDocumentLabel: json['pending_document_label'] as String?,
+      templateVersion: (json['template_version'] as num?)?.toInt() ?? 1,
+      soap: ((json['soap'] as List?) ?? const [])
           .whereType<Map>()
-          .map((e) => FormMainItem.fromJson(Map<String, dynamic>.from(e)))
+          .map((e) => SoapSection.fromJson(Map<String, dynamic>.from(e)))
           .toList(),
-      responseDefs: ((json['response_defs'] as List?) ?? const [])
-          .whereType<Map>()
-          .map((e) => ResponseDef.fromJson(Map<String, dynamic>.from(e)))
-          .toList(),
-      lastCompletedSeqNo: (json['last_completed_seq_no'] as num?)?.toInt() ?? 0,
-      referenceDate: json['reference_date'] as String?,
+      prefill: Map<String, dynamic>.from((json['prefill'] as Map?) ?? const {}),
+      prefillSource: ((json['prefill_source'] as Map?) ?? const {})
+          .map((k, v) => MapEntry('$k', '$v')),
+      footer: ((json['footer'] as List?) ?? const []).map((e) => '$e').toList(),
+      existing: existing is Map
+          ? RecordData.fromJson(Map<String, dynamic>.from(existing))
+          : null,
     );
   }
 
+  /// 回写成服务端形状（离线缓存整份表单用）。
   Map<String, dynamic> toJson() => {
         'patient': {
           'inpatient_no': patientNo,
           'name': patientName,
-          if (diagnosis != null) 'diagnosis': diagnosis,
-          if (adminNote != null) 'admin_note': adminNote,
+          if (patientStatus != null) 'status': patientStatus,
         },
-        'main_items': mainItems.map((m) => m.toJson()).toList(),
-        'response_defs': responseDefs.map((r) => r.toJson()).toList(),
-        'last_completed_seq_no': lastCompletedSeqNo,
-        if (referenceDate != null) 'reference_date': referenceDate,
+        'discipline': discipline,
+        'discipline_name': disciplineName,
+        'kind': kind,
+        'kind_label': kindLabel,
+        'title': title,
+        'next_seq': nextSeq,
+        'total_daily': totalDaily,
+        'sessions_until_reassessment': sessionsUntilReassessment,
+        'pending_document': pendingDocument,
+        'pending_document_label': pendingDocumentLabel,
+        'template_version': templateVersion,
+        'soap': soap.map((s) => s.toJson()).toList(),
+        'prefill': prefill,
+        'prefill_source': prefillSource,
+        'footer': footer,
+        'existing': existing?.toJson(),
       };
-
-  int get nextSeqNo => lastCompletedSeqNo + 1;
-}
-
-/// 一次治疗里的一项（主项目 + 子项目 + 参数值）。
-class RecordItemDraft {
-  RecordItemDraft({
-    required this.mainItemId,
-    required this.subItemId,
-    required this.subItemName,
-    Map<String, dynamic>? params,
-  }) : params = params ?? <String, dynamic>{};
-
-  final int mainItemId;
-  final int subItemId;
-  final String subItemName;
-
-  /// 键为 `param_key`；**空值不提交**（服务端按"没填"处理）。
-  final Map<String, dynamic> params;
-
-  Map<String, dynamic> toJson() => {
-        'main_item_id': mainItemId,
-        'sub_item_id': subItemId,
-        'params': params,
-      };
-
-  factory RecordItemDraft.fromJson(Map<String, dynamic> json) => RecordItemDraft(
-        mainItemId: (json['main_item_id'] as num).toInt(),
-        subItemId: (json['sub_item_id'] as num).toInt(),
-        subItemName: '${json['sub_item_name_snapshot'] ?? json['sub_item_name'] ?? ''}',
-        params: Map<String, dynamic>.from((json['params'] as Map?) ?? const {}),
-      );
-}
-
-/// 患者反应草稿。
-///
-/// 形状与后端一致：`{"tags": [...], "items": [{"code": ..., "value": ...}]}`。
-class PatientResponseDraft {
-  PatientResponseDraft({Set<String>? tags, Map<String, dynamic>? items})
-      : tags = tags ?? <String>{},
-        items = items ?? <String, dynamic>{};
-
-  final Set<String> tags;
-  final Map<String, dynamic> items;
-
-  bool get isEmpty => tags.isEmpty && items.isEmpty;
-
-  Map<String, dynamic> toJson() => {
-        'tags': tags.toList(),
-        'items': items.entries
-            .map((e) => {'code': e.key, 'value': e.value})
-            .toList(),
-      };
-
-  static PatientResponseDraft fromJson(Map<String, dynamic> json) {
-    final tags = ((json['tags'] as List?) ?? const []).map((e) => '$e').toSet();
-    final items = <String, dynamic>{};
-    for (final raw in ((json['items'] as List?) ?? const []).whereType<Map>()) {
-      final code = raw['code'];
-      if (code != null) items['$code'] = raw['value'];
-    }
-    return PatientResponseDraft(tags: tags, items: items);
-  }
 }

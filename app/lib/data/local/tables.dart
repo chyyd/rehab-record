@@ -7,8 +7,9 @@
 ///    `ux_appt_client_uuid` 对称，是幂等推送的本地保障；
 /// 3. 时间戳字段一律**文本 UTC ISO8601 带毫秒**，与服务端约定一致
 ///    （禁止本地时区，避免 +08:00 下偏移）；
-/// 4. 参考数据（字典/选项集/模板/反应定义）**不进表**，整包 JSON 存 `ref_cache`——
-///    它们只读，建成表换不来查询收益，反而多一套迁移（协议 §7.1）。
+/// 4. 参考数据**不进表**，整包 JSON 存 `ref_cache`——它们只读，建成表换不来查询收益，
+///    反而多一套迁移（协议 §7.1）。2026-10-05 起这里只放两样东西：
+///    记录页表单的离线缓存、以及多选字段的"最近用过"顺序（见 `RecordRepository`）。
 library;
 
 import 'package:drift/drift.dart';
@@ -46,22 +47,42 @@ class Patients extends Table {
 }
 
 /// 治疗记录镜像表（可离线写）。
+///
+/// ★ 2026-10-05 脊柱级改造（Schema v5）：记录从「表格 + 明细」变成
+/// **SOAP 模板驱动的一段文本 + 一个扁平答案表**，所以：
+///   - 删 `session_period` / `duration_min`（半日与时长两个字段整体下线）；
+///   - 删 `patient_response_json`（患者反应表 `response_def` 已随迁移 012 删除）；
+///   - 删 `pending_items_json`（没有"明细"了，答案就是一个 `body_json`）；
+///   - 新增 `discipline` / `kind` / `body_json` / `rendered_text`。
 class TreatmentRecords extends Table {
   IntColumn get id => integer()();
   TextColumn get patientNo => text()();
   IntColumn get therapistId => integer()();
   TextColumn get recordDate => text()();
-  TextColumn get sessionPeriod => text().nullable()();
-  IntColumn get durationMin => integer().nullable()();
-  TextColumn get note => text().nullable()();
 
-  /// `patient_response_json` 原样保存：`{"tags": [...], "items": [...]}`。
-  /// 不做结构化拆解——服务端已保证 `json_valid()`，客户端只需原样回传。
-  TextColumn get patientResponseJson => text().nullable()();
+  /// `PT` / `OT` / `ST_SW` / `ST_SP`（四大类）。
+  TextColumn get discipline => text()();
+
+  /// `initial` / `daily` / `reassessment` / `discharge`（形态）。
+  TextColumn get kind => text()();
+
+  /// 第几次**日常**记录；评估文书（首评/复评/出院小结）不占次数 → 为 null。
+  IntColumn get seqNo => integer().nullable()();
+
+  /// 答案：`{field_key: value}`（键就是模板字段的 `key`）。
+  ///
+  /// 这是**唯一**的记录内容载体：服务端 `body` 原样存取，App 不再拆表。
+  TextColumn get bodyJson => text().withDefault(const Constant('{}'))();
+
+  /// 服务端在落库时**冻结**的 SOAP 纯文本（时间轴/详情直接显示它）。
+  ///
+  /// 本地草稿也存一份客户端预览（见 `RecordRepository`），推送成功后会被
+  /// 服务端返回的正式文本覆盖。
+  TextColumn get renderedText => text().withDefault(const Constant(''))();
+
+  TextColumn get note => text().nullable()();
   TextColumn get status => text().withDefault(const Constant('draft'))();
 
-  /// 该患者第几次治疗；**草稿不占号**，提交后才有值。
-  IntColumn get seqNo => integer().nullable()();
   IntColumn get editCount => integer().withDefault(const Constant(0))();
   IntColumn get revision => integer().withDefault(const Constant(0))();
 
@@ -72,35 +93,6 @@ class TreatmentRecords extends Table {
 
   TextColumn get clientUuid => text().nullable()();
   TextColumn get syncStatus => text().withDefault(const Constant('synced'))();
-
-  /// 明细快照（JSON 数组），**仅用于离线草稿**。
-  ///
-  /// 为什么需要它：服务端返回的 `payload.items` 里带着两层快照
-  /// （`sub_item_name_snapshot` + `params_snapshot_json`），所以**已同步**记录的明细
-  /// 走 `record_items` 表。但本地新建、**尚未推送**的草稿没有服务端 id，
-  /// 明细只能先整体存成一列 JSON；推送成功后由同步引擎落成 `record_items` 行。
-  TextColumn get pendingItemsJson => text().nullable()();
-
-  @override
-  Set<Column> get primaryKey => {id};
-}
-
-/// 治疗记录明细（含两层快照）。
-class RecordItems extends Table {
-  IntColumn get id => integer()();
-  IntColumn get recordId => integer()();
-  IntColumn get mainItemId => integer()();
-  IntColumn get subItemId => integer()();
-
-  /// 第一层快照：子项目**当时**的名称，字典改名后历史仍显示原文。
-  TextColumn get subItemNameSnapshot => text().nullable()();
-
-  /// 实际提交的参数值（键为 `param_key`）。
-  TextColumn get paramsJson => text()();
-
-  /// 第二层快照：参数**当时**的显示名、取值与选项文本。
-  TextColumn get paramsSnapshotJson => text().nullable()();
-  IntColumn get sort => integer().withDefault(const Constant(0))();
 
   @override
   Set<Column> get primaryKey => {id};

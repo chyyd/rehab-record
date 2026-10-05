@@ -6,8 +6,8 @@ import 'package:drift/drift.dart';
 import 'package:rehab_app/core/api_endpoints.dart';
 import 'package:rehab_app/core/date_utils.dart';
 import 'package:rehab_app/core/error.dart';
-// 别名导入：Drift 为 `TreatmentRecords` / `RecordItems` 表生成的数据类也叫
-// `TreatmentRecord` / `RecordItem`（见 app_database.g.dart），与常见业务命名冲突。
+// 别名导入：Drift 为 `TreatmentRecords` 表生成的数据类也叫 `TreatmentRecord`
+//（见 app_database.g.dart），与业务命名冲突。
 import 'package:rehab_app/data/local/app_database.dart' as local;
 import 'package:rehab_app/data/remote/api_client.dart';
 import 'package:rehab_app/data/remote/record_dto.dart';
@@ -15,9 +15,12 @@ import 'package:rehab_app/sync/sync_engine.dart';
 
 /// 记录数据访问（离线优先）。
 ///
-/// 记录是**可离线写的实体**（协议 §3.1）。2026-10-05 排期下线后，
-/// 它是**唯一**还能离线写的实体；草稿的冲突策略是 `client_wins`（协议 §4.4）
-/// ——治疗师在床旁刚写的东西不该被服务端的旧版本盖掉。
+/// 记录是**可离线写的实体**（协议 §3.1）。草稿的冲突策略是 `client_wins`
+/// （协议 §4.4）—— 治疗师在床旁刚写的东西不该被服务端的旧版本盖掉。
+///
+/// ★ 2026-10-05 起记录是 **SOAP 模板驱动**的：本地只需要
+/// `discipline` / `kind` / `body_json` / `rendered_text` 四样东西，
+/// 没有"明细表"了（`record_items` 已随 schemaVersion 5 删除）。
 // 见 api_client.dart 顶部说明：构造器刻意用「公开参数名 + 私有字段」。
 // 条件键（`if (x != null) 'k': x`）是构造可选 API 载荷最清楚的写法。
 // ignore_for_file: prefer_initializing_formals, use_null_aware_elements
@@ -34,55 +37,70 @@ class RecordRepository {
   final local.AppDatabase _db;
   final SyncEngine _sync;
 
+  /// 多选字段"最近用过"的本地记忆上限。
+  static const int recentOptionsLimit = 12;
+
   // ------------------------------------------------------------------------- //
   // 表单（离线优先：联网时拉一份整包缓存，断网时用缓存）
   // ------------------------------------------------------------------------- //
-  static String _formCacheKey(String patientNo, int? mainItemId) =>
-      'record_form:$patientNo:${mainItemId ?? 'all'}';
+  /// 表单缓存键。
+  ///
+  /// ★ 必须带上 `discipline` 与 `kind`：它们是**两份内容完全不同**的表单
+  ///（PT 运动 58 个疗法 vs 吞咽 4 个；出院小结 vs 日常记录），
+  /// 共用一个 key 会互相覆盖 —— 离线时治疗师会看到另一份文书的字段。
+  /// `date` 不参与 key（同一天的表单内容一致；不同天由服务端重新算序号）。
+  static String formCacheKey(
+    String patientNo,
+    String discipline, {
+    String? kind,
+  }) =>
+      'record_form:$patientNo:$discipline:${kind ?? 'auto'}';
 
-  /// 取记录表单。
+  /// 取记录表单（`GET /records/form`）。
   ///
-  /// ★ **不自己算"上次值/默认值"**：服务端已经按 5 级带入
-  /// （上次值 → 个人选项集 → 科室 → 全局 → 字典默认）填好 `current_value` /
-  /// `value_source` / `options_resolved`。客户端重算一遍只会产生分歧。
-  ///
-  /// ★ [mainItemId] **一旦已经加了治疗项目就必须传**：`response_defs` 是
-  /// **按主项目分组**的（实测四组各 8/6/5/8 个，无通用组），而服务端
-  /// `normalize_responses` 只用**第一个项目的主项目**做校验。不传的话表单返回
-  /// 全部 27 个，治疗师选了别组的反应 → 提交 422「未知的患者反应」——
-  /// 而且是填完整张表单之后才发现。传了就只返回该组定义。
+  /// [kind] 只在**出院**时显式传（`discharge`）——其余形态由服务端门禁决定：
+  /// 缺首评/复评时服务端会把 `kind` 直接给成那份评估文书，并在
+  /// `pending_document` 里说明。客户端**不自己判断**该弹哪份文书。
   ///
   /// 离线时回落到缓存；两者都没有才抛错。
   Future<({RecordFormData form, bool fromCache})> fetchForm(
-    String patientNo, {
-    int? mainItemId,
+    String patientNo,
+    String discipline, {
+    String? date,
+    String? kind,
   }) async {
     try {
       final data = await _client.request(kRecordForm, query: {
         'patient_no': patientNo,
-        if (mainItemId != null) 'main_item_id': mainItemId,
+        'discipline': discipline,
+        if (date != null) 'date': date,
+        if (kind != null) 'kind': kind,
       });
       final json = Map<String, dynamic>.from(data as Map);
       final form = RecordFormData.fromJson(json);
       await _db.into(_db.refCache).insertOnConflictUpdate(
             local.RefCacheCompanion.insert(
-              key: _formCacheKey(patientNo, mainItemId),
+              key: formCacheKey(patientNo, discipline, kind: kind),
               payloadJson: jsonEncode(form.toJson()),
               fetchedAt: DateTime.now().toUtc().toIso8601String(),
             ),
           );
       return (form: form, fromCache: false);
     } on AppError {
-      final cached = await readCachedForm(patientNo, mainItemId: mainItemId);
+      final cached = await readCachedForm(patientNo, discipline, kind: kind);
       if (cached == null) rethrow;
       return (form: cached, fromCache: true);
     }
   }
 
   /// 只读缓存（不带网络请求）。
-  Future<RecordFormData?> readCachedForm(String patientNo, {int? mainItemId}) async {
+  Future<RecordFormData?> readCachedForm(
+    String patientNo,
+    String discipline, {
+    String? kind,
+  }) async {
     final row = await (_db.select(_db.refCache)
-          ..where((t) => t.key.equals(_formCacheKey(patientNo, mainItemId))))
+          ..where((t) => t.key.equals(formCacheKey(patientNo, discipline, kind: kind))))
         .getSingleOrNull();
     if (row == null) return null;
     try {
@@ -93,6 +111,56 @@ class RecordRepository {
       // 缓存坏了不该让整个页面打不开。
       return null;
     }
+  }
+
+  // ------------------------------------------------------------------------- //
+  // 多选字段的"最近用过"（模板里"本次训练项目"有 58 项，靠它才能一点就中）
+  // ------------------------------------------------------------------------- //
+  static String _recentKey(String fieldKey) => 'recent_options:$fieldKey';
+
+  /// 该字段最近用过的值（**最近的在前**）。
+  ///
+  /// 只是**排序偏好**，不参与任何校验：界面把它排到选项列表最前面，
+  /// 治疗师每天重复做的那几项因此不需要搜索。
+  Future<List<String>> recentOptions(String fieldKey) async {
+    final row = await (_db.select(_db.refCache)
+          ..where((t) => t.key.equals(_recentKey(fieldKey))))
+        .getSingleOrNull();
+    if (row == null) return const [];
+    try {
+      final decoded = jsonDecode(row.payloadJson);
+      if (decoded is! List) return const [];
+      return decoded.map((e) => '$e').toList();
+    } on FormatException {
+      return const [];
+    }
+  }
+
+  /// 记下这次用过的值（**最近的在前**，去重后最多 [recentOptionsLimit] 个）。
+  ///
+  /// ★ 2026-10-05 修 bug：原来写成 `[新值..., ...旧值]`，于是**本次刚用过的排到了最后** ——
+  /// 正好与「最近用过排最前」相反，界面把最不可能再用的项顶到 58 项列表的开头。
+  /// 现在把本次的值放在最前，旧值里**本次没用到的**按原序接在后面。
+  ///
+  /// 同一字段做多次治疗时，重复出现的值会被提到最前（MRU 语义）：
+  /// 连续两次只勾「偏瘫肢体综合训练」，它就会一直排在搜索区第一位。
+  Future<void> rememberOptions(String fieldKey, Iterable<String> used) async {
+    final fresh = used.where((e) => e.trim().isNotEmpty).toList();
+    if (fresh.isEmpty) return;
+    final previous = await recentOptions(fieldKey);
+    final merged = [
+      ...fresh,
+      // 旧值里排除本次已经出现过的（`fresh` 已在最前，再出现就是重复）
+      for (final value in previous)
+        if (!fresh.contains(value)) value,
+    ].take(recentOptionsLimit).toList();
+    await _db.into(_db.refCache).insertOnConflictUpdate(
+          local.RefCacheCompanion.insert(
+            key: _recentKey(fieldKey),
+            payloadJson: jsonEncode(merged),
+            fetchedAt: DateTime.now().toUtc().toIso8601String(),
+          ),
+        );
   }
 
   // ------------------------------------------------------------------------- //
@@ -109,38 +177,61 @@ class RecordRepository {
         .watch();
   }
 
-  /// 取某患者某日某半日的**未推送草稿**（用于"继续上次没写完的"）。
-  Future<local.TreatmentRecord?> findDraft({
-    required String patientNo,
-    required String recordDate,
-    String? sessionPeriod,
-  }) async {
-    final query = _db.select(_db.treatmentRecords)
-      ..where((t) => t.patientNo.equals(patientNo))
-      ..where((t) => t.recordDate.equals(recordDate))
-      ..where((t) => t.status.equals('draft'))
-      ..where((t) => t.syncStatus.equals('pending'));
-    if (sessionPeriod != null) {
-      query.where((t) => t.sessionPeriod.equals(sessionPeriod));
-    }
-    return query.getSingleOrNull();
+  /// 取某条本地记录（继续编辑要靠它把 `body` 读回来）。
+  Future<local.TreatmentRecord?> findByLocalId(int recordId) {
+    return (_db.select(_db.treatmentRecords)..where((t) => t.id.equals(recordId)))
+        .getSingleOrNull();
   }
 
-  /// 保存草稿：**先本地 + 入离线队列**（床旁弱网也能写）。
+  /// 该患者某日某大类的**未推送草稿**（离线时"继续上次没写完的"）。
+  Future<local.TreatmentRecord?> findLocalDraft({
+    required String patientNo,
+    required String recordDate,
+    required String discipline,
+  }) {
+    return (_db.select(_db.treatmentRecords)
+          ..where((t) => t.patientNo.equals(patientNo))
+          ..where((t) => t.recordDate.equals(recordDate))
+          ..where((t) => t.discipline.equals(discipline))
+          ..where((t) => t.status.equals('draft'))
+          ..where((t) => t.syncStatus.equals('pending'))
+          ..orderBy([(t) => OrderingTerm.desc(t.id)]))
+        .getSingleOrNull();
+  }
+
+  /// 把本地草稿的 `body` 读回来。
+  Future<Map<String, dynamic>> readLocalBody(int recordId) async {
+    final row = await findByLocalId(recordId);
+    return decodeBody(row?.bodyJson);
+  }
+
+  /// 把 `body_json` 解出来（坏了当空表，不让页面炸掉）。
+  static Map<String, dynamic> decodeBody(String? raw) {
+    if (raw == null || raw.isEmpty) return {};
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is Map) return Map<String, dynamic>.from(decoded);
+    } on FormatException {
+      return {};
+    }
+    return {};
+  }
+
+  /// 保存（草稿或提交）：**先本地 + 入离线队列**（床旁弱网也能写）。
   ///
-  /// [existingId] 传本地草稿 id 时为更新；否则新建（用负数占位 id）。
-  /// 返回本地 id。
-  Future<int> saveDraft({
+  /// [existingId] 传本地记录 id 时为更新；否则新建（用负数占位 id）。
+  /// 返回本地 id 与幂等键 `client_uuid`（出院流程要靠它找回服务端 id）。
+  Future<({int localId, String clientUuid})> save({
     required int? existingId,
     required String patientNo,
     required int therapistId,
     required String recordDate,
-    required String? sessionPeriod,
-    required int? durationMin,
-    required String? note,
-    required PatientResponseDraft response,
-    required List<RecordItemDraft> items,
+    required String discipline,
+    required String kind,
+    required Map<String, dynamic> body,
     required String status,
+    String? renderedText,
+    String? note,
   }) async {
     final id = existingId ?? await _nextNegativeId();
     final uuid = await _uuidFor(existingId) ?? _uuidV4();
@@ -151,34 +242,32 @@ class RecordRepository {
             patientNo: patientNo,
             therapistId: therapistId,
             recordDate: recordDate,
-            sessionPeriod: Value(sessionPeriod),
-            durationMin: Value(durationMin),
+            discipline: discipline,
+            kind: kind,
+            bodyJson: Value(jsonEncode(body)),
+            // 本地先存一份**预览**文本（由编辑器按模板字段拼），
+            // 推送成功后服务端返回的正式 `rendered_text` 会覆盖它。
+            renderedText: Value(renderedText ?? ''),
             note: Value(note),
-            patientResponseJson:
-                Value(response.isEmpty ? null : jsonEncode(response.toJson())),
             status: Value(status),
             clientUuid: Value(uuid),
             syncStatus: const Value('pending'),
-            pendingItemsJson: Value(jsonEncode(items.map((i) => i.toJson()).toList())),
           ),
         );
 
     final payload = {
       'patient_no': patientNo,
       'record_date': recordDate,
-      if (sessionPeriod != null) 'session_period': sessionPeriod,
-      if (durationMin != null) 'duration_min': durationMin,
-      if (note != null && note.isNotEmpty) 'note': note,
-      if (!response.isEmpty) 'patient_response': response.toJson(),
-      'items': items.map((i) => i.toJson()).toList(),
+      'discipline': discipline,
+      'kind': kind,
+      'body': body,
       'status': status,
+      if (note != null && note.isNotEmpty) 'note': note,
     };
 
     // 已推送过的记录是 update，本地新建是 insert。
     if (existingId != null && existingId > 0) {
-      final row = await (_db.select(_db.treatmentRecords)
-            ..where((t) => t.id.equals(existingId)))
-          .getSingleOrNull();
+      final row = await findByLocalId(existingId);
       await _sync.enqueueUpdate(
         entity: 'treatment_record',
         clientUuid: uuid,
@@ -192,41 +281,7 @@ class RecordRepository {
         payload: payload,
       );
     }
-    return id;
-  }
-
-  /// 把本地草稿的明细读回来（用于"继续编辑"）。
-  Future<List<RecordItemDraft>> readPendingItems(int recordId) async {
-    final row = await (_db.select(_db.treatmentRecords)
-          ..where((t) => t.id.equals(recordId)))
-        .getSingleOrNull();
-    final raw = row?.pendingItemsJson;
-    if (raw == null || raw.isEmpty) return const [];
-    try {
-      final list = jsonDecode(raw) as List;
-      return list
-          .whereType<Map>()
-          .map((e) => RecordItemDraft.fromJson(Map<String, dynamic>.from(e)))
-          .toList();
-    } on FormatException {
-      return const [];
-    }
-  }
-
-  /// 本地草稿的患者反应。
-  Future<PatientResponseDraft> readPendingResponse(int recordId) async {
-    final row = await (_db.select(_db.treatmentRecords)
-          ..where((t) => t.id.equals(recordId)))
-        .getSingleOrNull();
-    final raw = row?.patientResponseJson;
-    if (raw == null || raw.isEmpty) return PatientResponseDraft();
-    try {
-      return PatientResponseDraft.fromJson(
-        Map<String, dynamic>.from(jsonDecode(raw) as Map),
-      );
-    } on FormatException {
-      return PatientResponseDraft();
-    }
+    return (localId: id, clientUuid: uuid);
   }
 
   /// 待推送的本地记录条数。
@@ -243,8 +298,7 @@ class RecordRepository {
 
   Future<String?> _uuidFor(int? id) async {
     if (id == null) return null;
-    final row = await (_db.select(_db.treatmentRecords)..where((t) => t.id.equals(id)))
-        .getSingleOrNull();
+    final row = await findByLocalId(id);
     return row?.clientUuid;
   }
 
@@ -258,36 +312,31 @@ class RecordRepository {
         '${hex.substring(12, 16)}-${hex.substring(16, 20)}-${hex.substring(20)}';
   }
 
-  /// 该患者在当地日期、半日的记录条数（顶部提示"今天已经记过 N 次"）。
+  /// 该患者当天该大类已记了几条（含未推送草稿）。
+  ///
+  /// 服务端规则是"同一天同一大类**至多 2 条**"（用户 2026-10-05 明确要求），
+  /// 界面用它提前提示，而不是等 409。
   Future<int> countForDay({
     required String patientNo,
     required String recordDate,
-    String? sessionPeriod,
+    required String discipline,
   }) async {
     final row = await _db.customSelect(
       'SELECT COUNT(*) AS n FROM treatment_records'
-      ' WHERE patient_no = ? AND record_date = ?'
-      "${sessionPeriod != null ? ' AND session_period = ?' : ''}",
+      ' WHERE patient_no = ? AND record_date = ? AND discipline = ?',
       variables: [
         Variable.withString(patientNo),
         Variable.withString(recordDate),
-        if (sessionPeriod != null) Variable.withString(sessionPeriod),
+        Variable.withString(discipline),
       ],
     ).getSingleOrNull();
     return (row?.data['n'] as int?) ?? 0;
   }
 
-  /// 今天（本地日期）该患者已有记录数。
-  Future<int> countForToday(String patientNo) => countForDay(
+  /// 今天（本地日期）该患者在该大类已有记录数。
+  Future<int> countForToday(String patientNo, String discipline) => countForDay(
         patientNo: patientNo,
         recordDate: formatDate(DateTime.now()),
+        discipline: discipline,
       );
-
-  /// 记录明细（已同步的部分）。
-  Future<List<local.RecordItem>> itemsOf(int recordId) {
-    return (_db.select(_db.recordItems)
-          ..where((t) => t.recordId.equals(recordId))
-          ..orderBy([(t) => OrderingTerm.asc(t.sort)]))
-        .get();
-  }
 }

@@ -80,10 +80,27 @@ class ConflictItem {
 
   String get dateLabel => recordDate ?? '—';
 
-  /// 明细条数（治疗记录才有）。
+  /// 记录形态（`initial` / `daily` / `reassessment` / `discharge`）。
+  String? get kind => payload['kind'] as String?;
+
+  String get kindLabel => switch (kind) {
+        'initial' => '首评',
+        'reassessment' => '复评',
+        'discharge' => '出院小结',
+        'daily' => '日常记录',
+        _ => kind ?? '—',
+      };
+
+  /// 大类（`PT` / `OT` / `ST_SW` / `ST_SP`）。
+  String? get discipline => payload['discipline'] as String?;
+
+  /// 这份改动填了几个字段（`body` 的键数）。
+  ///
+  /// 旧模型这里数的是 `items`（明细项）；SOAP 模型下内容就是一整个 `body`，
+  /// 所以数它的键 —— 界面上的"填了几项"含义不变。
   int get itemCount {
-    final items = payload['items'];
-    return items is List ? items.length : 0;
+    final body = payload['body'];
+    return body is Map ? body.length : 0;
   }
 
   /// 冲突原因的人话解释。
