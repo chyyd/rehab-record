@@ -1,0 +1,291 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:open_filex/open_filex.dart';
+
+import 'package:rehab_app/core/api_endpoints.dart';
+import 'package:rehab_app/core/date_utils.dart';
+import 'package:rehab_app/core/worktime.dart';
+import 'package:rehab_app/data/remote/timeline_dto.dart';
+import 'package:rehab_app/features/timeline/timeline_providers.dart';
+
+/// 患者汇总：按天折叠的"这个患者每天做了什么"。
+///
+/// 数据来自 `GET /summary/patient/{no}`，是服务端按天聚合好的
+/// （主项目 / 子项目 / 参数摘要 / 患者反应 / 备注），
+/// 所以这里不需要再自己去拼记录明细 —— 而且聚合口径与服务端打印的 PDF 一致，
+/// 屏幕上看到的和打出来的是同一份内容。
+class PatientSummaryPage extends ConsumerWidget {
+  const PatientSummaryPage({super.key, required this.inpatientNo});
+
+  final String inpatientNo;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final async = ref.watch(patientDailySummaryProvider(inpatientNo));
+    final print = ref.watch(printControllerProvider);
+    final theme = Theme.of(context);
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('患者汇总'),
+        actions: [
+          IconButton(
+            tooltip: '打印 PDF',
+            icon: print.busy
+                ? const SizedBox(
+                    width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                : const Icon(Icons.print_outlined),
+            onPressed: print.busy
+                ? null
+                : () => ref.read(printControllerProvider.notifier).downloadAndOpen(
+                      path: kPrintSummaryPatient(inpatientNo),
+                      filenamePrefix: 'patient_$inpatientNo',
+                    ),
+          ),
+        ],
+        bottom: print.message == null
+            ? null
+            : PreferredSize(
+                preferredSize: const Size.fromHeight(30),
+                child: _PrintBar(
+                  text: print.message!,
+                  isError: print.isError,
+                  path: print.path,
+                  onDismiss: () => ref.read(printControllerProvider.notifier).clear(),
+                ),
+              ),
+      ),
+      body: async.when(
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error: (e, _) => Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.cloud_off_outlined, size: 44),
+                const SizedBox(height: 10),
+                const Text('患者汇总需要联网', style: TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 6),
+                Text('$e', textAlign: TextAlign.center),
+                const SizedBox(height: 16),
+                OutlinedButton(
+                  onPressed: () => ref.invalidate(patientDailySummaryProvider(inpatientNo)),
+                  child: const Text('重试'),
+                ),
+              ],
+            ),
+          ),
+        ),
+        data: (s) => RefreshIndicator(
+          onRefresh: () async => ref.invalidate(patientDailySummaryProvider(inpatientNo)),
+          child: ListView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.all(12),
+            children: [
+              Card(
+                margin: EdgeInsets.zero,
+                child: Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(s.patient.name, style: theme.textTheme.titleMedium),
+                      Text(
+                        '${s.patient.inpatientNo}'
+                        '${s.patient.diagnosis == null ? '' : ' · ${s.patient.diagnosis}'}',
+                        style: TextStyle(fontSize: 12, color: theme.colorScheme.outline),
+                      ),
+                      const Divider(height: 20),
+                      Row(
+                        children: [
+                          _Metric(label: '治疗天数', value: '${s.days.length}'),
+                          _Metric(label: '记录', value: '${s.totals.recordCount}'),
+                          _Metric(label: '项目', value: '${s.totals.itemCount}'),
+                          _Metric(label: '总时长', value: s.totals.durationLabel),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              if (s.days.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 32),
+                  child: Center(
+                    child: Text('这个患者还没有治疗记录',
+                        style: TextStyle(color: theme.colorScheme.outline)),
+                  ),
+                )
+              else
+                for (final day in s.days) _DayCard(day: day),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DayCard extends StatelessWidget {
+  const _DayCard({required this.day});
+
+  final PatientDailyRow day;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final d = parseDate(day.recordDate);
+    final periods = day.sessionPeriods.map(periodLabel).join('、');
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: ExpansionTile(
+        title: Row(
+          children: [
+            Text(
+              '${shortDateFromIso(day.recordDate)}'
+              '${d == null ? '' : ' ${weekdayLabel(d)}'}',
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+            if (periods.isNotEmpty) ...[
+              const SizedBox(width: 6),
+              Text(periods,
+                  style: TextStyle(fontSize: 11, color: theme.colorScheme.outline)),
+            ],
+            if (day.temporary) ...[
+              const SizedBox(width: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.tertiaryContainer,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: const Text('临时治疗', style: TextStyle(fontSize: 10)),
+              ),
+            ],
+          ],
+        ),
+        subtitle: Text(
+          [
+            if (day.therapists.isNotEmpty) day.therapists.join('、'),
+            if (day.durationMin > 0) '${day.durationMin} 分钟',
+          ].join(' · '),
+          style: const TextStyle(fontSize: 12),
+        ),
+        childrenPadding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+        children: [
+          _Line(label: '主项目', values: day.mainItems),
+          _Line(label: '子项目', values: day.subItems),
+          _Line(label: '参数', values: day.params),
+          _Line(label: '患者反应', values: day.responses),
+          _Line(label: '备注', values: day.notes),
+        ],
+      ),
+    );
+  }
+}
+
+class _Line extends StatelessWidget {
+  const _Line({required this.label, required this.values});
+
+  final String label;
+  final List<String> values;
+
+  @override
+  Widget build(BuildContext context) {
+    if (values.isEmpty) return const SizedBox.shrink();
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 64,
+            child: Text(label,
+                style: TextStyle(fontSize: 12, color: theme.colorScheme.outline)),
+          ),
+          Expanded(
+            child: Text(values.join('；'), style: const TextStyle(fontSize: 12)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _Metric extends StatelessWidget {
+  const _Metric({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Expanded(
+      child: Column(
+        children: [
+          Text(value,
+              style: theme.textTheme.titleMedium
+                  ?.copyWith(fontWeight: FontWeight.bold)),
+          Text(label,
+              style: TextStyle(fontSize: 11, color: theme.colorScheme.outline)),
+        ],
+      ),
+    );
+  }
+}
+
+class _PrintBar extends StatelessWidget {
+  const _PrintBar({
+    required this.text,
+    required this.isError,
+    required this.onDismiss,
+    this.path,
+  });
+
+  final String text;
+  final bool isError;
+  final VoidCallback onDismiss;
+  final String? path;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      color: isError ? scheme.errorContainer : scheme.secondaryContainer,
+      padding: const EdgeInsets.only(left: 12, right: 4),
+      child: Row(
+        children: [
+          Icon(isError ? Icons.warning_amber_outlined : Icons.picture_as_pdf_outlined,
+              size: 16),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(text,
+                style: const TextStyle(fontSize: 12),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis),
+          ),
+          // 文件名带时间戳，同一患者打两次不会互相覆盖。
+          if (path != null)
+            IconButton(
+              tooltip: '用系统阅读器打开',
+              icon: const Icon(Icons.open_in_new, size: 16),
+              visualDensity: VisualDensity.compact,
+              onPressed: () => OpenFilex.open(path!),
+            ),
+          IconButton(
+            icon: const Icon(Icons.close, size: 16),
+            onPressed: onDismiss,
+            tooltip: '关闭',
+            visualDensity: VisualDensity.compact,
+          ),
+        ],
+      ),
+    );
+  }
+}

@@ -6,10 +6,11 @@ import 'package:rehab_app/features/patients/patient_list_page.dart';
 import 'package:rehab_app/features/patients/patients_providers.dart';
 import 'package:rehab_app/features/schedule/schedule_page.dart';
 import 'package:rehab_app/features/settings/settings_page.dart';
+import 'package:rehab_app/features/timeline/timeline_page.dart';
 
 /// 主界面外壳：底部导航 + 顶部同步状态。
 ///
-/// 页签按竖切顺序逐步加：患者 → 排期 → （记录 / 时间轴 / 汇总待做）。
+/// 页签按竖切顺序逐步加：患者 → 排期 → 时间轴 → （汇总/打印从时间轴进入）。
 /// 不预先塞空占位页 —— 空页签会让人以为功能坏了。
 class HomeShell extends ConsumerStatefulWidget {
   const HomeShell({super.key});
@@ -21,7 +22,7 @@ class HomeShell extends ConsumerStatefulWidget {
 class _HomeShellState extends ConsumerState<HomeShell> {
   int _index = 0;
 
-  static const _titles = ['患者', '排期', '我的'];
+  static const _titles = ['患者', '排期', '时间轴', '我的'];
 
   @override
   Widget build(BuildContext context) {
@@ -32,7 +33,8 @@ class _HomeShellState extends ConsumerState<HomeShell> {
       appBar: AppBar(
         title: Text(_titles[_index]),
         actions: [
-          // 患者页的同步按钮只作用于患者与记录；排期页自带刷新（它按周取数）。
+          // 患者页的同步按钮只作用于患者与记录；排期页自带刷新（它按周取数）；
+          // 时间轴是服务端只读视图，刷新在它自己的空态/下拉里。
           if (_index == 0)
             IconButton(
               tooltip: '同步',
@@ -47,6 +49,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
                     )
                   : const Icon(Icons.sync),
             ),
+          if (_index == 2) const TimelineSummaryButton(),
         ],
         bottom: _index != 0 || sync.message == null
             ? null
@@ -62,7 +65,12 @@ class _HomeShellState extends ConsumerState<HomeShell> {
       ),
       body: IndexedStack(
         index: _index,
-        children: const [PatientListPage(), SchedulePage(), SettingsPage()],
+        children: const [
+          PatientListPage(),
+          SchedulePage(),
+          TimelinePage(),
+          SettingsPage(),
+        ],
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _index,
@@ -77,6 +85,11 @@ class _HomeShellState extends ConsumerState<HomeShell> {
             icon: Icon(Icons.calendar_month_outlined),
             selectedIcon: Icon(Icons.calendar_month),
             label: '排期',
+          ),
+          const NavigationDestination(
+            icon: Icon(Icons.timeline_outlined),
+            selectedIcon: Icon(Icons.timeline),
+            label: '时间轴',
           ),
           NavigationDestination(
             icon: const Icon(Icons.person_outline),

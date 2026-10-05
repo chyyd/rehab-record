@@ -139,6 +139,48 @@ class ApiClient {
     throw AppError.fromBody(response.data, httpStatus: status);
   }
 
+  /// 取**二进制**响应（打印用的 PDF）。
+  ///
+  /// 单独一个方法而不是给 [request] 加参数：PDF 的失败体仍是 JSON 错误体，
+  /// 而 [request] 会把 2xx 的 `response.data` 当解析后的 JSON 返回 ——
+  /// 走 `ResponseType.bytes` 时它是 `List<int>`，两者不能混在一起。
+  ///
+  /// 401 的静默刷新逻辑与 [request] 保持一致（并发的刷新仍共用一个 future）。
+  Future<List<int>> requestBytes(
+    String path, {
+    Map<String, dynamic>? query,
+    bool isRetry = false,
+  }) async {
+    late Response<dynamic> response;
+    try {
+      response = await _dio.request<dynamic>(
+        path,
+        queryParameters: query,
+        options: Options(method: 'GET', responseType: ResponseType.bytes),
+      );
+    } on DioException catch (e) {
+      throw AppError.network(_describeDioError(e));
+    }
+
+    final status = response.statusCode ?? 0;
+    if (status >= 200 && status < 300) {
+      final data = response.data;
+      if (data is List<int>) return data;
+      if (data is List) return data.cast<int>();
+      throw AppError.network('服务端返回的不是二进制内容');
+    }
+
+    if (status == 401 && !isRetry && _refreshToken != null) {
+      final fresh = await _refreshOnce();
+      if (fresh != null) return requestBytes(path, query: query, isRetry: true);
+    }
+
+    // 失败体是 JSON（服务端统一错误体），但这里拿到的可能是字节，统一转回文本再解析。
+    final raw = response.data;
+    final decoded = raw is List<int> ? utf8.decode(raw, allowMalformed: true) : raw;
+    throw AppError.fromBody(decoded, httpStatus: status);
+  }
+
   /// 并发的 401 共用一个刷新动作。
   Future<String?> _refreshOnce() {
     return _refreshing ??= () async {

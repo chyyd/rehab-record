@@ -8,6 +8,7 @@ import 'package:rehab_app/data/remote/auth_service.dart';
 import 'package:rehab_app/data/repo/patient_repository.dart';
 import 'package:rehab_app/data/repo/record_repository.dart';
 import 'package:rehab_app/data/repo/schedule_repository.dart';
+import 'package:rehab_app/data/repo/timeline_repository.dart';
 import 'package:rehab_app/sync/sync_engine.dart';
 
 /// App 启动时构造好的一组长期存活对象。
@@ -26,6 +27,7 @@ class AppServices {
     required this.patients,
     required this.schedule,
     required this.records,
+    required this.timeline,
     required this.sync,
   });
 
@@ -37,6 +39,7 @@ class AppServices {
   final PatientRepository patients;
   final ScheduleRepository schedule;
   final RecordRepository records;
+  final TimelineRepository timeline;
   final SyncEngine sync;
 
   Future<void> dispose() async {
@@ -103,6 +106,7 @@ Future<AppServices> _buildServices(Ref ref) async {
     patients: PatientRepository(client: client, db: db),
     schedule: ScheduleRepository(client: client, db: db, sync: sync),
     records: RecordRepository(client: client, db: db, sync: sync),
+    timeline: TimelineRepository(client: client),
     sync: sync,
   );
 }

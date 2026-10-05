@@ -6,6 +6,7 @@ import 'package:rehab_app/core/worktime.dart';
 import 'package:rehab_app/features/patients/patients_providers.dart';
 import 'package:rehab_app/features/records/record_page.dart';
 import 'package:rehab_app/features/records/record_providers.dart';
+import 'package:rehab_app/features/timeline/patient_summary_page.dart';
 
 /// 患者详情。
 ///
@@ -24,7 +25,21 @@ class PatientDetailPage extends ConsumerWidget {
     final theme = Theme.of(context);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('患者详情')),
+      appBar: AppBar(
+        title: const Text('患者详情'),
+        actions: [
+          // 汇总/打印走服务端聚合，屏幕上看到的与打出来的 PDF 是同一份口径。
+          IconButton(
+            tooltip: '患者汇总与打印',
+            icon: const Icon(Icons.summarize_outlined),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => PatientSummaryPage(inpatientNo: inpatientNo),
+              ),
+            ),
+          ),
+        ],
+      ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => _openRecord(context, null),
         icon: const Icon(Icons.edit_note),

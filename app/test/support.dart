@@ -11,10 +11,14 @@ import 'package:rehab_app/data/remote/api_client.dart';
 /// 一个 [HttpClientAdapter] 足够，省一个依赖；而且**完全不需要真实网络**，
 /// 测试可以离线跑（本项目所在环境对 github 不通，这一点很重要）。
 class ScriptedAdapter implements HttpClientAdapter {
-  ScriptedAdapter(this.responses);
+  ScriptedAdapter(this.responses, {this.binaryResponses = const {}});
 
   /// 路径 → (状态码, 响应体)。
   final Map<String, (int, Object?)> responses;
+
+  /// 路径 → (状态码, 原始字节)。用于 PDF 这类**二进制**响应 ——
+  /// JSON 那套 `jsonEncode` 会把字节数组变成 `"[1,2,3]"`，拿回来不是 PDF。
+  final Map<String, (int, List<int>)> binaryResponses;
 
   /// 按顺序记录请求，便于断言"带没带 Authorization"、"重放了几次"。
   final List<RequestOptions> seen = [];
@@ -26,6 +30,10 @@ class ScriptedAdapter implements HttpClientAdapter {
     Headers.contentTypeHeader: ['application/json'],
   };
 
+  static const Map<String, List<String>> binaryHeaders = {
+    Headers.contentTypeHeader: ['application/pdf'],
+  };
+
   @override
   Future<ResponseBody> fetch(
     RequestOptions options,
@@ -33,6 +41,13 @@ class ScriptedAdapter implements HttpClientAdapter {
     Future<void>? cancelFuture,
   ) async {
     seen.add(options);
+
+    final binary = binaryResponses[options.path];
+    if (binary != null) {
+      final (status, bytes) = binary;
+      return ResponseBody.fromBytes(bytes, status, headers: binaryHeaders);
+    }
+
     final entry = responses[options.path];
     if (entry == null) {
       return ResponseBody.fromString('{}', 404, headers: jsonHeaders);
@@ -55,6 +70,7 @@ ApiClient buildScriptedClient(
   String? Function()? readAccessToken,
   Future<String?> Function()? refreshToken,
   ScriptedAdapter? adapter,
+  Map<String, (int, List<int>)> binaryResponses = const {},
 }) {
   final client = ApiClient(
     config: const AppConfig(
@@ -66,6 +82,7 @@ ApiClient buildScriptedClient(
     readAccessToken: readAccessToken ?? () => null,
     refreshToken: refreshToken,
   );
-  client.raw.httpClientAdapter = adapter ?? ScriptedAdapter(responses);
+  client.raw.httpClientAdapter =
+      adapter ?? ScriptedAdapter(responses, binaryResponses: binaryResponses);
   return client;
 }

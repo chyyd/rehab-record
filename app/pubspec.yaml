@@ -50,6 +50,11 @@ dependencies:
   # ---- 令牌安全存储（refresh token 进 Android Keystore）----
   flutter_secure_storage: ^11.2.0
 
+  # ---- 打印：PDF 下载到本地后交给系统阅读器打开 ----
+  # 必须自己带 Bearer 下载，不能把 URL 丢给浏览器（浏览器不会带我们的
+  # Authorization 头，只会看到 401）。
+  open_filex: ^4.7.0
+
   # ---- 日历：table_calendar（半日格子自绘 Grid，仅日期维度用它）----
   table_calendar: ^3.1.3
 
