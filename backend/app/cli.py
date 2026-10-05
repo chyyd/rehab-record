@@ -1,11 +1,12 @@
 """运维 CLI（纯标准库，零依赖）。
 
-    python -m app.cli init      # 建库 + 迁移到最新
-    python -m app.cli migrate   # 只跑迁移
-    python -m app.cli seed      # 导入字典种子（幂等）
-    python -m app.cli health    # 健康检查（JSON）
-    python -m app.cli periods   # 打印半日制作息与边界（Q11）
-    python -m app.cli tables    # 列出表与行数
+    python -m app.cli init              # 建库 + 迁移到最新
+    python -m app.cli migrate           # 只跑迁移
+    python -m app.cli seed              # 已废弃：字典种子不再导入（记录改由 JSON 模板驱动）
+    python -m app.cli auto-discharge    # 待出院满 7 天者自动出院（真的自动）
+    python -m app.cli health            # 健康检查（JSON）
+    python -m app.cli periods           # 打印半日制作息（Q11）
+    python -m app.cli tables            # 列出表与行数
 """
 
 from __future__ import annotations
@@ -19,11 +20,8 @@ from app.core.config import get_settings
 from app.core.health import collect_health
 from app.core.worktime import day_period_bounds
 from app.db import storage
+from app.models import patient as patient_model
 from app.models import user as user_model
-from seed.dictionary import seed_dictionary
-from seed.options import seed_options
-from seed.responses import seed_responses
-from seed.templates import seed_templates
 
 
 def cmd_init(args: argparse.Namespace) -> int:
@@ -55,10 +53,38 @@ def cmd_migrate(args: argparse.Namespace) -> int:
 
 
 def cmd_seed(args: argparse.Namespace) -> int:
-    """导入全部种子（幂等，可重复执行）。
+    """已废弃：字典种子不再导入。
 
-    顺序有依赖：反应定义、选项集、模板都要引用字典里的 `code`，所以字典必须先导。
-    模板放最后 —— 它同时依赖主项目与子项目，字典导完才可能成功。
+    2026-10-05 的记录模型改造把「字典 + 选项集 + 患者反应定义」六张表整体删除
+    （迁移 012），模板与选项改由 `templates/*.json` 承载（用户要求"不进数据库，
+    以便以后我手动修改"）。所以这里**保留子命令但不做任何事**：
+
+    - 保留：外部脚本/文档里仍有 `app.cli seed` 的调用，直接报错会让它们无谓地挂掉；
+    - 不做事：`seed/dictionary.py` 等导入器指向的表已经不存在，真跑会立刻崩，
+      留着"会崩的实现"比删掉更危险。
+
+    `backend/seed/` 下的种子 JSON 与导入器仍然保留，只是不再被调用
+    （见迁移 012 的说法：等确认没有任何功能依赖后再清理）。
+    """
+    print("字典种子已废弃（记录改由 JSON 模板驱动）")
+    print("模板与选项现在在仓库根的 templates/ 下：")
+    print("  templates/disciplines.json   四大类 + 各类「本次训练项目」清单")
+    print("  templates/<大类>/<形态>.json  首评 / 日常 / 复评 / 出院小结")
+    return 0
+
+
+def cmd_auto_discharge(args: argparse.Namespace) -> int:
+    """待出院满 N 天者**自动出院**（用户明确要求：「1 周后自动出院」「真的自动」）。
+
+    为什么需要它：治疗师提交出院小结后患者进入 `pending_discharge`（对普通治疗师
+    不可见），等管理员确认。用户要求"防止患者临时反悔"，但也不能无限期挂着 ——
+    满 7 天就自动落地为 `discharged`。
+
+    倒计时真源是**出院小结的提交时间**（`treatment_record.submitted_at`），
+    不是"改状态的时间"，见 `app/models/patient.py::pending_discharge_since`。
+
+    建议由计划任务每天跑一次（运维侧），例如：
+        python -m app.cli auto-discharge --days 7
     """
     cfg = get_settings()
     if not cfg.db_path.exists():
@@ -67,24 +93,16 @@ def cmd_seed(args: argparse.Namespace) -> int:
 
     conn = storage.connect(cfg)
     try:
-        print("① 字典（主项目 / 子项目 / 参数定义）")
-        dict_stats = seed_dictionary(conn)
-        print(f"   {dict_stats.summary()}")
-
-        print("② 患者反应定义")
-        resp_stats = seed_responses(conn)
-        print(f"   {resp_stats.summary()}")
-
-        print("③ 全局选项集")
-        opt_stats = seed_options(conn)
-        print(f"   {opt_stats.summary()}")
-        if opt_stats.skipped_variants:
-            codes = "、".join(sorted(opt_stats.variants))
-            print(f"   注意：以下 code 存在多套选项变体，全局层只保留主变体（差异仍在各子项目的参数里）：{codes}")
-
-        print("④ 四大高频模板（科室模板）")
-        tpl_stats = seed_templates(conn)
-        print(f"   {tpl_stats.summary()}")
+        if args.dry_run:
+            numbers = patient_model.auto_discharge_pending(
+                conn, days=args.days, now=args.now, dry_run=True
+            )
+            print(f"（试运行）待出院满 {args.days} 天、应自动出院的患者：{len(numbers)} 人")
+        else:
+            numbers = patient_model.auto_discharge_pending(conn, days=args.days, now=args.now)
+            print(f"已自动出院 {len(numbers)} 人（待出院满 {args.days} 天）")
+        for number in numbers:
+            print(f"  - {number}")
     finally:
         conn.close()
     return 0
@@ -193,7 +211,14 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser("init", help="建库并迁移到最新").set_defaults(func=cmd_init)
     sub.add_parser("migrate", help="应用未执行的迁移").set_defaults(func=cmd_migrate)
-    sub.add_parser("seed", help="导入字典种子（幂等）").set_defaults(func=cmd_seed)
+    sub.add_parser("seed", help="已废弃：字典种子不再导入（记录改由 JSON 模板驱动）").set_defaults(
+        func=cmd_seed
+    )
+    auto_discharge = sub.add_parser("auto-discharge", help="待出院满 N 天者自动出院（默认 7 天）")
+    auto_discharge.add_argument("--days", type=int, default=7, help="待出院多少天后自动出院（默认 7）")
+    auto_discharge.add_argument("--now", default=None, help="注入当前时刻（ISO8601 UTC），便于补跑与测试")
+    auto_discharge.add_argument("--dry-run", action="store_true", help="只列出将要出院的患者，不改状态")
+    auto_discharge.set_defaults(func=cmd_auto_discharge)
     create_admin = sub.add_parser("create-admin", help="创建或重置初始管理员")
     create_admin.add_argument("employee_no", help="管理员工号")
     create_admin.add_argument("--name", default="系统管理员", help="姓名")

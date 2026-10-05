@@ -1,26 +1,30 @@
-"""治疗记录接口（阶段 3 / `开发计划.md` 4.6、4.7）。
+"""治疗记录接口（SOAP 模板驱动，迁移 011 之后的新模型）。
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | /records/form | 记录页表单：患者 + 字典树 + 解析后的选项与带入值 + 患者反应 |
-| GET | /records | 记录列表（按可见患者过滤） |
-| POST | /records | 创建记录（支持草稿与直接提交） |
-| GET | /records/{id} | 详情（含明细与快照） |
-| PUT | /records/{id} | 修改（提交后由库层触发器留痕） |
+| GET | /records/enums | 状态 / 形态 / 四大类枚举 |
+| GET | /records/form | 记录页表单：该填哪份文书 + 字段定义 + 预填 + 已存在的那条 |
+| GET | /records | 记录列表（可按大类/形态筛选，按权限过滤） |
+| POST | /records | 创建记录（草稿或直接提交） |
+| GET | /records/{id} | 详情（含 body 与冻结的 rendered_text） |
+| PUT | /records/{id} | 修改（改 body/日期会**重新渲染**；提交后由库层触发器留痕） |
 | POST | /records/{id}/submit | 草稿 → 已提交 |
 | POST | /records/{id}/lock | 已提交 → 已锁定（管理员） |
-| DELETE | /records/{id} | 删除草稿（已提交的记录不允许删除） |
+| DELETE | /records/{id} | 删除草稿（已提交的记录不允许删除；**写 change_log**） |
 | GET | /timeline | 时间轴（按日期倒序） |
-| GET | /records/enums | 状态与半日枚举 |
 
-数据级权限（D10）：记录列表与时间轴都先算"我能看到哪些患者"，
-再据此过滤；单条访问先判断患者可见性。两个入口共用 `services/visibility`，
-避免"列表看不到、直接猜 URL 能拿到"的越权。
+数据级权限（D10）：记录列表与时间轴都先算"我能看到哪些患者"，再据此过滤；
+单条访问先判断患者可见性 —— 列表看不到、直接猜 URL 却能拿到，就是越权。
+
+三条业务硬规则在**模型层**执行（`app/models/treatment.py`）：
+评估文书不能跳过（第 1 次日常前必须有首评，第 21/41… 次前必须有复评）、
+同一天同一大类至多 2 条、待出院患者不能再记新记录。
 """
 
 from __future__ import annotations
 
 import sqlite3
+from datetime import date as _date
 from typing import Annotated, Any
 
 from fastapi import Depends, Query, status
@@ -30,9 +34,9 @@ from app.api.router import ApiRouter
 from app.core.db_dep import get_db
 from app.core.errors import ForbiddenError, NotFoundError
 from app.core.security_deps import AdminUser, CurrentUser, is_admin
+from app.models import patient as patient_model
 from app.models import treatment as treatment_model
 from app.models import user as user_model
-from app.models.base import Invalid
 from app.schemas.records import (
     RecordCreateRequest,
     RecordEnumsOut,
@@ -67,26 +71,72 @@ def _require_record_access(conn: sqlite3.Connection, user: dict[str, Any], recor
         )
 
 
-@router.get("/enums", response_model=RecordEnumsOut, summary="记录状态与半日枚举")
+def _mark_pending_discharge(
+    conn: sqlite3.Connection, record: dict[str, Any], *, user_id: int
+) -> None:
+    """提交出院小结后把患者置为**待出院**（用户要求：「填完小结即待出院」）。
+
+    - 已是 `pending_discharge` / 已 `discharged` 时不动（幂等：重复提交不覆盖既有状态）；
+    - 真正出院由管理员确认，或满 7 天由 `app.cli auto-discharge` 自动完成。
+    """
+    if str(record.get("kind")) != "discharge":
+        return
+    if str(record.get("status")) not in (treatment_model.STATUS_SUBMITTED, treatment_model.STATUS_LOCKED):
+        return
+    patient_no = str(record["patient_no"])
+    patient = patient_model.get_patient_or_raise(conn, patient_no)
+    if patient["status"] == patient_model.STATUS_PENDING_DISCHARGE:
+        return
+    if patient["status"] == patient_model.STATUS_DISCHARGED:
+        return
+    before = patient["status"]
+    after = patient_model.update_patient(
+        conn, patient_no, status=patient_model.STATUS_PENDING_DISCHARGE
+    )
+    write_audit(
+        conn,
+        user_id=user_id,
+        action="pending_discharge",
+        target_type="patient",
+        target_id=patient_no,
+        before={"status": before},
+        after={"status": after["status"], "record_id": record.get("id")},
+    )
+
+
+@router.get("/enums", response_model=RecordEnumsOut, summary="记录状态、形态与四大类枚举")
 def record_enums(user: CurrentUser) -> dict[str, Any]:
-    return RecordEnumsOut().model_dump()
+    return {
+        "statuses": list(treatment_model.STATUSES),
+        "kinds": list(treatment_model.KINDS),
+        "disciplines": treatment_model.discipline_options(),
+    }
 
 
-@router.get("/form", response_model=RecordFormOut, summary="记录页表单")
+@router.get("/form", response_model=RecordFormOut, summary="记录页表单（SOAP 模板）")
 def record_form(
     user: CurrentUser,
     conn: Annotated[sqlite3.Connection, Depends(get_db)],
     patient_no: str = Query(..., description="住院编号"),
-    main_item_id: int | None = Query(None, description="只返回某个主项目（按入口裁剪）"),
-    dept_tag: str | None = Query(None, description="科室选项集标签，如 PT/OT/ST"),
+    discipline: str = Query(..., description="PT / OT / ST_SW / ST_SP"),
+    date: str | None = Query(None, alias="date", description="记录日期，默认今天"),
+    kind: str | None = Query(
+        None,
+        description=(
+            "强制指定形态（如 discharge —— App 的「出院」入口）；"
+            "不传则由门禁自动决定：缺评估文书时先弹那份文书"
+        ),
+    ),
 ) -> dict[str, Any]:
+    """这次该填哪份文书、长什么样、预填什么、是不是已经在填了。
+
+    `pending_document` 非空时 `kind` **就是那份评估文书**（用户：「先弹评估文书」），
+    填完它再回来拿一次表单，就会变成当天的日常记录。
+    `kind=discharge` 用来取「出院小结」表单（它不是门禁推出来的，而是 App 上的一次显式动作）。
+    """
     _require_patient_visible(conn, user, patient_no)
     return records_service.build_form(
-        conn,
-        patient_no=patient_no,
-        owner_user_id=int(user["id"]),
-        dept_tag=dept_tag,
-        main_item_id=main_item_id,
+        conn, patient_no=patient_no, discipline=discipline, record_date=date, kind=kind
     )
 
 
@@ -97,6 +147,8 @@ def list_records(
     page: Annotated[Page, Depends(page_params)],
     patient_no: str | None = None,
     therapist_id: int | None = None,
+    discipline: str | None = Query(None, description="按大类筛选"),
+    kind: str | None = Query(None, description="按形态筛选（daily / initial / reassessment / discharge）"),
     record_status: str | None = Query(None, alias="status"),
     date_from: str | None = Query(None, alias="from"),
     date_to: str | None = Query(None, alias="to"),
@@ -110,11 +162,13 @@ def list_records(
     items, total = treatment_model.list_records(
         conn,
         patient_no=patient_no,
+        patient_nos=patient_nos,
         therapist_id=int(user["id"]) if resolved_scope == "mine" else therapist_id,
+        discipline=discipline,
+        kind=kind,
         status=record_status,
         date_from=date_from,
         date_to=date_to,
-        patient_nos=patient_nos,
         limit=page.limit,
         offset=page.offset,
     )
@@ -129,95 +183,49 @@ def create_record(
 ) -> dict[str, Any]:
     """创建记录。
 
-    日期与半日由调用方显式给出（未给日期则用当天）；不再有"从排期自动带入"
-    这条路 —— 排期功能已于 2026-10-05 整体下线，本系统只记录**已经做了什么**。
+    `body` 的键是模板里的字段 `key`（见 `templates/<大类>/<形态>.json`）。
+    必填缺失 → 422；缺评估文书 / 同一天超过 2 条 / 待出院患者 → 409。
     """
-    from datetime import date as _date
-
     therapist_id = payload.therapist_id or int(user["id"])
     if not is_admin(user) and therapist_id != int(user["id"]):
         raise ForbiddenError("RECORD_OTHER_THERAPIST", "只能给自己写记录")
     if payload.therapist_id is not None:
         user_model.get_by_id_or_raise(conn, payload.therapist_id)
 
-    patient_no = payload.patient_no
-    _require_patient_visible(conn, user, str(patient_no))
-
-    record_date = payload.record_date or _date.today().isoformat()
-    session_period = payload.session_period
-
-    # 明细：校验子项目归属与参数，并生成快照
-    items = _prepare_items(
-        conn,
-        items=[i.model_dump() for i in payload.items],
-        owner_user_id=int(user["id"]),
-    )
-    patient_response = records_service.normalize_responses(
-        conn,
-        patient_response=payload.patient_response,
-        main_item_ids=[i["main_item_id"] for i in items] or None,
-    )
+    patient_no = str(payload.patient_no)
+    # 待出院患者要走**模型层**的"不能记新记录"判定（409 PATIENT_PENDING_DISCHARGE）：
+    # 患者此时不在治疗师白板上，但治疗师手上很可能还留着这个患者的页面
+    #（刚给他写完出院小结），这时回一句"无权访问"远不如"已提交出院小结"可操作。
+    patient = patient_model.get_patient(conn, patient_no)
+    if patient is None:
+        raise NotFoundError("PATIENT_NOT_FOUND", "患者不存在", details={"inpatient_no": patient_no})
+    if str(patient["status"]) != patient_model.STATUS_PENDING_DISCHARGE:
+        _require_patient_visible(conn, user, patient_no)
 
     record = treatment_model.create_record(
         conn,
-        patient_no=str(patient_no),
+        patient_no=patient_no,
         therapist_id=therapist_id,
-        record_date=record_date,
-        session_period=session_period,
-        duration_min=payload.duration_min,
-        patient_response=patient_response,
-        note=payload.note,
+        record_date=payload.record_date or _date.today().isoformat(),
+        discipline=payload.discipline,
+        kind=payload.kind,
+        body=payload.body,
         status=payload.status,
-        items=items,
+        client_uuid=payload.client_uuid,
+        note=payload.note,
     )
     write_audit(conn, user_id=int(user["id"]), action="create", target_type="treatment_record",
-                target_id=str(record["id"]), after={"status": record["status"]})
+                target_id=str(record["id"]),
+                after={"status": record["status"], "kind": record["kind"],
+                       "discipline": record["discipline"]})
     sync_service.record_change(
         conn, entity="treatment_record", entity_id=record["id"], op="insert",
         revision=int(record["revision"]), actor_user_id=int(user["id"]),
-        # 带上 items 一起快照：客户端据此在本地完整重建这条记录
-        payload={**record, "items": record.get("items")},
+        payload=record,
     )
+    # 用户要求：出院小结提交后患者即为"待出院"（再经管理员确认或满 7 天自动出院）
+    _mark_pending_discharge(conn, record, user_id=int(user["id"]))
     return record
-
-
-def _prepare_items(
-    conn: sqlite3.Connection, *, items: list[dict[str, Any]], owner_user_id: int
-) -> list[dict[str, Any]]:
-    """校验明细并生成两层快照（子项目名称 + 参数名与选项文本）。"""
-    from app.models import dictionary as dictionary_model
-
-    prepared: list[dict[str, Any]] = []
-    seen: set[int] = set()
-    for index, item in enumerate(items):
-        sub_item_id = int(item["sub_item_id"])
-        if sub_item_id in seen:
-            # 参数问题而非"找不到资源"，用 422 而不是 404
-            raise Invalid("同一子项目不能重复出现", details={"sub_item_id": sub_item_id})
-        seen.add(sub_item_id)
-
-        sub = dictionary_model.get_sub_item_or_raise(conn, sub_item_id)
-        main_item_id = int(item["main_item_id"])
-        if int(sub["main_item_id"]) != main_item_id:
-            raise Invalid(
-                "子项目不属于所给主项目",
-                details={"sub_item_id": sub_item_id, "main_item_id": main_item_id,
-                         "expected_main_item_id": int(sub["main_item_id"])},
-            )
-        params, snapshot = records_service.resolve_params(
-            conn, sub_item_id=sub_item_id, params=item.get("params"), owner_user_id=owner_user_id
-        )
-        prepared.append(
-            {
-                "main_item_id": main_item_id,
-                "sub_item_id": sub_item_id,
-                "sub_item_name_snapshot": sub["name"],
-                "params": params,
-                "params_snapshot": snapshot,
-                "sort": item.get("sort", index * 10),
-            }
-        )
-    return prepared
 
 
 @router.get("/{record_id}", response_model=RecordOut, summary="治疗记录详情")
@@ -241,31 +249,14 @@ def update_record(
     before = treatment_model.get_record_or_raise(conn, record_id)
     _require_record_access(conn, user, before)
 
-    items = None
-    if payload.items is not None:
-        items = _prepare_items(
-            conn, items=[i.model_dump() for i in payload.items], owner_user_id=int(user["id"])
-        )
-    patient_response = None
-    if payload.patient_response is not None:
-        patient_response = records_service.normalize_responses(
-            conn,
-            patient_response=payload.patient_response,
-            main_item_ids=[i["main_item_id"] for i in (items or before["items"])] or None,
-        )
-
     after = treatment_model.update_record(
         conn,
         record_id,
         user_id=int(user["id"]),
         is_admin=is_admin(user),
+        body=payload.body,
+        status=payload.status,
         record_date=payload.record_date,
-        session_period=payload.session_period,
-        duration_min=payload.duration_min,
-        patient_response=patient_response,
-        clear_patient_response=payload.clear_patient_response,
-        note=payload.note,
-        items=items,
     )
     write_audit(conn, user_id=int(user["id"]), action="update", target_type="treatment_record",
                 target_id=str(record_id),
@@ -273,9 +264,11 @@ def update_record(
                 after={"status": after["status"], "edit_count": after["edit_count"]})
     sync_service.record_change(
         conn, entity="treatment_record", entity_id=record_id, op="update",
-        revision=int(after["revision"]), actor_user_id=int(user["id"]),
-        payload={**after, "items": after.get("items")},
+        revision=int(after["revision"]), actor_user_id=int(user["id"]), payload=after,
     )
+    # 若这次修改让一份出院小结成为正式文书，患者随即进入待出院
+    # （函数内部先判形态与状态，非出院小结直接返回）
+    _mark_pending_discharge(conn, after, user_id=int(user["id"]))
     return after
 
 
@@ -290,12 +283,11 @@ def submit_record(
     after = treatment_model.submit_record(conn, record_id, user_id=int(before["therapist_id"]))
     write_audit(conn, user_id=int(user["id"]), action="submit", target_type="treatment_record",
                 target_id=str(record_id), after={"status": "submitted", "seq_no": after["seq_no"]})
-    # 提交会改 status 与 seq_no，对离线客户端是"重要变更"，必须进日志
     sync_service.record_change(
         conn, entity="treatment_record", entity_id=record_id, op="update",
-        revision=int(after["revision"]), actor_user_id=int(user["id"]),
-        payload={**after, "items": after.get("items")},
+        revision=int(after["revision"]), actor_user_id=int(user["id"]), payload=after,
     )
+    _mark_pending_discharge(conn, after, user_id=int(user["id"]))
     return after
 
 
@@ -310,8 +302,7 @@ def lock_record(
                 target_id=str(record_id), after={"status": "locked"})
     sync_service.record_change(
         conn, entity="treatment_record", entity_id=record_id, op="update",
-        revision=int(after["revision"]), actor_user_id=int(admin["id"]),
-        payload={**after, "items": after.get("items")},
+        revision=int(after["revision"]), actor_user_id=int(admin["id"]), payload=after,
     )
     return after
 
@@ -323,8 +314,6 @@ def delete_draft(
     conn: Annotated[sqlite3.Connection, Depends(get_db)],
 ):
     from fastapi import Response
-
-    from app.services import sync as sync_service
 
     treatment_model.delete_draft(conn, record_id, user_id=int(user["id"]))
     write_audit(conn, user_id=int(user["id"]), action="delete_draft", target_type="treatment_record",
@@ -360,21 +349,16 @@ def timeline(
     page: Annotated[Page, Depends(page_params)],
     date_from: str | None = Query(None, alias="from"),
     date_to: str | None = Query(None, alias="to"),
-    main_item_id: int | None = None,
+    discipline: str | None = Query(None, description="按大类筛选"),
+    kind: str | None = Query(None, description="按形态筛选"),
     scope: str = Query("visible", description="mine / visible"),
 ) -> dict[str, Any]:
-    """按日期倒序的记录流。
+    """按日期倒序的记录流（SOAP 文本随条目一起返回，App 直接渲染）。
 
-    `scope=mine` 只看我写的记录；`visible`（默认）看我能看到的全部患者。
-
-    > 曾有的 `scope=temp`（只看"临时治疗"）已按用户决定**删除**（2026-10-05）：
-    > 它的动机是"单日请假期间临时接管他人患者后复查"，而请假与临时指派都已下线。
+    > 曾有的 `scope=temp`（只看"临时治疗"）已按用户决定**删除**（2026-10-05）。
     > 注意 `is_temporary` 这个**标记本身仍然保留** —— 打印 PDF 会标"（临时）"、
-    > 患者每日汇总会置 `temporary`、后台记录列表也有该列，那些是"这条记录是谁做的"
-    > 的审计信息，与筛选无关。
+    > 汇总会带 `is_temporary`、后台记录列表也有该列。
     """
-    from app.models import dictionary as dictionary_model
-
     if scope not in {"mine", "visible"}:
         raise NotFoundError("INVALID_SCOPE", "scope 只能是 mine / visible", details={"scope": scope})
 
@@ -383,36 +367,14 @@ def timeline(
         conn,
         patient_nos=patient_nos,
         therapist_id=int(user["id"]) if scope == "mine" else None,
+        discipline=discipline,
+        kind=kind,
         date_from=date_from,
         date_to=date_to,
         limit=page.limit,
         offset=page.offset,
     )
-
-    ids = [int(i["id"]) for i in items]
-    main_names: dict[int, list[str]] = {}
-    if ids:
-        rows = conn.execute(
-            "SELECT ri.record_id, m.name FROM record_item ri"
-            " JOIN main_item m ON m.id = ri.main_item_id"
-            f" WHERE ri.record_id IN ({', '.join('?' for _ in ids)})"
-            " GROUP BY ri.record_id, m.id ORDER BY ri.record_id, m.sort",
-            ids,
-        ).fetchall()
-        for row in rows:
-            main_names.setdefault(int(row["record_id"]), []).append(str(row["name"]))
-
-    out: list[dict[str, Any]] = []
-    for record in items:
-        if main_item_id is not None:
-            names = main_names.get(int(record["id"]), [])
-            target = dictionary_model.get_main_item(conn, main_item_id)
-            if target is None or target["name"] not in names:
-                continue
-        enriched = dict(record)
-        enriched["main_item_names"] = main_names.get(int(record["id"]), [])
-        out.append(enriched)
-    return {"items": out, "total": total, "page": page.page, "page_size": page.page_size}
+    return {"items": items, "total": total, "page": page.page, "page_size": page.page_size}
 
 
 __all__ = ["router", "timeline_router"]

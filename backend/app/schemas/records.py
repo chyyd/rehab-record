@@ -1,4 +1,8 @@
-"""字典、选项集、患者反应与治疗记录的请求/响应模型（阶段 3）。"""
+"""治疗记录的请求/响应模型（SOAP 模板驱动）。
+
+模板本身**不在数据库里**，而是在 `templates/*.json`（用户要求"不进数据库，以便以后我手动修改"），
+所以这里不再有字典 / 选项集 / 患者反应 / 科室模板相关的模型 —— 那些表已随迁移 011/012 删除。
+"""
 
 from __future__ import annotations
 
@@ -6,157 +10,47 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.models.treatment import PERIODS, STATUSES
+from app.models.treatment import KINDS, STATUSES
 
 
 # --------------------------------------------------------------------------- #
-# 字典
-# --------------------------------------------------------------------------- #
-class ParamDefOut(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    id: int
-    sub_item_id: int
-    param_key: str
-    param_name: str
-    input_type: str
-    options: list[str] = Field(default_factory=list)
-    default_value: str | None = None
-    required: int = 0
-    unit: str | None = None
-    sort: int = 0
-    # 表单组装时补充的字段（纯字典查询时为空）
-    options_resolved: dict[str, Any] | None = None
-    current_value: Any = None
-    value_source: str | None = Field(default=None, description="last_value / option_set_default / dict_default / none")
-    last_value: Any = None
-
-
-class SubItemOut(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    id: int
-    main_item_id: int
-    name: str
-    code: str | None = None
-    alias: str | None = None
-    sort: int = 0
-    params: list[ParamDefOut] = Field(default_factory=list)
-
-
-class MainItemOut(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    id: int
-    name: str
-    code: str | None = None
-    alias: str | None = None
-    sort: int = 0
-    sub_items: list[SubItemOut] = Field(default_factory=list)
-
-
-class ResponseDefOut(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    id: int
-    main_item_id: int | None = None
-    code: str
-    label: str
-    value_type: str = Field(description="tag / number / select / text")
-    value_key: str | None = None
-    value_unit: str | None = None
-    value_min: float | None = None
-    value_max: float | None = None
-    options: list[str] = Field(default_factory=list)
-
-
-# --------------------------------------------------------------------------- #
-# 选项集
-# --------------------------------------------------------------------------- #
-class OptionItemOut(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    id: int | None = None
-    value: str
-    label: str
-    is_default: int = 0
-    sort: int = 0
-
-
-class OptionSetOut(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    id: int
-    scope: str
-    owner_user_id: int | None = None
-    dept_tag: str | None = None
-    code: str
-    name: str
-    alias: str | None = None
-    items: list[OptionItemOut] = Field(default_factory=list)
-
-
-class ResolvedOptionsOut(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    code: str
-    source: str = Field(description="personal / dept / global / builtin")
-    option_set_id: int | None = None
-    option_set_name: str | None = None
-    options: list[dict[str, str]] = Field(default_factory=list)
-    defaults: list[str] = Field(default_factory=list)
-
-
-class PersonalOptionSetRequest(BaseModel):
-    code: str = Field(min_length=1, max_length=64)
-    name: str = Field(min_length=1, max_length=64)
-    values: list[str] = Field(min_length=1, description="选项值列表")
-    default_values: list[str] = Field(default_factory=list, description="默认值，必须来自 values")
-
-
-# --------------------------------------------------------------------------- #
-# 记录表单
+# 记录表单（GET /records/form）
 # --------------------------------------------------------------------------- #
 class RecordFormPatientOut(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     inpatient_no: str
     name: str
-    diagnosis: str | None = None
-    admin_note: str | None = None
     status: str
-    visible_therapist_id: int | None = None
 
 
 class RecordFormOut(BaseModel):
+    """App 渲染一次录入所需的全部信息（详见 `services/records.py::build_form`）。"""
+
+    model_config = ConfigDict(extra="ignore")
+
     patient: RecordFormPatientOut
-    main_items: list[MainItemOut]
-    response_defs: list[ResponseDefOut]
-    last_completed_seq_no: int = Field(description="该患者已完成治疗次数，本次为第 seq+1 次")
-    reference_date: str | None = None
+    discipline: str
+    discipline_name: str
+    kind: str = Field(description="本次要填的形态：缺评估文书时它就是那份评估文书")
+    kind_label: str
+    title: str
+    next_seq: int = Field(description="这次是第几次日常（评估文书不占次数）")
+    total_daily: int
+    sessions_until_reassessment: int
+    pending_document: str | None = Field(default=None, description="还缺哪份评估文书（先弹它）")
+    pending_document_label: str | None = None
+    template_version: int = 1
+    soap: list[dict[str, Any]] = Field(default_factory=list, description="四段字段定义，直接渲染")
+    prefill: dict[str, Any] = Field(default_factory=dict)
+    prefill_source: dict[str, str] = Field(default_factory=dict)
+    footer: list[str] = Field(default_factory=list)
+    existing: RecordOut | None = Field(default=None, description="已存在的那条，用于继续编辑")
 
 
 # --------------------------------------------------------------------------- #
 # 治疗记录
 # --------------------------------------------------------------------------- #
-class RecordItemIn(BaseModel):
-    main_item_id: int
-    sub_item_id: int
-    params: dict[str, Any] = Field(default_factory=dict, description="键为 param_key")
-
-
-class RecordItemOut(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    id: int
-    main_item_id: int
-    sub_item_id: int
-    sub_item_name_snapshot: str | None = None
-    params: dict[str, Any] = Field(default_factory=dict)
-    params_snapshot: list[dict[str, Any]] | None = None
-    sort: int = 0
-
-
 class RecordOut(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -170,21 +64,28 @@ class RecordOut(BaseModel):
     # 存一份就会与事实不一致。见 app/models/treatment.py::temporary_expr。
     is_temporary: int = 0
     record_date: str
-    session_period: str | None = None
-    seq_no: int | None = Field(default=None, description="该患者第几次治疗")
-    duration_min: int | None = None
-    patient_response: dict[str, Any] | None = None
+    discipline: str
+    discipline_name: str | None = None
+    kind: str
+    kind_label: str | None = None
+    seq_no: int | None = Field(default=None, description="第几次日常；只有 daily 有")
+    span_seq: int | None = Field(default=None, description="评估文书挂靠的日常序号")
+    body: dict[str, Any] = Field(default_factory=dict, description="{field_key: value}")
+    rendered_text: str = Field(default="", description="生成时冻结的 SOAP 纯文本")
     note: str | None = None
     status: str
     edit_count: int = 0
     locked_at: str | None = None
     created_at: str | None = None
     submitted_at: str | None = None
+    updated_at: str | None = None
     revision: int = 1
-    items: list[RecordItemOut] = Field(default_factory=list)
+    client_uuid: str | None = None
 
 
 class RecordListItemOut(BaseModel):
+    """列表项：`rendered_text` 给全文，`rendered_excerpt` 给列表里的一行摘要。"""
+
     model_config = ConfigDict(extra="ignore")
 
     id: int
@@ -192,12 +93,18 @@ class RecordListItemOut(BaseModel):
     patient_name: str | None = None
     therapist_id: int
     therapist_name: str | None = None
+    is_temporary: int = 0
     record_date: str
-    session_period: str | None = None
+    discipline: str
+    discipline_name: str | None = None
+    kind: str
+    kind_label: str | None = None
     seq_no: int | None = None
+    span_seq: int | None = None
     status: str
     edit_count: int = 0
-    item_count: int = 0
+    rendered_text: str = ""
+    rendered_excerpt: str = ""
 
 
 class RecordListOut(BaseModel):
@@ -210,29 +117,24 @@ class RecordListOut(BaseModel):
 class RecordCreateRequest(BaseModel):
     patient_no: str = Field(min_length=1)
     record_date: str | None = Field(default=None, description="不传则用当天")
-    session_period: str | None = Field(default=None, description=" / ".join(PERIODS))
-    duration_min: int | None = Field(default=None, ge=0)
-    note: str | None = None
-    patient_response: dict[str, Any] | None = Field(
-        default=None, description='{"tags": ["no_discomfort"], "items": [{"code": "pain", "value": 3}]}'
-    )
-    items: list[RecordItemIn] = Field(default_factory=list)
+    discipline: str = Field(description="PT / OT / ST_SW / ST_SP")
+    kind: str = Field(description=" / ".join(KINDS))
+    body: dict[str, Any] = Field(default_factory=dict, description="{field_key: value}")
     status: str = Field(default="draft", description=" / ".join(STATUSES))
+    note: str | None = None
+    client_uuid: str | None = Field(default=None, description="离线幂等标识（可选）")
     therapist_id: int | None = Field(default=None, description="不传则为当前用户（管理员可代录）")
 
 
 class RecordUpdateRequest(BaseModel):
+    body: dict[str, Any] | None = Field(default=None, description="传了就整体替换答案并重新渲染")
+    status: str | None = Field(default=None, description="只允许向前：draft → submitted → locked")
     record_date: str | None = None
-    session_period: str | None = None
-    duration_min: int | None = Field(default=None, ge=0)
     note: str | None = None
-    patient_response: dict[str, Any] | None = None
-    clear_patient_response: bool = Field(default=False, description="显式清空患者反应")
-    items: list[RecordItemIn] | None = Field(default=None, description="传了就整体替换明细")
 
 
 class TimelineItemOut(RecordListItemOut):
-    main_item_names: list[str] = Field(default_factory=list)
+    pass
 
 
 class TimelineOut(BaseModel):
@@ -244,28 +146,22 @@ class TimelineOut(BaseModel):
 
 class RecordEnumsOut(BaseModel):
     statuses: list[str] = Field(default_factory=lambda: list(STATUSES))
-    periods: list[str] = Field(default_factory=lambda: list(PERIODS))
+    kinds: list[str] = Field(default_factory=lambda: list(KINDS))
+    disciplines: list[dict[str, Any]] = Field(default_factory=list)
 
+
+RecordFormOut.model_rebuild()
 
 __all__ = [
-    "MainItemOut",
-    "OptionItemOut",
-    "OptionSetOut",
-    "ParamDefOut",
-    "PersonalOptionSetRequest",
+    "KINDS",
     "RecordCreateRequest",
     "RecordEnumsOut",
     "RecordFormOut",
     "RecordFormPatientOut",
-    "RecordItemIn",
-    "RecordItemOut",
     "RecordListOut",
     "RecordListItemOut",
     "RecordOut",
     "RecordUpdateRequest",
-    "ResolvedOptionsOut",
-    "ResponseDefOut",
-    "SubItemOut",
     "TimelineItemOut",
     "TimelineOut",
 ]

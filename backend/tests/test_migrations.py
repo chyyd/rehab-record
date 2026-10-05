@@ -13,32 +13,34 @@ from tests.support import DbTestCase
 
 EXPECTED_TABLES = {
     # 2026-10-05：`appointment` / `rest_block` / `leave_record` 随排期功能下线删除（008），
-    # `temporary_assignment` 随临时指派功能删除（009）—— 归属简化成两层。
+    # `temporary_assignment` 随临时指派功能删除（009）。
+    # 2026-10-05（记录改 SOAP 模板驱动）：`record_item` / `record_template` /
+    # `record_template_item` 随迁移 011 删除，字典六表（`main_item` / `sub_item` /
+    # `sub_item_param_def` / `option_set` / `option_item` / `response_def`）
+    # 随迁移 012 删除 —— 模板与选项现在是 `templates/*.json` 文件。
     "audit_log",
     "auth_session",
     "change_log",
-    "main_item",
-    "option_item",
-    "option_set",
     "patient",
     "patient_assignment_history",
-    "record_item",
-    "record_template",
-    "record_template_item",
-    "response_def",
     "schema_migrations",
-    "sub_item",
-    "sub_item_param_def",
     "treatment_record",
     "user",
 }
 
 EXPECTED_VIEWS = {
-    # `v_patient_next_appointment` → `v_patient_last_treated`（迁移 007/008）：
-    # 患者列表排序依据从"下一个排期"换成"我最近一次已提交治疗"。
+    # `v_patient_next_appointment` → `v_patient_last_treated`（迁移 007/008/011）：
+    # 患者列表排序依据从"下一个排期"换成"我最近一次已提交**日常**治疗"。
     # `v_open_temporary_assignment` 随临时指派删除（迁移 009）。
     "v_patient_last_treated",
     "v_patient_visibility",
+}
+
+# 迁移 011 之后 `treatment_record` 的列（新契约的"落地形态"）
+EXPECTED_RECORD_COLUMNS = {
+    "id", "patient_no", "therapist_id", "record_date", "discipline", "kind", "seq_no",
+    "span_seq", "body_json", "rendered_text", "note", "status", "edit_count", "locked_at",
+    "created_at", "submitted_at", "updated_at", "revision", "client_uuid",
 }
 
 
@@ -131,6 +133,130 @@ class TestMigrations(DbTestCase):
         self.assertTrue(any("迁移" in p for p in info["problems"]))
 
 
+class TestTreatmentRecordModel(DbTestCase):
+    """迁移 011 之后 `treatment_record` 的新契约（列、约束、触发器）。"""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.migrate()
+        self.t1 = self.add_user("T001", "张三")
+        self.add_patient("ZY001", "王五")
+
+    def insert(self, **overrides):
+        values = {
+            "patient_no": "ZY001",
+            "therapist_id": self.t1,
+            "record_date": "2026-10-05",
+            "discipline": "PT",
+            "kind": "daily",
+            "seq_no": 1,
+        }
+        values.update(overrides)
+        columns = ", ".join(values)
+        marks = ", ".join("?" for _ in values)
+        cur = self.conn.execute(
+            f"INSERT INTO treatment_record ({columns}) VALUES ({marks})", tuple(values.values())
+        )
+        return int(cur.lastrowid)
+
+    def test_columns_match_new_contract(self) -> None:
+        columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(treatment_record)")}
+        self.assertEqual(columns, EXPECTED_RECORD_COLUMNS)
+
+    def test_daily_must_have_seq_no(self) -> None:
+        """CHECK ((kind = 'daily') = (seq_no IS NOT NULL))：日常必须有次数。"""
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.insert(seq_no=None)
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.insert(kind="initial", seq_no=1, span_seq=1)
+
+    def test_assessment_kinds_have_no_seq_no(self) -> None:
+        record_id = self.insert(kind="initial", seq_no=None, span_seq=1)
+        row = self.conn.execute(
+            "SELECT seq_no, span_seq FROM treatment_record WHERE id = ?", (record_id,)
+        ).fetchone()
+        self.assertIsNone(row["seq_no"])
+        self.assertEqual(row["span_seq"], 1)
+
+    def test_discipline_and_kind_enums_are_enforced(self) -> None:
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.insert(discipline="XZ")
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.insert(kind="weekly", seq_no=None)
+
+    def test_body_json_must_be_valid_json(self) -> None:
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.insert(body_json="不是 JSON")
+
+    def test_daily_seq_is_unique_per_patient_and_discipline(self) -> None:
+        self.insert(seq_no=1)
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.insert(seq_no=1)
+        # 换一个大类就可以（不同大类分开计数）
+        self.insert(seq_no=1, discipline="OT")
+
+    def test_assessment_span_is_unique(self) -> None:
+        self.insert(kind="initial", seq_no=None, span_seq=1)
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.insert(kind="initial", seq_no=None, span_seq=1)
+
+
+class TestPatientPendingDischarge(DbTestCase):
+    """迁移 013：`patient.status` 增加 `pending_discharge`，且重建后什么都没丢。"""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.migrate()
+        self.t1 = self.add_user("T001", "张三")
+
+    def test_pending_discharge_is_accepted(self) -> None:
+        self.conn.execute(
+            "INSERT INTO patient (inpatient_no, name, status) VALUES ('ZY-P', '待出院', 'pending_discharge')"
+        )
+        status = self.conn.execute(
+            "SELECT status FROM patient WHERE inpatient_no = 'ZY-P'"
+        ).fetchone()[0]
+        self.assertEqual(status, "pending_discharge")
+
+    def test_old_enum_still_rejected(self) -> None:
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.conn.execute(
+                "INSERT INTO patient (inpatient_no, name, status) VALUES ('ZY-X', '错的', '出院')"
+            )
+
+    def test_rebuild_kept_columns_indexes_and_trigger(self) -> None:
+        """重建表最容易悄悄丢东西：004 的 client_uuid、001/004 的索引、002 的触发器。"""
+        columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(patient)")}
+        self.assertIn("client_uuid", columns, "004 加的 client_uuid 列不能在重建时丢掉")
+        indexes = {
+            row["name"]
+            for row in self.conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'patient'"
+            )
+        }
+        for expected in ("ix_patient_assigned", "ix_patient_status", "ux_patient_client_uuid"):
+            self.assertIn(expected, indexes)
+        triggers = {
+            row["name"]
+            for row in self.conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'patient'"
+            )
+        }
+        self.assertIn("trg_patient_updated_at", triggers)
+
+    def test_rebuild_kept_foreign_keys_and_views(self) -> None:
+        self.add_patient("ZY001")
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.conn.execute(
+                "INSERT INTO patient_assignment_history (patient_no, change_type)"
+                " VALUES ('NOPE', 'claim')"
+            )
+        views = {
+            row["name"] for row in self.conn.execute("SELECT name FROM sqlite_master WHERE type = 'view'")
+        }
+        self.assertEqual(views, EXPECTED_VIEWS)
+
+
 class TestTimestamps(DbTestCase):
     """时间戳必须落在 UTC ISO8601 + 毫秒，且不得使用 datetime('now','localtime')。
 
@@ -186,13 +312,13 @@ class TestSqliteEnvironment(DbTestCase):
 
     def test_foreign_keys_are_enforced(self) -> None:
         self.migrate()
-        # 2026-10-05：原用 appointment 验外键，该表已删除；
-        # 改用 treatment_record（同样有 patient_no / therapist_id 两条外键）。
+        # 2026-10-05：原用 appointment 验外键，该表已删除；改用 treatment_record
+        # （同样有 patient_no / therapist_id 两条外键）。
         with self.assertRaises(sqlite3.IntegrityError):
             self.conn.execute(
-                "INSERT INTO treatment_record (patient_no, therapist_id, record_date)"
-                " VALUES (?, ?, ?)",
-                ("NOT_EXIST", 999, "2026-10-05"),
+                "INSERT INTO treatment_record (patient_no, therapist_id, record_date, discipline, kind, seq_no)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                ("NOT_EXIST", 999, "2026-10-05", "PT", "daily", 1),
             )
 
     def test_wal_mode_enabled(self) -> None:

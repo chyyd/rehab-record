@@ -332,20 +332,20 @@ def _push_treatment_record(
     payload = change.get("payload") or {}
 
     if existing is None:
+        # SOAP 模型（迁移 011）：记录带大类与形态，内容是 `body`（{field_key: value}）。
+        # 序号 / 评估区间 / 渲染文本 / 三条硬规则都在模型层算与校验 —— 离线推送
+        # **不是后门**：缺首评就想推一条日常记录，同样会被 409 拦下。
         record = treatment_model.create_record(
             conn,
             patient_no=str(payload["patient_no"]),
             therapist_id=int(payload.get("therapist_id") or user["id"]),
             record_date=str(payload["record_date"]),
-            session_period=payload.get("session_period"),
-            duration_min=payload.get("duration_min"),
-            patient_response=payload.get("patient_response"),
-            note=payload.get("note"),
+            discipline=str(payload["discipline"]),
+            kind=str(payload.get("kind") or "daily"),
+            body=payload.get("body") or {},
             status=str(payload.get("status") or "draft"),
-            items=payload.get("items") or [],
-        )
-        conn.execute(
-            "UPDATE treatment_record SET client_uuid = ? WHERE id = ?", (client_uuid, record["id"])
+            client_uuid=client_uuid,
+            note=payload.get("note"),
         )
         revision = int(record["revision"])
         record_change(
@@ -381,11 +381,8 @@ def _push_treatment_record(
         user_id=int(user["id"]),
         is_admin=user.get("role") == "admin",
         record_date=payload.get("record_date"),
-        session_period=payload.get("session_period"),
-        duration_min=payload.get("duration_min"),
-        patient_response=payload.get("patient_response"),
-        note=payload.get("note"),
-        items=payload.get("items"),
+        status=payload.get("status"),
+        body=payload.get("body") if payload.get("body") is not None else None,
     )
     revision = int(updated["revision"])
     record_change(

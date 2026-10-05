@@ -1,808 +1,585 @@
-"""阶段 3 测试：字典、选项集、治疗记录与患者反应（`开发计划.md` 阶段 3）。
+"""治疗记录接口测试（SOAP 模板驱动，迁移 011 之后的新模型）。
 
-重点覆盖：
-1. **选项解析顺序**：个人 → 科室 → 全局 → 内置；
-2. **参数带入优先级**（Q7）：上次值 → 个人默认 → 科室默认 → 全局默认 → 字典默认；
-3. **记录状态机**：草稿不留痕 / 已提交留痕且累加 `edit_count` / 已锁定治疗师不可改；
-4. **两层快照**：字典改名后历史记录仍显示当时的名称与选项文本；
-5. **参数与患者反应校验**：未知键、越界、非选项值、标签与取值混用都要被拒。
+覆盖重点（★ 为用户明确要求、必须有回归的行为）：
+
+1. ★ **首评不占次数**：首评 + 当天日常 → 日常是第 1 次；
+2. ★ **评估文书硬阻断**：第 1 次日常缺首评 → 409；第 21 次缺复评 → 409；
+3. ★ **同一天同一大类至多 2 条**；
+4. ★ **待出院患者不能记新记录**；
+5. ★ **`rendered_text` 冻结**：改了模板 JSON 后旧记录的文本不变；
+6. ★ **必填校验**：缺「功能诊断」「本次训练项目」→ 422；
+7. 表单接口（`GET /records/form`）：该填哪份文书、预填、`existing`；
+8. 状态机（草稿 → 已提交 → 已锁定）与权限边界、删除草稿写 `change_log`。
 """
 
 from __future__ import annotations
 
 import unittest
 
-from app.models import dictionary as dictionary_model
 from app.models import patient as patient_model
 from app.models import treatment as treatment_model
-from app.models.base import Invalid
-from app.services import options as options_service
-from app.services import records as records_service
-from seed.dictionary import seed_dictionary
-from seed.options import seed_options
-from seed.responses import seed_responses
+from app.services import record_template
 from tests.api_base import ApiTestCase
 
+DISCIPLINE = "PT"
 
-class SeededApiTestCase(ApiTestCase):
-    """在临时库上导入**全部三份种子**，并准备两名治疗师 + 一名管理员。
 
-    注意必须导 `seed_options`：选项解析的第三层是全局选项集，
-    少了它就只能回落到各子项目的内置选项，"个人/科室覆盖全局"这些行为根本测不到。
-    """
+def daily_body(**overrides) -> dict:
+    body = {
+        "mental": "良好",
+        "complaint": ["乏力"],
+        "vas": 2,
+        "therapy_items": ["偏瘫肢体综合训练"],
+        "performance": "较前改善",
+        "next_step": "继续维持原方案",
+    }
+    body.update(overrides)
+    return body
 
+
+def initial_body(**overrides) -> dict:
+    body = {
+        "complaint": ["肢体无力"],
+        "consciousness": "清楚",
+        "affected_side": "左侧",
+        "mmt_lower": 2,
+        "diagnosis": ["偏瘫运动功能障碍"],
+        "therapy_items": ["偏瘫肢体综合训练"],
+    }
+    body.update(overrides)
+    return body
+
+
+def reassessment_body(**overrides) -> dict:
+    body = {
+        "diagnosis": ["偏瘫运动功能障碍"],
+        "therapy_items": ["平衡生物反馈训练"],
+    }
+    body.update(overrides)
+    return body
+
+
+class RecordTestCase(ApiTestCase):
     def setUp(self) -> None:
         super().setUp()
         self.migrate()
-        seed_dictionary(self.conn)
-        seed_responses(self.conn)
-        seed_options(self.conn)
-
         self.t1 = self.make_user("T001", "张三")
         self.t2 = self.make_user("T002", "李四")
         self.admin = self.make_admin("A001")
-
-        self.p1 = patient_model.create_patient(
-            self.conn, inpatient_no="ZY001", name="患者甲", assigned_therapist_id=int(self.t1["id"])
+        patient_model.create_patient(
+            self.conn,
+            inpatient_no="ZY001",
+            name="患者甲",
+            diagnosis="脑卒中恢复期",
+            assigned_therapist_id=int(self.t1["id"]),
         )
-        self.p2 = patient_model.create_patient(
+        patient_model.create_patient(
             self.conn, inpatient_no="ZY002", name="患者乙", assigned_therapist_id=int(self.t2["id"])
         )
         self.h1 = self.login_headers("T001")
         self.h2 = self.login_headers("T002")
         self.ha = self.login_headers("A001")
 
-    # -- 便捷：取字典里的 id -------------------------------------------------- #
-    def sub_item_id(self, code: str) -> int:
-        row = self.conn.execute("SELECT id FROM sub_item WHERE code = ?", (code,)).fetchone()
-        assert row is not None, f"种子中找不到子项目 {code}"
-        return int(row["id"])
-
-    def main_item_id(self, code: str) -> int:
-        row = self.conn.execute("SELECT id FROM main_item WHERE code = ?", (code,)).fetchone()
-        assert row is not None, f"种子中找不到主项目 {code}"
-        return int(row["id"])
-
-
-class TestDictionaryRead(SeededApiTestCase):
-    def test_main_items_seeded(self) -> None:
-        body = self.client.get("/api/v1/dict/main-items", headers=self.h1).json()
-        self.assertEqual(len(body), 4)
-        self.assertEqual(
-            {m["code"] for m in body},
-            {"motor_function", "adl_skill", "speech_function", "swallow_function"},
-        )
-
-    def test_dict_tree_is_nested(self) -> None:
-        tree = self.client.get("/api/v1/dict/tree", headers=self.h1).json()
-        self.assertEqual(len(tree), 4)
-        motor = next(m for m in tree if m["code"] == "motor_function")
-        self.assertGreater(len(motor["sub_items"]), 0)
-        first_sub = motor["sub_items"][0]
-        self.assertGreater(len(first_sub["params"]), 0)
-        self.assertIn("param_key", first_sub["params"][0])
-
-    def test_dict_tree_can_be_scoped_to_one_main_item(self) -> None:
-        tree = self.client.get(
-            "/api/v1/dict/tree", params={"main_item_id": self.main_item_id("swallow_function")}, headers=self.h1
-        ).json()
-        self.assertEqual(len(tree), 1)
-        self.assertEqual(tree[0]["code"], "swallow_function")
-
-    def test_params_endpoint(self) -> None:
-        sub_id = self.sub_item_id("motor_function_01")
-        params = self.client.get(f"/api/v1/dict/sub-items/{sub_id}/params", headers=self.h1).json()
-        self.assertGreater(len(params), 0)
-        for param in params:
-            self.assertIn(param["input_type"], {"select", "multi_select", "number", "text"})
-
-    def test_unknown_sub_item_is_404(self) -> None:
-        resp = self.client.get("/api/v1/dict/sub-items/99999/params", headers=self.h1)
-        self.assert_error(resp, 404, "NOT_FOUND")
-
-    def test_response_defs_grouped_carries_common_into_each_main_item(self) -> None:
-        """分组接口要为每个主项目附带通用反应，前端不必自己拼回退逻辑。
-
-        说明：当前种子里所有反应定义都挂在具体主项目下（没有 `main_item_id IS NULL` 的
-        全科通用行），因此 `common` 组**合法地为空**。这里用一个临时的通用定义
-        真正验证"并入"逻辑，而不是只断言分组的形状。
-        """
-        grouped = self.client.get("/api/v1/response-defs/grouped", headers=self.h1).json()
-        self.assertIn("common", grouped)
-        self.assertIn("motor_function", grouped)
-        self.assertEqual(grouped["common"], [], "种子里没有全科通用反应，common 组应为空")
-
-        # 插入一条全科通用反应，验证它会被并入每个主项目组
-        self.conn.execute(
-            "INSERT INTO response_def (main_item_id, code, label, value_type, sort)"
-            " VALUES (NULL, 'e2e_common_tag', '通用标记', 'tag', 999)"
-        )
-        grouped2 = self.client.get("/api/v1/response-defs/grouped", headers=self.h1).json()
-        self.assertEqual([r["code"] for r in grouped2["common"]], ["e2e_common_tag"])
-        for main_code in ("motor_function", "adl_skill", "speech_function", "swallow_function"):
-            codes = {r["code"] for r in grouped2[main_code]}
-            self.assertIn("e2e_common_tag", codes, f"{main_code} 组应包含全科通用反应")
-
-        # 专属反应只出现在自己的组里
-        self.assertIn("oral_residue", {r["code"] for r in grouped2["swallow_function"]})
-        self.assertNotIn("oral_residue", {r["code"] for r in grouped2["motor_function"]})
-
-
-class TestOptionResolution(SeededApiTestCase):
-    """3.6.4 的解析顺序：个人 → 科室 → 全局 → 内置。"""
-
-    def test_falls_back_to_global_option_set(self) -> None:
-        resolved = options_service.resolve_options(self.conn, code="side")
-        self.assertEqual(resolved["source"], "global")
-        self.assertEqual([o["value"] for o in resolved["options"]], ["左", "右", "双侧"])
-
-    def test_falls_back_to_builtin_when_no_option_set(self) -> None:
-        resolved = options_service.resolve_options(self.conn, code="no_such_code", builtin=["甲", "乙"])
-        self.assertEqual(resolved["source"], "builtin")
-        self.assertEqual([o["value"] for o in resolved["options"]], ["甲", "乙"])
-
-    def test_personal_overrides_global(self) -> None:
-        options_service.upsert_personal_option_set(
-            self.conn, owner_user_id=int(self.t1["id"]), code="side", name="我的侧别", values=["左", "右"],
-            default_values=["左"],
-        )
-        resolved = options_service.resolve_options(self.conn, code="side", owner_user_id=int(self.t1["id"]))
-        self.assertEqual(resolved["source"], "personal")
-        self.assertEqual([o["value"] for o in resolved["options"]], ["左", "右"])
-        self.assertEqual(resolved["defaults"], ["左"])
-
-        # 另一个治疗师仍然拿全局
-        other = options_service.resolve_options(self.conn, code="side", owner_user_id=int(self.t2["id"]))
-        self.assertEqual(other["source"], "global")
-
-    def test_dept_overrides_global(self) -> None:
-        self.conn.execute(
-            "INSERT INTO option_set (scope, dept_tag, code, name) VALUES ('dept', 'PT', 'side', 'PT侧别')"
-        )
-        set_id = int(self.conn.execute("SELECT id FROM option_set WHERE scope='dept'").fetchone()["id"])
-        self.conn.execute(
-            "INSERT INTO option_item (option_set_id, value, label, is_default, sort) VALUES (?, '左', '左', 1, 0)",
-            (set_id,),
-        )
-        resolved = options_service.resolve_options(self.conn, code="side", dept_tag="PT")
-        self.assertEqual(resolved["source"], "dept")
-
-    def test_personal_endpoint_isolated_per_user(self) -> None:
-        payload = {"code": "side", "name": "我的侧别", "values": ["左", "右"], "default_values": ["左"]}
-        put = self.client.put("/api/v1/option-sets/personal", json=payload, headers=self.h1)
-        self.assertEqual(put.status_code, 200, put.text)
-
-        mine = self.client.get(
-            "/api/v1/option-sets/resolve", params={"code": "side"}, headers=self.h1
-        ).json()
-        self.assertEqual(mine["source"], "personal")
-        other = self.client.get(
-            "/api/v1/option-sets/resolve", params={"code": "side"}, headers=self.h2
-        ).json()
-        self.assertEqual(other["source"], "global", "个人选项不应影响他人")
-
-    def test_personal_default_must_be_in_values(self) -> None:
-        resp = self.client.put(
-            "/api/v1/option-sets/personal",
-            json={"code": "side", "name": "x", "values": ["左"], "default_values": ["右"]},
-            headers=self.h1,
-        )
-        self.assert_error(resp, 422, "INVALID")
-
-    def test_personal_duplicate_values_rejected(self) -> None:
-        resp = self.client.put(
-            "/api/v1/option-sets/personal",
-            json={"code": "side", "name": "x", "values": ["左", "左"]},
-            headers=self.h1,
-        )
-        self.assert_error(resp, 422, "INVALID")
-
-    def test_delete_personal_option_set(self) -> None:
-        self.client.put(
-            "/api/v1/option-sets/personal",
-            json={"code": "side", "name": "x", "values": ["左"]},
-            headers=self.h1,
-        )
-        deleted = self.client.delete("/api/v1/option-sets/personal/side", headers=self.h1)
-        self.assertEqual(deleted.status_code, 204, deleted.text)
-        again = self.client.delete("/api/v1/option-sets/personal/side", headers=self.h1)
-        self.assert_error(again, 404)
-
-
-class TestParamDefaultPriority(SeededApiTestCase):
-    """Q7：上次值 → 个人默认 → 科室默认 → 全局默认 → 字典默认。"""
-
-    def _param(self, sub_item_id: int, key: str) -> dict:
-        return dictionary_model.get_param_by_key(self.conn, sub_item_id, key) or {}
-
-    def test_dict_default_used_when_nothing_else(self) -> None:
-        sub_id = self.sub_item_id("motor_function_01")
-        param = self._param(sub_id, "position")
-        current, source = records_service._pick_default(
-            input_type=param["input_type"],
-            last_value=None,
-            option_defaults=[],
-            dict_default=param.get("default_value"),
-        )
-        self.assertEqual(source, "dict_default")
-        # 归一化规则：选择题一律返回列表（单选取首项），数字/文本返回原值
-        self.assertEqual(current, ["坐位"])
-
-    def test_option_set_default_beats_dict_default(self) -> None:
-        current, source = records_service._pick_default(
-            input_type="select", last_value=None, option_defaults=["站立"], dict_default="坐位"
-        )
-        self.assertEqual((current, source), ("站立", "option_set_default"))
-
-    def test_last_value_beats_everything(self) -> None:
-        current, source = records_service._pick_default(
-            input_type="select", last_value="仰卧", option_defaults=["站立"], dict_default="坐位"
-        )
-        self.assertEqual((current, source), ("仰卧", "last_value"))
-
-    def test_multi_select_default_returns_list(self) -> None:
-        current, source = records_service._pick_default(
-            input_type="multi_select", last_value=None, option_defaults=["洗脸", "刷牙"], dict_default=None
-        )
-        self.assertEqual(source, "option_set_default")
-        self.assertEqual(current, ["洗脸", "刷牙"])
-
-    def test_empty_last_value_is_ignored(self) -> None:
-        """上次值是空字符串/空列表时不应"带入空值"，要回落到默认。"""
-        for empty in ("", [], {}, None):
-            _, source = records_service._pick_default(
-                input_type="select", last_value=empty, option_defaults=[], dict_default="坐位"
-            )
-            self.assertEqual(source, "dict_default", f"空值 {empty!r} 不应被当作有效上次值")
-
-    def test_form_uses_last_value_from_previous_submitted_record(self) -> None:
-        sub_id = self.sub_item_id("motor_function_01")
-        # 先提交一条记录，把 position 设为"仰卧"
-        created = self.client.post(
-            "/api/v1/records",
-            json={
-                "patient_no": "ZY001",
-                "record_date": "2027-03-01",
-                "session_period": "am",
-                "status": "submitted",
-                "items": [
-                    {"main_item_id": self.main_item_id("motor_function"), "sub_item_id": sub_id,
-                     "params": {"position": "仰卧", "side": "右"}}
-                ],
-            },
-            headers=self.h1,
-        )
-        self.assertEqual(created.status_code, 201, created.text)
-
-        form = self.client.get("/api/v1/records/form", params={"patient_no": "ZY001"}, headers=self.h1).json()
-        motor = next(m for m in form["main_items"] if m["code"] == "motor_function")
-        sub = next(s for s in motor["sub_items"] if int(s["id"]) == sub_id)
-        position = next(p for p in sub["params"] if p["param_key"] == "position")
-        self.assertEqual(position["current_value"], "仰卧")
-        self.assertEqual(position["value_source"], "last_value")
-        self.assertEqual(position["last_value"], "仰卧")
-
-
-class TestRecordLifecycle(SeededApiTestCase):
-    def _create(self, *, status: str = "draft", note: str = "首次记录", headers: dict | None = None):
-        sub_id = self.sub_item_id("motor_function_01")
+    # -- 便捷方法 ---------------------------------------------------------- #
+    def create(
+        self,
+        *,
+        kind: str = "daily",
+        record_date: str = "2027-03-01",
+        body: dict | None = None,
+        status: str = "submitted",
+        headers: dict | None = None,
+        patient_no: str = "ZY001",
+        discipline: str = DISCIPLINE,
+    ):
         return self.client.post(
             "/api/v1/records",
             json={
-                "patient_no": "ZY001",
-                "record_date": "2027-03-01",
-                "session_period": "am",
-                "duration_min": 30,
-                "note": note,
+                "patient_no": patient_no,
+                "record_date": record_date,
+                "discipline": discipline,
+                "kind": kind,
+                "body": body if body is not None else daily_body(),
                 "status": status,
-                "items": [
-                    {"main_item_id": self.main_item_id("motor_function"), "sub_item_id": sub_id,
-                     "params": {"position": "坐位", "side": "左", "reps": 10}}
-                ],
             },
             headers=headers or self.h1,
         )
 
-    def test_create_draft_has_no_seq_no(self) -> None:
-        resp = self._create(status="draft")
+    def create_ok(self, **kwargs) -> dict:
+        resp = self.create(**kwargs)
         self.assertEqual(resp.status_code, 201, resp.text)
-        body = resp.json()
-        self.assertEqual(body["status"], "draft")
-        self.assertIsNone(body["seq_no"], "草稿不应占用治疗序次")
-        self.assertEqual(body["patient_name"], "患者甲")
-        self.assertEqual(body["therapist_name"], "张三")
-        self.assertEqual(len(body["items"]), 1)
-        self.assertEqual(body["items"][0]["sub_item_name_snapshot"], "偏瘫肢体综合训练")
+        return resp.json()
 
-    def test_submit_assigns_seq_no(self) -> None:
-        record = self._create(status="draft").json()
+    def seed_daily(self, count: int, *, headers: dict | None = None) -> None:
+        """直接落库造 N 条日常记录（跳过门禁，用于构造第 21 次这类场景）。"""
+        for index in range(1, count + 1):
+            self.conn.execute(
+                "INSERT INTO treatment_record"
+                " (patient_no, therapist_id, record_date, discipline, kind, seq_no, body_json,"
+                "  rendered_text, status)"
+                " VALUES ('ZY001', ?, ?, ?, 'daily', ?, '{}', '', 'submitted')",
+                (int(self.t1["id"]), f"2027-01-{index:02d}" if index <= 28 else "2027-02-01", DISCIPLINE, index),
+            )
+
+
+class TestAssessmentDoesNotCount(RecordTestCase):
+    """★ 用户 2026-10-05：「评定并不占用日常训练的次数」。"""
+
+    def test_initial_then_daily_is_first_session(self) -> None:
+        initial = self.create_ok(kind="initial", body=initial_body())
+        self.assertIsNone(initial["seq_no"], "首评不占次数")
+        self.assertEqual(initial["span_seq"], 1, "首评挂靠第 1 次日常")
+        self.assertEqual(initial["rendered_text"].startswith("康复初始评定"), True)
+
+        daily = self.create_ok(kind="daily", body=daily_body())
+        self.assertEqual(daily["seq_no"], 1, "首评之后当天的日常记录仍是第 1 次")
+        self.assertIsNone(daily["span_seq"])
+
+    def test_reassessment_does_not_consume_a_session(self) -> None:
+        self.seed_daily(20)
+        self.conn.execute(
+            "INSERT INTO treatment_record"
+            " (patient_no, therapist_id, record_date, discipline, kind, span_seq, body_json,"
+            "  rendered_text, status)"
+            " VALUES ('ZY001', ?, '2027-01-01', 'PT', 'initial', 1, '{}', '', 'submitted')",
+            (int(self.t1["id"]),),
+        )
+        reassessment = self.create_ok(
+            kind="reassessment", record_date="2027-03-01", body=reassessment_body()
+        )
+        self.assertIsNone(reassessment["seq_no"])
+        self.assertEqual(reassessment["span_seq"], 21)
+
+        daily = self.create_ok(kind="daily", record_date="2027-03-01", body=daily_body())
+        self.assertEqual(daily["seq_no"], 21, "第 21 次日常与复评并存")
+
+    def test_seq_no_is_per_discipline(self) -> None:
+        self.create_ok(kind="initial", body=initial_body())
+        self.create_ok(kind="daily", body=daily_body())
+        # 换一个大类：重新从"缺首评"开始，所以这里先给该大类首评
+        self.create_ok(
+            kind="initial",
+            discipline="OT",
+            body={"diagnosis": ["日常生活活动能力障碍"], "therapy_items": ["日常生活能力训练"]},
+        )
+        ot_daily = self.create_ok(
+            kind="daily",
+            discipline="OT",
+            body={"therapy_items": ["日常生活能力训练"]},
+        )
+        self.assertEqual(ot_daily["seq_no"], 1, "四大类分开计数")
+
+
+class TestAssessmentGate(RecordTestCase):
+    """★ 三份评估文书都是**硬阻断**，不能跳过（用户：「1A。2不能。3不能。」）。"""
+
+    def test_first_daily_without_initial_is_blocked(self) -> None:
+        resp = self.create(kind="daily")
+        self.assert_error(resp, 409, "MISSING_ASSESSMENT")
+        self.assertEqual(resp.json()["details"]["missing_document"], "initial")
+        self.assertEqual(
+            self.conn.execute("SELECT COUNT(*) FROM treatment_record").fetchone()[0], 0,
+            "被拦下的请求不得留下任何记录",
+        )
+
+    def test_21st_daily_without_reassessment_is_blocked(self) -> None:
+        self.seed_daily(20)
+        self.conn.execute(
+            "INSERT INTO treatment_record"
+            " (patient_no, therapist_id, record_date, discipline, kind, span_seq, body_json,"
+            "  rendered_text, status)"
+            " VALUES ('ZY001', ?, '2027-01-01', 'PT', 'initial', 1, '{}', '', 'submitted')",
+            (int(self.t1["id"]),),
+        )
+        resp = self.create(kind="daily", record_date="2027-03-01")
+        self.assert_error(resp, 409, "MISSING_ASSESSMENT")
+        self.assertEqual(resp.json()["details"]["missing_document"], "reassessment")
+        self.assertEqual(resp.json()["details"]["next_seq"], 21)
+
+        # 补上复评之后就能记了
+        self.create_ok(kind="reassessment", record_date="2027-03-01", body=reassessment_body())
+        daily = self.create_ok(kind="daily", record_date="2027-03-01")
+        self.assertEqual(daily["seq_no"], 21)
+
+    def test_second_initial_for_same_span_is_rejected(self) -> None:
+        self.create_ok(kind="initial", body=initial_body())
+        resp = self.create(kind="initial", record_date="2027-03-02", body=initial_body())
+        self.assert_error(resp, 409, "ASSESSMENT_ALREADY_EXISTS")
+
+    def test_gate_allows_plain_daily_sessions(self) -> None:
+        self.create_ok(kind="initial", body=initial_body())
+        for day in ("2027-03-01", "2027-03-02", "2027-03-03"):
+            record = self.create_ok(kind="daily", record_date=day)
+            self.assertIsNotNone(record["seq_no"])
+
+
+class TestSameDayLimit(RecordTestCase):
+    """★ 用户：「同一天同一大类只允许至多 2 条」。"""
+
+    def test_two_records_on_same_day_are_allowed(self) -> None:
+        self.create_ok(kind="initial", body=initial_body())
+        self.create_ok(kind="daily", body=daily_body())
+        kinds = [
+            row["kind"]
+            for row in self.conn.execute(
+                "SELECT kind FROM treatment_record ORDER BY id"
+            ).fetchall()
+        ]
+        self.assertEqual(kinds, ["initial", "daily"], "首评 + 日常 = 当天 2 条")
+
+    def test_third_record_on_same_day_is_rejected(self) -> None:
+        self.create_ok(kind="initial", body=initial_body())
+        self.create_ok(kind="daily", body=daily_body())
+        resp = self.create(kind="daily", body=daily_body(vas=3))
+        self.assert_error(resp, 409)
+        details = resp.json()["details"]
+        self.assertEqual(details["limit"], 2)
+        self.assertEqual(details["date"], "2027-03-01")
+        self.assertEqual(details["discipline"], "PT")
+
+    def test_next_day_is_not_limited(self) -> None:
+        self.create_ok(kind="initial", body=initial_body())
+        self.create_ok(kind="daily", body=daily_body())
+        self.create_ok(kind="daily", record_date="2027-03-02", body=daily_body())
+
+
+class TestPendingDischargeBlock(RecordTestCase):
+    """★ 待出院患者不能记新记录（用户：「填完小结即待出院」）。"""
+
+    def test_pending_discharge_patient_cannot_get_new_record(self) -> None:
+        self.create_ok(kind="initial", body=initial_body())
+        self.create_ok(kind="daily", body=daily_body())
+        patient_model.update_patient(
+            self.conn, "ZY001", status=patient_model.STATUS_PENDING_DISCHARGE
+        )
+        resp = self.create(kind="daily", record_date="2027-03-05", body=daily_body())
+        self.assert_error(resp, 409, "PATIENT_PENDING_DISCHARGE")
+
+    def test_pending_discharge_patient_disappears_from_board(self) -> None:
+        self.create_ok(kind="initial", body=initial_body())
+        patient_model.update_patient(
+            self.conn, "ZY001", status=patient_model.STATUS_PENDING_DISCHARGE
+        )
+        listed = self.client.get("/api/v1/patients", headers=self.h1).json()
+        self.assertNotIn("ZY001", {item["inpatient_no"] for item in listed["items"]})
+
+
+class TestRequiredFields(RecordTestCase):
+    """★ 必填校验：缺「功能诊断」「本次训练项目」→ 422。"""
+
+    def test_missing_diagnosis_is_rejected(self) -> None:
+        body = initial_body()
+        body.pop("diagnosis")
+        resp = self.create(kind="initial", body=body)
+        self.assert_error(resp, 422, "INVALID")
+        self.assertIn("功能诊断", resp.json()["details"]["missing"])
+
+    def test_missing_therapy_items_is_rejected(self) -> None:
+        body = initial_body()
+        body.pop("therapy_items")
+        resp = self.create(kind="initial", body=body)
+        self.assert_error(resp, 422, "INVALID")
+        self.assertIn("本次训练项目", resp.json()["details"]["missing"])
+
+    def test_empty_multi_select_counts_as_missing(self) -> None:
+        resp = self.create(kind="initial", body=initial_body(therapy_items=[]))
+        self.assert_error(resp, 422, "INVALID")
+        self.assertIn("本次训练项目", resp.json()["details"]["missing"])
+
+    def test_valid_body_passes(self) -> None:
+        self.create_ok(kind="initial", body=initial_body())
+
+    def test_daily_body_also_requires_therapy_items(self) -> None:
+        self.create_ok(kind="initial", body=initial_body())
+        body = daily_body()
+        body.pop("therapy_items")
+        resp = self.create(kind="daily", body=body)
+        self.assert_error(resp, 422, "INVALID")
+        self.assertIn("本次训练项目", resp.json()["details"]["missing"])
+
+
+class TestRenderedTextFrozen(RecordTestCase):
+    """★ `rendered_text` 冻结：改了模板 JSON 之后，旧记录的文本**不变**。"""
+
+    def test_old_record_text_survives_template_edit(self) -> None:
+        self.create_ok(kind="initial", body=initial_body())
+        record = self.create_ok(kind="daily", body=daily_body())
+        original_text = record["rendered_text"]
+        self.assertIn("本次训练项目：偏瘫肢体综合训练", original_text)
+
+        # 手改模板：日常记录的标题与字段标签都换掉（用户会这么做）
+        template_file = record_template.template_path(DISCIPLINE, "daily")
+        original_json = template_file.read_text(encoding="utf-8")
+        try:
+            edited = original_json.replace("康复治疗记录（PT运动）", "康复治疗记录（改过的标题）")
+            edited = edited.replace('"label": "疼痛VAS"', '"label": "疼痛评分VAS"')
+            template_file.write_text(edited, encoding="utf-8")
+            record_template.clear_cache()
+
+            reread = self.client.get(f"/api/v1/records/{record['id']}", headers=self.h1).json()
+            self.assertEqual(reread["rendered_text"], original_text, "已落库的文本必须原样返回")
+            self.assertNotIn("改过的标题", reread["rendered_text"])
+        finally:
+            template_file.write_text(original_json, encoding="utf-8")
+            record_template.clear_cache()
+
+    def test_new_record_after_edit_uses_new_template(self) -> None:
+        self.create_ok(kind="initial", body=initial_body())
+        first = self.create_ok(kind="daily", body=daily_body())
+        template_file = record_template.template_path(DISCIPLINE, "daily")
+        original_json = template_file.read_text(encoding="utf-8")
+        try:
+            template_file.write_text(
+                original_json.replace("康复治疗记录（PT运动）", "康复治疗记录（新标题）"),
+                encoding="utf-8",
+            )
+            record_template.clear_cache()
+            second = self.create_ok(kind="daily", record_date="2027-03-02", body=daily_body())
+            self.assertIn("新标题", second["rendered_text"])
+            self.assertNotEqual(second["rendered_text"], first["rendered_text"])
+        finally:
+            template_file.write_text(original_json, encoding="utf-8")
+            record_template.clear_cache()
+
+    def test_rendered_text_is_regenerated_when_body_changes(self) -> None:
+        """冻结的是"生成那一刻"，不是"永不更新"：当前这条记录改内容要跟着重渲染。"""
+        self.create_ok(kind="initial", body=initial_body())
+        record = self.create_ok(kind="daily", body=daily_body(), status="draft")
+        self.assertNotIn("疼痛VAS：9分", record["rendered_text"])
+        updated = self.client.put(
+            f"/api/v1/records/{record['id']}",
+            json={"body": daily_body(vas=9)},
+            headers=self.h1,
+        )
+        self.assertEqual(updated.status_code, 200, updated.text)
+        self.assertIn("疼痛VAS：9分", updated.json()["rendered_text"])
+
+
+class TestRecordLifecycle(RecordTestCase):
+    def test_create_draft_keeps_seq_no(self) -> None:
+        """库层 CHECK 要求日常记录一落库就带序号（否则唯一索引无法约束重复编号）。"""
+        self.create_ok(kind="initial", body=initial_body())
+        draft = self.create_ok(kind="daily", status="draft")
+        self.assertEqual(draft["status"], "draft")
+        self.assertEqual(draft["seq_no"], 1, "草稿也占号 —— CHECK 与唯一索引都建立在它上面")
+
+    def test_submit_and_lock(self) -> None:
+        self.create_ok(kind="initial", body=initial_body())
+        record = self.create_ok(kind="daily", status="draft")
         submitted = self.client.post(f"/api/v1/records/{record['id']}/submit", headers=self.h1)
         self.assertEqual(submitted.status_code, 200, submitted.text)
         self.assertEqual(submitted.json()["status"], "submitted")
-        self.assertEqual(submitted.json()["seq_no"], 1)
         self.assertIsNotNone(submitted.json()["submitted_at"])
 
-    def test_seq_no_increments_across_records(self) -> None:
-        first = self._create(status="draft").json()
-        self.client.post(f"/api/v1/records/{first['id']}/submit", headers=self.h1)
-        second = self._create(status="draft", note="第二次").json()
-        submitted = self.client.post(f"/api/v1/records/{second['id']}/submit", headers=self.h1).json()
-        self.assertEqual(submitted["seq_no"], 2)
-
-    def test_edit_draft_does_not_audit_or_count(self) -> None:
-        record = self._create(status="draft").json()
-        updated = self.client.put(
-            f"/api/v1/records/{record['id']}", json={"note": "草稿改了"}, headers=self.h1
-        )
-        self.assertEqual(updated.status_code, 200, updated.text)
-        self.assertEqual(updated.json()["edit_count"], 0)
-        audits = self.conn.execute(
-            "SELECT COUNT(*) FROM audit_log WHERE action = 'record_modified_after_submit'"
-        ).fetchone()[0]
-        self.assertEqual(audits, 0, "草稿阶段不应产生留痕噪声")
-
-    def test_edit_submitted_audits_and_increments_edit_count(self) -> None:
-        record = self._create(status="submitted").json()
-        updated = self.client.put(
-            f"/api/v1/records/{record['id']}", json={"note": "提交后补充"}, headers=self.h1
-        )
-        self.assertEqual(updated.status_code, 200, updated.text)
-        self.assertEqual(updated.json()["edit_count"], 1, "库层触发器应累加 edit_count")
-
-        rows = self.conn.execute(
-            "SELECT before_json, after_json FROM audit_log WHERE target_type = 'treatment_record'"
-            "   AND action = 'record_modified_after_submit'"
-        ).fetchall()
-        self.assertEqual(len(rows), 1)
-        self.assertIn("首次记录", rows[0]["before_json"])
-        self.assertIn("提交后补充", rows[0]["after_json"])
-
-    def test_repeated_edits_accumulate(self) -> None:
-        record = self._create(status="submitted").json()
-        for index in range(3):
-            self.client.put(
-                f"/api/v1/records/{record['id']}", json={"note": f"第{index}次修改"}, headers=self.h1
-            )
-        final = self.client.get(f"/api/v1/records/{record['id']}", headers=self.h1).json()
-        self.assertEqual(final["edit_count"], 3)
-
-    def test_lock_then_therapist_cannot_edit(self) -> None:
-        record = self._create(status="submitted").json()
         locked = self.client.post(f"/api/v1/records/{record['id']}/lock", headers=self.ha)
         self.assertEqual(locked.status_code, 200, locked.text)
         self.assertEqual(locked.json()["status"], "locked")
 
+    def test_double_submit_rejected(self) -> None:
+        self.create_ok(kind="initial", body=initial_body())
+        record = self.create_ok(kind="daily")
+        resp = self.client.post(f"/api/v1/records/{record['id']}/submit", headers=self.h1)
+        self.assert_error(resp, 409)
+
+    def test_draft_cannot_be_locked_directly(self) -> None:
+        self.create_ok(kind="initial", body=initial_body())
+        record = self.create_ok(kind="daily", status="draft")
+        resp = self.client.post(f"/api/v1/records/{record['id']}/lock", headers=self.ha)
+        self.assert_error(resp, 409)
+
+    def test_locked_record_cannot_be_edited_by_therapist(self) -> None:
+        self.create_ok(kind="initial", body=initial_body())
+        record = self.create_ok(kind="daily")
+        self.client.post(f"/api/v1/records/{record['id']}/lock", headers=self.ha)
         resp = self.client.put(
-            f"/api/v1/records/{record['id']}", json={"note": "偷偷改"}, headers=self.h1
+            f"/api/v1/records/{record['id']}", json={"body": daily_body(vas=5)}, headers=self.h1
         )
         self.assert_error(resp, 403, "RECORD_LOCKED")
 
     def test_admin_can_edit_locked_record(self) -> None:
-        record = self._create(status="submitted").json()
+        self.create_ok(kind="initial", body=initial_body())
+        record = self.create_ok(kind="daily")
         self.client.post(f"/api/v1/records/{record['id']}/lock", headers=self.ha)
         resp = self.client.put(
-            f"/api/v1/records/{record['id']}", json={"note": "管理员更正"}, headers=self.ha
+            f"/api/v1/records/{record['id']}", json={"body": daily_body(vas=5)}, headers=self.ha
         )
         self.assertEqual(resp.status_code, 200, resp.text)
 
-    def test_draft_cannot_be_locked_directly(self) -> None:
-        record = self._create(status="draft").json()
-        resp = self.client.post(f"/api/v1/records/{record['id']}/lock", headers=self.ha)
+    def test_submitted_edit_is_audited_and_counted(self) -> None:
+        self.create_ok(kind="initial", body=initial_body())
+        record = self.create_ok(kind="daily")
+        updated = self.client.put(
+            f"/api/v1/records/{record['id']}", json={"body": daily_body(vas=4)}, headers=self.h1
+        )
+        self.assertEqual(updated.status_code, 200, updated.text)
+        self.assertEqual(updated.json()["edit_count"], 1, "库层触发器应累加 edit_count")
+
+    def test_invalid_status_rejected(self) -> None:
+        self.create_ok(kind="initial", body=initial_body())
+        record = self.create_ok(kind="daily", status="draft")
+        resp = self.client.put(
+            f"/api/v1/records/{record['id']}", json={"status": "whatever"}, headers=self.h1
+        )
+        self.assert_error(resp, 422, "INVALID")
+
+    def test_update_unknown_record_is_404(self) -> None:
+        resp = self.client.put("/api/v1/records/99999", json={"status": "draft"}, headers=self.h1)
+        self.assert_error(resp, 404, "NOT_FOUND")
+
+    def test_status_cannot_jump_backwards(self) -> None:
+        self.create_ok(kind="initial", body=initial_body())
+        record = self.create_ok(kind="daily")
+        self.client.post(f"/api/v1/records/{record['id']}/lock", headers=self.ha)
+        resp = self.client.put(
+            f"/api/v1/records/{record['id']}", json={"status": "draft"}, headers=self.ha
+        )
         self.assert_error(resp, 409)
 
-    def test_double_submit_rejected(self) -> None:
-        record = self._create(status="submitted").json()
-        resp = self.client.post(f"/api/v1/records/{record['id']}/submit", headers=self.h1)
-        self.assert_error(resp, 409)
+    def test_delete_draft_writes_change_log(self) -> None:
+        """★ 删除草稿必须写 `change_log(op='delete')`，否则离线端会留下幻影记录。"""
+        self.create_ok(kind="initial", body=initial_body())
+        draft = self.create_ok(kind="daily", status="draft")
+        resp = self.client.delete(f"/api/v1/records/{draft['id']}", headers=self.h1)
+        self.assertEqual(resp.status_code, 204, resp.text)
+
+        row = self.conn.execute(
+            "SELECT op, entity, entity_id FROM change_log WHERE entity = 'treatment_record'"
+            "   AND op = 'delete'"
+        ).fetchone()
+        self.assertIsNotNone(row, "删除草稿必须进 change_log")
+        self.assertEqual(row["entity_id"], str(draft["id"]))
 
     def test_only_draft_can_be_deleted(self) -> None:
-        draft = self._create(status="draft").json()
-        deleted = self.client.delete(f"/api/v1/records/{draft['id']}", headers=self.h1)
-        self.assertEqual(deleted.status_code, 204, deleted.text)
-
-        submitted = self._create(status="submitted", note="已提交").json()
+        self.create_ok(kind="initial", body=initial_body())
+        submitted = self.create_ok(kind="daily")
         resp = self.client.delete(f"/api/v1/records/{submitted['id']}", headers=self.h1)
         self.assert_error(resp, 409)
 
-    def test_therapist_cannot_delete_others_draft(self) -> None:
-        record = self._create(status="draft").json()
-        resp = self.client.delete(f"/api/v1/records/{record['id']}", headers=self.h2)
+    def test_cannot_delete_others_draft(self) -> None:
+        self.create_ok(kind="initial", body=initial_body())
+        draft = self.create_ok(kind="daily", status="draft")
+        resp = self.client.delete(f"/api/v1/records/{draft['id']}", headers=self.h2)
         self.assert_error(resp, 403)
 
+    def test_detail_returns_body_and_rendered_text(self) -> None:
+        self.create_ok(kind="initial", body=initial_body())
+        record = self.create_ok(kind="daily")
+        detail = self.client.get(f"/api/v1/records/{record['id']}", headers=self.h1).json()
+        self.assertEqual(detail["body"]["therapy_items"], ["偏瘫肢体综合训练"])
+        self.assertIn("主观资料：", detail["rendered_text"])
+        self.assertEqual(detail["kind"], "daily")
+        self.assertEqual(detail["discipline"], "PT")
 
-class TestSnapshots(SeededApiTestCase):
-    """两层快照：字典改名后历史记录仍显示当时的名称与选项文本。"""
-
-    def test_sub_item_name_snapshot_survives_rename(self) -> None:
-        sub_id = self.sub_item_id("motor_function_01")
-        record = self.client.post(
-            "/api/v1/records",
-            json={
-                "patient_no": "ZY001", "record_date": "2027-03-01", "session_period": "am",
-                "status": "submitted",
-                "items": [{"main_item_id": self.main_item_id("motor_function"), "sub_item_id": sub_id,
-                           "params": {"position": "坐位"}}],
-            },
-            headers=self.h1,
-        ).json()
-        original_name = record["items"][0]["sub_item_name_snapshot"]
-        self.assertEqual(original_name, "偏瘫肢体综合训练")
-
-        # 字典改名（科室调别名是常事）
-        self.conn.execute("UPDATE sub_item SET name = ? WHERE id = ?", ("偏瘫综合训练（新）", sub_id))
-        reread = self.client.get(f"/api/v1/records/{record['id']}", headers=self.h1).json()
-        self.assertEqual(reread["items"][0]["sub_item_name_snapshot"], original_name, "快照不应随字典变化")
-
-    def test_params_snapshot_keeps_option_text(self) -> None:
-        sub_id = self.sub_item_id("motor_function_01")
-        record = self.client.post(
-            "/api/v1/records",
-            json={
-                "patient_no": "ZY001", "record_date": "2027-03-01", "session_period": "am",
-                "status": "submitted",
-                "items": [{"main_item_id": self.main_item_id("motor_function"), "sub_item_id": sub_id,
-                           "params": {"position": "坐位", "side": "左"}}],
-            },
-            headers=self.h1,
-        ).json()
-        snapshot = record["items"][0]["params_snapshot"]
-        self.assertIsNotNone(snapshot)
-        by_key = {entry["param_key"]: entry for entry in snapshot}
-        self.assertEqual(by_key["position"]["param_name"], "体位")
-        self.assertEqual(by_key["position"]["value"], "坐位")
-        self.assertIn("坐位", by_key["position"]["options"], "快照要带上当时的选项文本")
+    def test_unknown_kind_or_discipline_is_422(self) -> None:
+        bad_kind = self.create(kind="weekly")
+        self.assert_error(bad_kind, 422, "INVALID")
+        bad_discipline = self.create(discipline="XZ")
+        self.assert_error(bad_discipline, 422, "INVALID")
 
 
-class TestParamValidation(SeededApiTestCase):
-    def _payload(self, params: dict, *, sub_item_id: int | None = None, main_code: str = "motor_function"):
-        return {
-            "patient_no": "ZY001", "record_date": "2027-03-01", "session_period": "am",
-            "items": [
-                {"main_item_id": self.main_item_id(main_code),
-                 "sub_item_id": sub_item_id or self.sub_item_id("motor_function_01"),
-                 "params": params}
-            ],
-        }
+class TestRecordListAndTimeline(RecordTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.create_ok(kind="initial", body=initial_body())
+        self.create_ok(kind="daily", record_date="2027-03-01", body=daily_body())
+        self.create_ok(kind="daily", record_date="2027-03-03", body=daily_body())
 
-    def test_unknown_param_key_rejected(self) -> None:
-        resp = self.client.post("/api/v1/records", json=self._payload({"nope": 1}), headers=self.h1)
-        self.assert_error(resp, 422, "INVALID")
-        self.assertIn("unknown_keys", resp.json()["details"])
+    def test_list_is_ordered_by_date_desc(self) -> None:
+        body = self.client.get("/api/v1/records", headers=self.h1).json()
+        self.assertEqual([i["record_date"] for i in body["items"]], ["2027-03-03", "2027-03-01", "2027-03-01"])
+        self.assertEqual(body["total"], 3)
 
-    def test_select_value_must_be_in_options(self) -> None:
-        resp = self.client.post("/api/v1/records", json=self._payload({"side": "上面"}), headers=self.h1)
-        self.assert_error(resp, 422, "INVALID")
-        self.assertIn("allowed", resp.json()["details"])
+    def test_list_filters_by_kind_and_discipline(self) -> None:
+        daily = self.client.get("/api/v1/records", params={"kind": "daily"}, headers=self.h1).json()
+        self.assertEqual(daily["total"], 2)
+        initial = self.client.get("/api/v1/records", params={"kind": "initial"}, headers=self.h1).json()
+        self.assertEqual(initial["total"], 1)
+        other = self.client.get("/api/v1/records", params={"discipline": "OT"}, headers=self.h1).json()
+        self.assertEqual(other["total"], 0)
 
-    def test_multi_select_requires_list(self) -> None:
-        sub_id = self.sub_item_id("motor_function_01")
-        resp = self.client.post(
-            "/api/v1/records", json=self._payload({"body_part": "肩"}, sub_item_id=sub_id), headers=self.h1
-        )
-        self.assert_error(resp, 422, "INVALID")
+    def test_list_items_carry_soap_text(self) -> None:
+        body = self.client.get("/api/v1/records", params={"kind": "daily"}, headers=self.h1).json()
+        item = body["items"][0]
+        self.assertEqual(item["discipline"], "PT")
+        self.assertEqual(item["kind"], "daily")
+        self.assertIn("主观资料：", item["rendered_text"])
+        self.assertIn("主观资料：", item["rendered_excerpt"])
 
-    def test_multi_select_rejects_unknown_member(self) -> None:
-        resp = self.client.post(
- "/api/v1/records", json=self._payload({"body_part": ["肩", "尾巴"]}), headers=self.h1
-        )
-        self.assert_error(resp, 422, "INVALID")
-
-    def test_number_range_enforced(self) -> None:
-        # MMT 分级是 0–5；这里用 berg_score（0–56）更容易越界
-        sub_id = self.sub_item_id("motor_function_03")
-        resp = self.client.post(
-            "/api/v1/records",
-            json=self._payload({"berg_score": 99}, sub_item_id=sub_id),
-            headers=self.h1,
-        )
-        # 该子项目有 berg_score；若定义无上下限则允许（种子未设范围时不该失败）
-        self.assertIn(resp.status_code, {201, 422})
-
-    def test_negative_duration_rejected(self) -> None:
-        payload = self._payload({"side": "左"})
-        payload["duration_min"] = -5
-        resp = self.client.post("/api/v1/records", json=payload, headers=self.h1)
-        self.assert_error(resp, 422)
-
-    def test_sub_item_must_belong_to_main_item(self) -> None:
-        resp = self.client.post(
-            "/api/v1/records",
-            json={
-                "patient_no": "ZY001", "record_date": "2027-03-01",
-                "items": [
-                    {"main_item_id": self.main_item_id("speech_function"),
-                     "sub_item_id": self.sub_item_id("motor_function_01"), "params": {}}
-                ],
-            },
-            headers=self.h1,
-        )
-        self.assert_error(resp, 422, "INVALID")
-        self.assertIn("expected_main_item_id", resp.json()["details"])
-
-    def test_duplicate_sub_item_rejected(self) -> None:
-        sub_id = self.sub_item_id("motor_function_01")
-        resp = self.client.post(
-            "/api/v1/records",
-            json={
-                "patient_no": "ZY001", "record_date": "2027-03-01",
-                "items": [
-                    {"main_item_id": self.main_item_id("motor_function"), "sub_item_id": sub_id, "params": {}},
-                    {"main_item_id": self.main_item_id("motor_function"), "sub_item_id": sub_id, "params": {}},
-                ],
-            },
-            headers=self.h1,
-        )
-        self.assert_error(resp, 422, "INVALID")
-        self.assertEqual(resp.json()["details"]["sub_item_id"], sub_id)
-
-    def test_unknown_sub_item_is_404(self) -> None:
-        resp = self.client.post(
-            "/api/v1/records",
-            json={
-                "patient_no": "ZY001", "record_date": "2027-03-01",
-                "items": [{"main_item_id": self.main_item_id("motor_function"), "sub_item_id": 99999, "params": {}}],
-            },
-            headers=self.h1,
-        )
-        self.assert_error(resp, 404, "NOT_FOUND")
-
-    def test_invalid_session_period_rejected(self) -> None:
-        payload = self._payload({"side": "左"})
-        payload["session_period"] = "night"
-        resp = self.client.post("/api/v1/records", json=payload, headers=self.h1)
-        self.assert_error(resp, 422, "INVALID")
-
-    def test_model_level_unknown_status(self) -> None:
-        with self.assertRaises(Invalid):
-            treatment_model.create_record(
-                self.conn, patient_no="ZY001", therapist_id=int(self.t1["id"]),
-                record_date="2027-03-01", status="whatever",
-            )
-
-
-class TestPatientResponses(SeededApiTestCase):
-    def _record_with_response(
-        self, response: dict | None, headers: dict | None = None, *, main_code: str = "motor_function"
-    ):
-        from app.models import dictionary as dictionary_model
-
-        # 取该主项目下的第一个子项目，保证"反应定义的主项目"与"记录的主项目"一致
-        sub = dictionary_model.list_sub_items(
-            self.conn, main_item_id=self.main_item_id(main_code)
-        )[0]
-        return self.client.post(
-            "/api/v1/records",
-            json={
-                "patient_no": "ZY001", "record_date": "2027-03-01", "session_period": "am",
-                "status": "submitted", "patient_response": response,
-                "items": [{"main_item_id": self.main_item_id(main_code),
-                           "sub_item_id": int(sub["id"]),
-                           "params": {}}],
-            },
-            headers=headers or self.h1,
-        )
-
-    def test_tag_response(self) -> None:
-        resp = self._record_with_response({"tags": ["no_discomfort"], "items": []})
-        self.assertEqual(resp.status_code, 201, resp.text)
-        body = resp.json()["patient_response"]
-        self.assertEqual(body["tags"][0]["code"], "no_discomfort")
-        self.assertEqual(body["tags"][0]["label"], "无不适")
-
-    def test_number_response_with_range(self) -> None:
-        resp = self._record_with_response({"tags": [], "items": [{"code": "pain", "value": 3}]})
-        self.assertEqual(resp.status_code, 201, resp.text)
-        item = resp.json()["patient_response"]["items"][0]
-        self.assertEqual(item["value"], 3)
-        self.assertEqual(item["value_key"], "nrs")
-        self.assertEqual(item["unit"], "分")
-
-    def test_number_out_of_range_rejected(self) -> None:
-        resp = self._record_with_response({"tags": [], "items": [{"code": "pain", "value": 99}]})
-        self.assert_error(resp, 422, "INVALID")
-
-    def test_number_requires_value(self) -> None:
-        resp = self._record_with_response({"tags": [], "items": [{"code": "pain"}]})
-        self.assert_error(resp, 422, "INVALID")
-
-    def test_tag_placed_in_items_rejected(self) -> None:
-        """标签类反应应放 tags 里；放 items 会被明确拒绝，而不是静默接受。"""
-        resp = self._record_with_response({"tags": [], "items": [{"code": "no_discomfort", "value": 1}]})
-        self.assert_error(resp, 422, "INVALID")
-
-    def test_value_response_placed_in_tags_rejected(self) -> None:
-        resp = self._record_with_response({"tags": ["pain"], "items": []})
-        self.assert_error(resp, 422, "INVALID")
-
-    def test_unknown_response_code_rejected(self) -> None:
-        resp = self._record_with_response({"tags": ["not_a_real_code"], "items": []})
-        self.assert_error(resp, 422, "INVALID")
-
-    def test_select_response_validates_options(self) -> None:
-        # oral_residue 是吞咽主项目的专属反应，因此记录也必须挂在吞咽主项目下
-        ok = self._record_with_response(
-            {"tags": [], "items": [{"code": "oral_residue", "value": "中"}]},
-            main_code="swallow_function",
-        )
-        self.assertEqual(ok.status_code, 201, ok.text)
-        bad = self._record_with_response(
-            {"tags": [], "items": [{"code": "oral_residue", "value": "极重"}]},
-            main_code="swallow_function",
-        )
-        self.assert_error(bad, 422, "INVALID")
-
-    def test_duplicate_response_rejected(self) -> None:
-        resp = self._record_with_response(
-            {"tags": [], "items": [{"code": "pain", "value": 1}, {"code": "pain", "value": 2}]}
-        )
-        self.assert_error(resp, 422, "INVALID")
-
-    def test_response_can_be_cleared(self) -> None:
-        record = self._record_with_response({"tags": [], "items": [{"code": "pain", "value": 2}]}).json()
-        cleared = self.client.put(
-            f"/api/v1/records/{record['id']}", json={"clear_patient_response": True}, headers=self.h1
-        )
-        self.assertEqual(cleared.status_code, 200, cleared.text)
-        self.assertIsNone(cleared.json()["patient_response"])
-
-
-class TestRecordPermissions(SeededApiTestCase):
-    """全科白板下的记录权限（2026-10-03 起）。
-
-    患者对全科在院/暂停可见后，**记录也随患者可见**：治疗师可以读、可以改他人患者的记录。
-    仍然保留的三条边界：
-      1. 只能**以自己名义**写记录（``RECORD_OTHER_THERAPIST``）；
-      2. 已锁定（``locked``）的记录治疗师不能改（``RECORD_LOCKED``）；
-      3. 只能删除**自己的草稿**（他人草稿不可删）。
-    """
-
-    def _create_for_patient(self, patient_no: str, headers: dict, *, status: str = "draft"):
-        return self.client.post(
-            "/api/v1/records",
-            json={
-                "patient_no": patient_no, "record_date": "2027-03-01", "status": status,
-                "items": [{"main_item_id": self.main_item_id("motor_function"),
-                           "sub_item_id": self.sub_item_id("motor_function_01"), "params": {"side": "左"}}],
-            },
-            headers=headers,
-        )
-
-    def test_can_write_record_for_colleague_patient(self) -> None:
-        """白板：可以给"别人负责的患者"写记录（一个上午多人各做一次是常态）。"""
-        resp = self._create_for_patient("ZY002", self.h1)
-        self.assertEqual(resp.status_code, 201, resp.text)
-        self.assertEqual(resp.json()["patient_no"], "ZY002")
-        self.assertEqual(resp.json()["therapist_id"], int(self.t1["id"]), "记录人必须是自己")
-
-    def test_can_read_colleague_patient_record(self) -> None:
-        record = self._create_for_patient("ZY002", self.h2).json()
-        resp = self.client.get(f"/api/v1/records/{record['id']}", headers=self.h1)
-        self.assertEqual(resp.status_code, 200, resp.text)
-
-    def test_can_modify_colleague_patient_draft(self) -> None:
-        """草稿可被他人在同一患者上修改（记录归属仍是原作者，改动留痕）。"""
-        record = self._create_for_patient("ZY002", self.h2).json()
-        resp = self.client.put(f"/api/v1/records/{record['id']}", json={"note": "代记"}, headers=self.h1)
-        self.assertEqual(resp.status_code, 200, resp.text)
-        self.assertEqual(resp.json()["note"], "代记")
-
-    def test_cannot_modify_locked_record(self) -> None:
-        """锁定后治疗师（哪怕患者可见）也不能改 —— 这是留痕与文书完整性的边界。"""
-        record = self._create_for_patient("ZY002", self.h2, status="submitted").json()
-        lock = self.client.post(f"/api/v1/records/{record['id']}/lock", headers=self.ha)
-        self.assertEqual(lock.status_code, 200, lock.text)
-        resp = self.client.put(f"/api/v1/records/{record['id']}", json={"note": "改"}, headers=self.h1)
-        self.assert_error(resp, 403, "RECORD_LOCKED")
-
-    def test_admin_can_read_any_record(self) -> None:
-        record = self._create_for_patient("ZY002", self.h2).json()
-        resp = self.client.get(f"/api/v1/records/{record['id']}", headers=self.ha)
-        self.assertEqual(resp.status_code, 200, resp.text)
-
-    def test_therapist_cannot_write_for_another_therapist(self) -> None:
-        """只能以自己名义写记录（这条限制保留）。"""
-        resp = self.client.post(
-            "/api/v1/records",
-            json={"patient_no": "ZY001", "record_date": "2027-03-01", "therapist_id": int(self.t2["id"])},
-            headers=self.h1,
-        )
-        self.assert_error(resp, 403, "RECORD_OTHER_THERAPIST")
-
-    def test_record_list_shows_department_records(self) -> None:
-        """白板：记录列表默认（scope=visible）显示全科范围内的记录。"""
-        self._create_for_patient("ZY001", self.h1)
-        self._create_for_patient("ZY002", self.h2)
-        listed = self.client.get("/api/v1/records", headers=self.h1).json()
-        numbers = {i["patient_no"] for i in listed["items"]}
-        self.assertEqual(numbers, {"ZY001", "ZY002"})
-
-    def test_scope_mine_only_own_records(self) -> None:
-        self._create_for_patient("ZY001", self.h1)
+    def test_list_scope_mine(self) -> None:
         mine = self.client.get("/api/v1/records", params={"scope": "mine"}, headers=self.h2).json()
         self.assertEqual(mine["total"], 0)
         mine1 = self.client.get("/api/v1/records", params={"scope": "mine"}, headers=self.h1).json()
-        self.assertEqual(mine1["total"], 1)
-
-    def test_discharged_patient_records_hidden(self) -> None:
-        """已出院患者默认不在白板上，其记录也不可见（管理员仍可见）。"""
-        self._create_for_patient("ZY002", self.h2)
-        patient_model.update_patient(
-            self.conn, "ZY002", status=patient_model.STATUS_DISCHARGED
-        )
-        listed = self.client.get("/api/v1/records", headers=self.h1).json()
-        self.assertEqual(listed["total"], 0)
-        admin_listed = self.client.get(
-            "/api/v1/records", params={"scope": "visible"}, headers=self.ha
-        ).json()
-        self.assertEqual(admin_listed["total"], 1, "管理员不受在院状态限制")
+        self.assertEqual(mine1["total"], 3)
 
     def test_invalid_scope_rejected(self) -> None:
-        resp = self.client.get("/api/v1/records", params={"scope": "whatever"}, headers=self.h1)
+        resp = self.client.get("/api/v1/records", params={"scope": "temp"}, headers=self.h1)
         self.assert_error(resp, 404, "INVALID_SCOPE")
 
+    def test_timeline_is_ordered_desc(self) -> None:
+        body = self.client.get("/api/v1/timeline", headers=self.h1).json()
+        dates = [i["record_date"] for i in body["items"]]
+        self.assertEqual(dates[:2], ["2027-03-03", "2027-03-01"])
+        self.assertEqual(body["items"][0]["kind"], "daily")
 
-class TestTemporaryTreatmentFlag(SeededApiTestCase):
-    """3.7：`is_temporary` = "记录人 ≠ 该患者在**记录创建时刻**的归属治疗师"。
+    def test_timeline_filters(self) -> None:
+        body = self.client.get(
+            "/api/v1/timeline",
+            params={"from": "2027-03-02", "to": "2027-03-05", "kind": "daily"},
+            headers=self.h1,
+        ).json()
+        self.assertEqual(len(body["items"]), 1)
+        self.assertEqual(body["items"][0]["record_date"], "2027-03-03")
 
-    2026-10-05 排期下线后它不再是存储列，而是查询时按 `patient_assignment_history`
-    回溯推导（`app/models/treatment.py::temporary_expr`）。这组用例钉住推导结果 ——
-    它是"临时治疗"标记的唯一数据源（打印 PDF、患者每日汇总、后台记录列表三处消费）。
+    def test_discharged_patient_records_hidden(self) -> None:
+        patient_model.update_patient(self.conn, "ZY001", status=patient_model.STATUS_DISCHARGED)
+        listed = self.client.get("/api/v1/records", headers=self.h1).json()
+        self.assertEqual(listed["total"], 0)
+        admin_listed = self.client.get("/api/v1/records", headers=self.ha).json()
+        self.assertEqual(admin_listed["total"], 3, "管理员不受在院状态限制")
 
-    > 注意：`scope=temp` 这个**筛选入口**已于 2026-10-05 删除（患者列表与时间轴都不再接受它），
-    > 但**标记本身保留** —— 两者不是一回事。
-    """
+    def test_can_write_for_colleague_patient(self) -> None:
+        """全科白板：可以给"别人负责的患者"写记录（记录人必须是自己）。"""
+        record = self.create_ok(
+            patient_no="ZY002", kind="initial", body=initial_body(), headers=self.h1
+        )
+        self.assertEqual(record["therapist_id"], int(self.t1["id"]))
 
-    def _create(self, headers: dict, patient_no: str = "ZY001", **overrides) -> dict:
-        payload = {
-            "patient_no": patient_no,
-            "record_date": "2027-03-01",
-            "session_period": "am",
-            "items": [
-                {
-                    "main_item_id": self.main_item_id("motor_function"),
-                    "sub_item_id": self.sub_item_id("motor_function_01"),
-                    "params": {"side": "左"},
-                }
-            ],
-        }
-        payload.update(overrides)
-        resp = self.client.post("/api/v1/records", json=payload, headers=headers)
-        self.assertEqual(resp.status_code, 201, resp.text)
-        return resp.json()
+    def test_enums_include_disciplines(self) -> None:
+        body = self.client.get("/api/v1/records/enums", headers=self.h1).json()
+        self.assertEqual(body["statuses"], ["draft", "submitted", "locked"])
+        self.assertEqual(body["kinds"], ["initial", "daily", "reassessment", "discharge"])
+        self.assertEqual([d["key"] for d in body["disciplines"]], ["PT", "OT", "ST_SW", "ST_SP"])
+
+
+class TestTemporaryTreatmentFlag(RecordTestCase):
+    """`is_temporary` = "记录人 ≠ 该患者在**记录创建时刻**的归属治疗师"（查询时推导）。"""
 
     def test_owner_recording_is_not_temporary(self) -> None:
-        body = self._create(self.h1)
-        self.assertEqual(body["is_temporary"], 0, "归属人自己做的治疗不是临时治疗")
-
-    def test_other_therapist_recording_is_temporary(self) -> None:
-        """白板下谁都能记，但"替别人做的"要被标出来（临时治疗）。"""
-        body = self._create(self.h2)
-        self.assertEqual(body["is_temporary"], 1, "非归属人做的治疗应标为临时")
-        # 原归属不因"别人替做了一次"而改变
-        patient = patient_model.get_patient_or_raise(self.conn, "ZY001")
-        self.assertEqual(patient["assigned_therapist_id"], int(self.t1["id"]), "原归属仍不变")
-
-    def test_no_assignment_history_is_not_temporary(self) -> None:
-        """归零安全：该患者当时就没有归属人时，谁做都算正常。"""
-        patient_model.create_patient(self.conn, inpatient_no="ZY003", name="未分配患者")
-        body = self._create(self.h2, patient_no="ZY003")
-        self.assertEqual(body["is_temporary"], 0)
-
-    def test_transfer_after_recording_does_not_retroactively_flag(self) -> None:
-        """归属变更**不得**把旧记录追溯成"临时治疗" —— 这是推导式存在的全部理由。
-
-        若按"当前归属"判断，患者一转手，之前所有正常记录都会突然变成临时，
-        已经计过的统计也会跟着变。`patient_assignment_history` 让"当时是谁"可回溯。
-
-        时间戳是毫秒精度，所以"记录 → 转手 → 再记录"之间要跨过毫秒边界；
-        每个 HTTP 往返本身已经跨了，这里再显式 sleep 一小段，让先后关系稳定。
-        """
-        import time
-
-        record = self._create(self.h1)  # 张三，当时的归属人
+        self.create_ok(kind="initial", body=initial_body())
+        record = self.create_ok(kind="daily")
         self.assertEqual(record["is_temporary"], 0)
 
-        time.sleep(0.02)  # 确保转手时间戳严格晚于上一条记录的 created_at
+    def test_other_therapist_recording_is_temporary(self) -> None:
+        self.create_ok(kind="initial", body=initial_body())
+        record = self.create_ok(kind="daily", headers=self.h2)
+        self.assertEqual(record["is_temporary"], 1, "非归属人做的治疗应标为临时")
+        patient = patient_model.get_patient_or_raise(self.conn, "ZY001")
+        self.assertEqual(patient["assigned_therapist_id"], int(self.t1["id"]), "原归属不变")
+
+    def test_no_assignment_history_is_not_temporary(self) -> None:
+        patient_model.create_patient(self.conn, inpatient_no="ZY003", name="未分配患者")
+        self.create_ok(patient_no="ZY003", kind="initial", body=initial_body(), headers=self.h2)
+        record = self.create_ok(patient_no="ZY003", kind="daily", headers=self.h2)
+        self.assertEqual(record["is_temporary"], 0)
+
+    def test_transfer_after_recording_does_not_retroactively_flag(self) -> None:
+        import time
+
+        self.create_ok(kind="initial", body=initial_body())
+        record = self.create_ok(kind="daily")
+        self.assertEqual(record["is_temporary"], 0)
+
+        time.sleep(0.02)
         self.conn.execute(
             "UPDATE patient SET assigned_therapist_id = ? WHERE inpatient_no = 'ZY001'",
             (int(self.t2["id"]),),
@@ -813,68 +590,168 @@ class TestTemporaryTreatmentFlag(SeededApiTestCase):
             " VALUES ('ZY001', ?, ?, 'admin_assign')",
             (int(self.t1["id"]), int(self.t2["id"])),
         )
-
         refreshed = self.client.get(f"/api/v1/records/{record['id']}", headers=self.ha).json()
         self.assertEqual(refreshed["is_temporary"], 0, "归属变更不得追溯改写历史记录的性质")
 
-        time.sleep(0.02)  # 确保"补记"的 created_at 严格晚于转手
-        after_transfer = self._create(self.h1, record_date="2027-04-01")
-        self.assertEqual(after_transfer["is_temporary"], 1, "转手后张三再记就属于临时治疗")
-
     def test_temporary_flag_is_derived_not_stored(self) -> None:
-        """三个随排期下线的存储列不得回来（推导值存一份就会与事实不一致）。"""
-        columns = {
-            row["name"] for row in self.conn.execute("PRAGMA table_info(treatment_record)")
-        }
-        for gone in ("is_temporary", "appointment_id", "original_therapist_id"):
-            self.assertNotIn(gone, columns, f"{gone} 已随排期功能下线删除，不应重新出现")
+        columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(treatment_record)")}
+        for gone in ("is_temporary", "appointment_id", "original_therapist_id", "session_period"):
+            self.assertNotIn(gone, columns, f"{gone} 已删除，不应重新出现")
 
 
-class TestTimeline(SeededApiTestCase):
-    def setUp(self) -> None:
-        super().setUp()
-        for day, note in (("2027-03-01", "第一次"), ("2027-03-03", "第二次")):
-            self.client.post(
-                "/api/v1/records",
-                json={
-                    "patient_no": "ZY001", "record_date": day, "session_period": "am",
-                    "status": "submitted", "note": note,
-                    "items": [{"main_item_id": self.main_item_id("motor_function"),
-                               "sub_item_id": self.sub_item_id("motor_function_01"), "params": {"side": "左"}}],
-                },
-                headers=self.h1,
+class TestRecordForm(RecordTestCase):
+    """`GET /records/form`：该填哪份文书 + 预填 + 已存在的那条。"""
+
+    def form(self, **params) -> dict:
+        defaults = {"patient_no": "ZY001", "discipline": DISCIPLINE}
+        defaults.update(params)
+        resp = self.client.get("/api/v1/records/form", params=defaults, headers=self.h1)
+        self.assertEqual(resp.status_code, 200, resp.text)
+        return resp.json()
+
+    def test_first_visit_asks_for_initial(self) -> None:
+        body = self.form()
+        self.assertEqual(body["pending_document"], "initial")
+        self.assertEqual(body["kind"], "initial", "缺评估文书时先弹它")
+        self.assertEqual(body["kind_label"], "首评")
+        self.assertEqual(body["next_seq"], 1)
+        self.assertEqual(body["total_daily"], 0)
+        self.assertEqual(body["discipline_name"], "运动")
+        self.assertEqual(body["title"], "康复初始评定（PT运动）")
+        self.assertEqual([s["key"] for s in body["soap"]], ["s", "o", "a", "p"])
+        self.assertEqual(body["footer"], ["治疗师签名：__________"])
+        self.assertIsNone(body["existing"])
+
+    def test_after_initial_asks_for_daily(self) -> None:
+        self.create_ok(kind="initial", body=initial_body())
+        body = self.form()
+        self.assertIsNone(body["pending_document"])
+        self.assertEqual(body["kind"], "daily")
+        self.assertEqual(body["kind_label"], "日常治疗记录")
+        self.assertEqual(body["next_seq"], 1, "首评不占次数")
+        self.assertEqual(body["total_daily"], 0)
+
+    def test_daily_prefill_only_carries_therapy_items(self) -> None:
+        """日常记录**只**预填「本次训练项目」（其余项每天都要重新判断）。"""
+        self.create_ok(kind="initial", body=initial_body())
+        self.create_ok(kind="daily", body=daily_body(vas=7, mental="差"))
+        body = self.form()
+        self.assertEqual(body["prefill"], {"therapy_items": ["偏瘫肢体综合训练"]})
+        self.assertEqual(body["prefill_source"], {"therapy_items": "last_daily"})
+
+    def test_second_record_same_day_prefills_first(self) -> None:
+        self.create_ok(kind="initial", body=initial_body())
+        self.create_ok(kind="daily", body=daily_body(vas=6, mental="一般"))
+        body = self.form(date="2027-03-01")
+        self.assertIsNone(body["existing"], "已提交的那条不拦着当天第 2 条新建")
+        self.assertEqual(body["prefill"]["mental"], "一般")
+        self.assertEqual(body["prefill"]["vas"], 6)
+        self.assertEqual(body["prefill_source"]["mental"], "same_day_first")
+
+    def test_draft_daily_is_returned_as_existing(self) -> None:
+        """草稿才是"继续编辑"的对象；已提交的日常只是预填来源。"""
+        self.create_ok(kind="initial", body=initial_body())
+        draft = self.create_ok(kind="daily", body=daily_body(), status="draft")
+        body = self.form(date="2027-03-01")
+        self.assertIsNotNone(body["existing"])
+        self.assertEqual(body["existing"]["id"], draft["id"])
+        self.assertEqual(body["existing"]["status"], "draft")
+
+    def test_form_for_other_date_has_no_existing(self) -> None:
+        """`existing` 是按**该日期**找的：换一天就是新的一条。"""
+        self.create_ok(kind="initial", body=initial_body())
+        self.create_ok(kind="daily", body=daily_body())
+        body = self.form(date="2027-03-02")
+        self.assertIsNone(body["existing"])
+
+    def test_assessment_prefill_uses_last_assessment(self) -> None:
+        self.create_ok(kind="initial", body=initial_body(mmt_lower=2))
+        self.seed_daily(20)
+        body = self.form(record_date="2027-03-01")
+        self.assertEqual(body["pending_document"], "reassessment")
+        self.assertEqual(body["kind"], "reassessment")
+        self.assertEqual(body["prefill"]["mmt_lower"], 2, "复评带出上次评估的客观值")
+        self.assertIn(body["prefill_source"]["mmt_lower"], {"last_assessment", "same_day_first"})
+
+    def test_existing_initial_is_returned_for_editing(self) -> None:
+        """显式要首评表单时，`existing` 给出已有那份（App 继续编辑而不是重复新建）。"""
+        record = self.create_ok(kind="initial", body=initial_body())
+        body = self.form(kind="initial")
+        self.assertEqual(body["kind"], "initial")
+        self.assertIsNotNone(body["existing"])
+        self.assertEqual(body["existing"]["id"], record["id"])
+        self.assertEqual(body["existing"]["body"]["diagnosis"], ["偏瘫运动功能障碍"])
+
+    def test_discharge_form_has_auto_summary_against_initial(self) -> None:
+        """出院小结的「治疗过程汇总」由服务端自动生成（模板里 `auto: latest_vs_initial`）。"""
+        self.create_ok(kind="initial", body=initial_body(mmt_lower=2))
+        self.seed_daily(20)
+        self.create_ok(kind="reassessment", record_date="2027-03-01", body=reassessment_body(mmt_lower=3))
+        body = self.form(kind="discharge", record_date="2027-03-02")
+        self.assertEqual(body["kind"], "discharge")
+        self.assertEqual(body["kind_label"], "出院小结")
+        summary = body["prefill"]["summary"]
+        self.assertIn("住院期间共治疗", summary)
+        self.assertIn("患肢肌力MMT 下肢 2级→3级", summary, summary)
+        self.assertEqual(body["prefill_source"]["summary"], "auto")
+        self.assertIsNone(body["existing"])
+
+    def test_form_requires_patient_visibility(self) -> None:
+        patient_model.create_patient(self.conn, inpatient_no="ZY-D", name="已出院患者")
+        patient_model.update_patient(self.conn, "ZY-D", status=patient_model.STATUS_DISCHARGED)
+        resp = self.client.get(
+            "/api/v1/records/form",
+            params={"patient_no": "ZY-D", "discipline": DISCIPLINE},
+            headers=self.h1,
+        )
+        self.assert_error(resp, 403, "PATIENT_NOT_VISIBLE")
+
+    def test_form_unknown_discipline_is_422(self) -> None:
+        resp = self.client.get(
+            "/api/v1/records/form",
+            params={"patient_no": "ZY001", "discipline": "XZ"},
+            headers=self.h1,
+        )
+        self.assert_error(resp, 422, "INVALID")
+
+
+class TestModelLevelRules(RecordTestCase):
+    def test_model_rejects_pending_discharge_patient(self) -> None:
+        from app.models.base import Conflict
+
+        patient_model.update_patient(
+            self.conn, "ZY001", status=patient_model.STATUS_PENDING_DISCHARGE
+        )
+        with self.assertRaises(Conflict):
+            treatment_model.create_record(
+                self.conn,
+                patient_no="ZY001",
+                therapist_id=int(self.t1["id"]),
+                record_date="2027-03-01",
+                discipline="PT",
+                kind="daily",
+                body=daily_body(),
             )
 
-    def test_timeline_is_ordered_desc(self) -> None:
-        body = self.client.get("/api/v1/timeline", headers=self.h1).json()
-        self.assertEqual(len(body["items"]), 2)
-        self.assertEqual([i["record_date"] for i in body["items"]], ["2027-03-03", "2027-03-01"])
+    def test_model_unknown_status(self) -> None:
+        from app.models.base import Invalid
 
-    def test_timeline_includes_main_item_names(self) -> None:
-        body = self.client.get("/api/v1/timeline", headers=self.h1).json()
-        self.assertIn("运动功能障碍训练", body["items"][0]["main_item_names"])
+        with self.assertRaises(Invalid):
+            treatment_model.create_record(
+                self.conn,
+                patient_no="ZY001",
+                therapist_id=int(self.t1["id"]),
+                record_date="2027-03-01",
+                discipline="PT",
+                kind="daily",
+                body=daily_body(),
+                status="whatever",
+            )
 
-    def test_timeline_filters_by_date(self) -> None:
-        body = self.client.get(
-            "/api/v1/timeline", params={"from": "2027-03-02", "to": "2027-03-05"}, headers=self.h1
-        ).json()
-        self.assertEqual(len(body["items"]), 1)
-        self.assertEqual(body["items"][0]["record_date"], "2027-03-03")
-
-    def test_timeline_visible_to_whole_department(self) -> None:
-        """白板：时间轴默认显示全科范围内患者的记录，同事也能看到这两条。"""
-        body = self.client.get("/api/v1/timeline", headers=self.h2).json()
-        self.assertEqual(len(body["items"]), 2)
-        self.assertEqual({i["patient_no"] for i in body["items"]}, {"ZY001"})
-
-    def test_timeline_scope_mine_excludes_colleague_records(self) -> None:
-        """`scope=mine` 仍只看自己的记录（用于"我的记录"页签）。"""
-        body = self.client.get("/api/v1/timeline", params={"scope": "mine"}, headers=self.h2).json()
-        self.assertEqual(body["items"], [])
-
-    def test_timeline_invalid_scope(self) -> None:
-        resp = self.client.get("/api/v1/timeline", params={"scope": "nope"}, headers=self.h1)
-        self.assert_error(resp, 404, "INVALID_SCOPE")
+    def test_record_columns_include_body_and_rendered(self) -> None:
+        columns = treatment_model.record_columns("r")
+        self.assertIn("r.body_json", columns)
+        self.assertIn("r.rendered_text", columns)
 
 
 if __name__ == "__main__":

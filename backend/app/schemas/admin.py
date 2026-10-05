@@ -1,4 +1,8 @@
-"""汇总、打印、模板与审计的请求/响应模型（阶段 5）。"""
+"""汇总、打印与审计的请求/响应模型（阶段 5）。
+
+记录已是 SOAP 纯文本模型（迁移 011），所以汇总行里不再有"主项目 / 子项目 / 参数摘要 /
+患者反应摘要 / 时长"这些旧表格字段 —— 汇总与打印都直接输出 `rendered_text`。
+"""
 
 from __future__ import annotations
 
@@ -6,22 +10,17 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.models.template import SCOPES
-
 
 # --------------------------------------------------------------------------- #
 # 汇总
 # --------------------------------------------------------------------------- #
 class TotalsOut(BaseModel):
-    model_config = ConfigDict(extra="ignore")
+    """计数口径：**只算 `kind='daily'` 且已提交/已锁定**（评估文书不计治疗次数）。"""
 
-    record_count: int = Field(default=0, description="治疗次数（按记录去重）")
-    item_count: int = Field(default=0, description="子项目条目数")
-    total_duration_min: int = 0
+    record_count: int = Field(default=0, description="治疗次数（日常记录，按记录去重）")
     patient_count: int = 0
-    main_item_counts: dict[str, int] = Field(default_factory=dict)
-    sub_item_counts: dict[str, int] = Field(default_factory=dict)
     therapist_counts: dict[str, int] = Field(default_factory=dict)
+    discipline_counts: dict[str, int] = Field(default_factory=dict)
 
 
 class SummaryRowOut(BaseModel):
@@ -29,17 +28,18 @@ class SummaryRowOut(BaseModel):
 
     record_id: int
     record_date: str
-    session_period: str | None = None
     patient_no: str
     patient_name: str | None = None
     therapist_id: int | None = None
     therapist_name: str | None = None
-    main_item_name: str | None = None
-    sub_item_name_snapshot: str | None = None
-    params_digest: str = ""
-    response_digest: str = ""
+    discipline: str
+    discipline_name: str | None = None
+    kind: str
+    kind_label: str | None = None
+    seq_no: int | None = None
+    status: str
     note: str | None = None
-    duration_min: int | None = None
+    rendered_text: str = ""
     is_temporary: int = 0
 
 
@@ -69,17 +69,34 @@ class PatientBriefOut(BaseModel):
     visible_therapist_id: int | None = None
 
 
+class PatientDailyRecordOut(BaseModel):
+    """一天里的一条文书（直接给 `rendered_text`，界面与 PDF 都不再拼表格）。"""
+
+    model_config = ConfigDict(extra="ignore")
+
+    record_id: int
+    discipline: str
+    discipline_name: str | None = None
+    kind: str
+    kind_label: str | None = None
+    seq_no: int | None = None
+    status: str
+    therapist_name: str | None = None
+    is_temporary: int = 0
+    note: str | None = None
+    rendered_text: str = ""
+
+
 class PatientDailyRowOut(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     record_date: str
-    session_periods: list[str] = Field(default_factory=list)
+    record_count: int = Field(default=0, description="当天的**日常**记录条数（评估文书不计）")
     therapists: list[str] = Field(default_factory=list)
-    main_items: list[str] = Field(default_factory=list)
-    sub_items: list[str] = Field(default_factory=list)
-    params: list[str] = Field(default_factory=list)
-    responses: list[str] = Field(default_factory=list)
-    notes: list[str] = Field(default_factory=list)
-    duration_min: int = 0
+    disciplines: list[str] = Field(default_factory=list)
     temporary: bool = False
+    records: list[PatientDailyRecordOut] = Field(default_factory=list)
+    texts: list[str] = Field(default_factory=list, description="当天各条文书的 SOAP 纯文本（按时间顺序）")
 
 
 class PatientDailySummaryOut(BaseModel):
@@ -90,106 +107,28 @@ class PatientDailySummaryOut(BaseModel):
     days: list[PatientDailyRowOut] = Field(default_factory=list)
 
 
-class OverviewItemOut(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    main_item_name: str | None = None
-    sub_item_name: str | None = None
-    params_digest: str = ""
-
-
 class OverviewRecordOut(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     record_no: int
+    record_id: int
     record_date: str
-    session_period: str | None = None
+    discipline: str
+    discipline_name: str | None = None
+    kind: str
+    kind_label: str | None = None
     seq_no: int | None = None
+    status: str
     therapist_name: str | None = None
     is_temporary: bool = False
-    duration_min: int | None = None
     note: str | None = None
-    response_digest: str = ""
-    items: list[OverviewItemOut] = Field(default_factory=list)
+    rendered_text: str = ""
 
 
 class PatientOverviewOut(BaseModel):
     patient: PatientBriefOut
     totals: TotalsOut
     records: list[OverviewRecordOut] = Field(default_factory=list)
-
-
-# --------------------------------------------------------------------------- #
-# 模板
-# --------------------------------------------------------------------------- #
-class TemplateItemIn(BaseModel):
-    sub_item_id: int
-    params: dict[str, Any] = Field(default_factory=dict, description="键为 param_key")
-    sort: int | None = None
-
-
-class TemplateItemOut(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    id: int | None = None
-    template_id: int | None = None
-    sub_item_id: int
-    params: dict[str, Any] = Field(default_factory=dict)
-    sort: int = 0
-
-
-class TemplateOut(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    id: int
-    scope: str
-    owner_user_id: int | None = None
-    main_item_id: int | None = None
-    code: str | None = Field(
-        default=None,
-        description="非空表示这是**种子/标准模板**（身份稳定，可被种子重复导入更新）；"
-        "为空表示用户自建模板，种子不会改动它",
-    )
-    name: str
-    sort: int = 0
-    status: str = "active"
-    items: list[TemplateItemOut] = Field(default_factory=list)
-
-
-class TemplateCreateRequest(BaseModel):
-    name: str = Field(min_length=1, max_length=64)
-    scope: str = Field(default="personal", description=" / ".join(SCOPES))
-    main_item_id: int = Field(
-        description="模板必须归属于某个主项目。"
-        "《设计.md》3.10 的例子是「某主项目下常用子项目组合 + 参数默认值」，"
-        "且库层把 (scope, owner, main_item_id, name) 作为唯一键 —— "
-        "同一治疗师在不同主项目下可以有同名模板。"
-    )
-    items: list[TemplateItemIn] = Field(default_factory=list, description="只能放该主项目下的子项目")
-    sort: int = 0
-
-
-class TemplateUpdateRequest(BaseModel):
-    name: str | None = Field(default=None, min_length=1, max_length=64)
-    main_item_id: int | None = None
-    items: list[TemplateItemIn] | None = None
-    sort: int | None = None
-
-
-class TemplateApplyItemOut(BaseModel):
-    main_item_id: int
-    sub_item_id: int
-    sub_item_name: str | None = None
-    params: dict[str, Any] = Field(default_factory=dict)
-
-
-class TemplateApplyOut(BaseModel):
-    template_id: int
-    name: str
-    scope: str
-    main_item_id: int | None = None
-    items: list[TemplateApplyItemOut] = Field(default_factory=list)
-    note: str = ""
 
 
 # --------------------------------------------------------------------------- #
@@ -222,39 +161,18 @@ class AuditFacetsOut(BaseModel):
     target_types: list[str] = Field(default_factory=list)
 
 
-# --------------------------------------------------------------------------- #
-# 后台：选项集维护
-# --------------------------------------------------------------------------- #
-class DeptOptionSetRequest(BaseModel):
-    code: str = Field(min_length=1, max_length=64)
-    name: str = Field(min_length=1, max_length=64)
-    values: list[str] = Field(min_length=1)
-    dept_tag: str | None = Field(
-        default=None, description="传了就是科室级（dept），不传就是全局（global）"
-    )
-    default_values: list[str] = Field(default_factory=list)
-
-
 __all__ = [
     "AuditFacetsOut",
     "AuditLogListOut",
     "AuditLogOut",
     "DateSummaryOut",
-    "DeptOptionSetRequest",
-    "OverviewItemOut",
     "OverviewRecordOut",
     "PatientBriefOut",
+    "PatientDailyRecordOut",
     "PatientDailyRowOut",
     "PatientDailySummaryOut",
     "PatientOverviewOut",
     "SummaryGroupOut",
     "SummaryRowOut",
-    "TemplateApplyItemOut",
-    "TemplateApplyOut",
-    "TemplateCreateRequest",
-    "TemplateItemIn",
-    "TemplateItemOut",
-    "TemplateOut",
-    "TemplateUpdateRequest",
     "TotalsOut",
 ]

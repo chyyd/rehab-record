@@ -32,10 +32,11 @@ class TestHealthWithFreshDatabase(DbTestCase):
         self.assertEqual(db["foreign_key_violations"], 0)
         self.assertEqual(db["pending_migrations"], [])
         self.assertEqual(db["problems"], [])
-        # 2026-10-05：排期下线删掉 appointment / rest_block / leave_record 三张表（20 → 18），
-        # 临时指派删除又删掉 temporary_assignment（18 → 17）。这里只做"迁移确实建了东西"
-        # 的下界断言，不锁死具体数量。
-        self.assertGreaterEqual(db["table_count"], 17)
+        # 表数量的下界断言（不锁死具体数字）：
+        # 2026-10-05 排期下线删 3 张（20 → 18）；临时指派删除又删 1 张（18 → 17）；
+        # 记录改 SOAP 模板驱动后，`record_item` / `record_template` /
+        # `record_template_item` 随迁移 011 删除、字典六表随迁移 012 删除（17 → 8）。
+        self.assertGreaterEqual(db["table_count"], 8)
 
     def test_health_exposes_q11_worktime(self) -> None:
         """把 Q11 的半日边界暴露出来，调用方（运维 / 客户端）不必自己硬编码时间。"""

@@ -6,8 +6,11 @@
 
 - 治疗师可读：科室当前**在院 / 暂停**的全部患者（不再按归属隔离）；
   已出院默认不可见（管理员可用 `scope=all` 查看全表）。
-- 治疗师可写：只能**认领未分配**、**放弃自己的**、**临时认领临时释放中的**患者。
+- 治疗师可写：只能**认领未分配**、**放弃自己的**的患者。
   **患者主数据（诊断、注意事项、出院/恢复）仍只有管理员能改**（写入仍走 `AdminUser`）。
+  > 唯一的例外是**发起出院**：用户 2026-10-05 明确要求「所有治疗师都能发起出院」
+  > （见本文件末尾的 `request_discharge`），它只把状态推到 `pending_discharge`，
+  > 真正出院仍需管理员确认或满 7 天自动完成。
 - 归属（`assigned_therapist_id`）语义由"可见性闸门"降级为**优先级与文书署名**。
 
 注意：`visible_therapist_id`（可见归属）仍是**归属语义**的判据
@@ -28,6 +31,7 @@ from app.core.db_dep import get_db
 from app.core.errors import ForbiddenError, NotFoundError
 from app.core.security_deps import AdminUser, CurrentUser, is_admin
 from app.models import patient as patient_model
+from app.models import treatment as treatment_model
 from app.models import user as user_model
 from app.models.base import DomainError, Forbidden
 from app.models.patient import ACTIVE_STATUSES
@@ -35,6 +39,7 @@ from app.schemas.patient import (
     SCOPE_DESCRIPTION,
     AssignmentHistoryOut,
     AssignRequest,
+    DischargeRequest,
     PatientCreateRequest,
     PatientListOut,
     PatientOut,
@@ -255,6 +260,81 @@ def assignment_history(
     patient = patient_model.get_patient_or_raise(conn, inpatient_no)
     _require_view(user, patient)
     return patient_model.assignment_history(conn, inpatient_no)
+
+
+# --------------------------------------------------------------------------- #
+# 出院流程（用户 2026-10-05 要求）
+# --------------------------------------------------------------------------- #
+@router.post("/{inpatient_no}/discharge", response_model=PatientOut, summary="发起出院（任何治疗师）")
+def request_discharge(
+    inpatient_no: str,
+    payload: DischargeRequest,
+    user: CurrentUser,
+    conn: Annotated[sqlite3.Connection, Depends(get_db)],
+) -> dict[str, Any]:
+    """提交出院小结后把患者置为**待出院**。
+
+    ⚠ **权限口径是用户的明确决定**：这里用 `CurrentUser` 而不是 `AdminUser` ——
+    用户要求「所有治疗师都能发起出院」（治疗师才是填小结的人）。
+    这与"患者主数据只有管理员能改"的旧口径不同，但**管理员专用的
+    `PUT /patients/{inpatient_no}` 改状态接口保持不动**（仍可任意改回）。
+
+    真正出院仍需管理员 `POST .../discharge/confirm`，或满 7 天由
+    `app.cli auto-discharge` 自动完成。
+    """
+    before = patient_model.get_patient_or_raise(conn, inpatient_no)
+    # 注意这里**不能**直接用 `_require_view`：患者提交出院小结的瞬间就可能已经是
+    # `pending_discharge`（见 api/v1/records.py::_mark_pending_discharge），而
+    # `pending_discharge` 刻意不在 ACTIVE_STATUSES 里（要从治疗师白板消失）。
+    # 出院动作本身必须是幂等的，所以"已待出院"也放行。
+    if not is_admin(user) and before["status"] not in (
+        *ACTIVE_STATUSES,
+        patient_model.STATUS_PENDING_DISCHARGE,
+    ):
+        raise ForbiddenError(
+            "PATIENT_NOT_VISIBLE", "无权操作该患者", details={"inpatient_no": inpatient_no}
+        )
+    # 必须指向该患者**已提交**的出院小结（出院不是点按钮，而是"文书写完了"）
+    record = treatment_model.submitted_discharge_summary(conn, inpatient_no, payload.record_id)
+    after = patient_model.mark_pending_discharge(conn, inpatient_no, operator_user_id=int(user["id"]))
+    write_audit(conn, user_id=int(user["id"]), action="discharge_request", target_type="patient",
+                target_id=inpatient_no,
+                before={"status": before["status"]},
+                after={"status": after["status"], "record_id": record["id"]})
+    return after
+
+
+@router.post(
+    "/{inpatient_no}/discharge/confirm", response_model=PatientOut, summary="确认出院（管理员）"
+)
+def confirm_discharge(
+    inpatient_no: str,
+    admin: AdminUser,
+    conn: Annotated[sqlite3.Connection, Depends(get_db)],
+) -> dict[str, Any]:
+    """待出院 → 已出院（管理员确认）。"""
+    after = patient_model.confirm_discharge(conn, inpatient_no)
+    write_audit(conn, user_id=int(admin["id"]), action="discharge_confirm", target_type="patient",
+                target_id=inpatient_no, before={"status": patient_model.STATUS_PENDING_DISCHARGE},
+                after={"status": after["status"]})
+    return after
+
+
+@router.post(
+    "/{inpatient_no}/discharge/cancel", response_model=PatientOut, summary="取消待出院（管理员）"
+)
+def cancel_discharge(
+    inpatient_no: str,
+    admin: AdminUser,
+    conn: Annotated[sqlite3.Connection, Depends(get_db)],
+) -> dict[str, Any]:
+    """取消待出院 → 回在院（管理员纠正误操作）。"""
+    before = patient_model.get_patient_or_raise(conn, inpatient_no)
+    after = patient_model.cancel_pending_discharge(conn, inpatient_no)
+    write_audit(conn, user_id=int(admin["id"]), action="discharge_cancel", target_type="patient",
+                target_id=inpatient_no, before={"status": before["status"]},
+                after={"status": after["status"]})
+    return after
 
 
 __all__ = ["router"]

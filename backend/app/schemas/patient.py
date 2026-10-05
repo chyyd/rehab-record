@@ -52,6 +52,16 @@ class AssignRequest(BaseModel):
     therapist_id: int | None = Field(default=None, description="传 null 表示清除归属")
 
 
+class DischargeRequest(BaseModel):
+    """发起出院（用户 2026-10-05：任何治疗师都能做）。
+
+    必须带上**该患者已提交的出院小结**的 `record_id` —— 出院不是点一下按钮，
+    而是"这份小结写完了"，所以请求体里必须有那份文书。
+    """
+
+    record_id: int = Field(description="该患者已提交的出院小结记录 id")
+
+
 class PatientListOut(BaseModel):
     items: list[PatientOut]
     total: int
@@ -76,6 +86,7 @@ __all__ = [
     "SCOPE_DESCRIPTION",
     "AssignRequest",
     "AssignmentHistoryOut",
+    "DischargeRequest",
     "PatientCreateRequest",
     "PatientListOut",
     "PatientOut",

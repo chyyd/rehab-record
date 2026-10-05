@@ -22,7 +22,6 @@ import threading
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 
-from seed.dictionary import seed_dictionary
 from tests.api_base import ApiTestCase
 from tests.support import DbTestCase
 
@@ -89,8 +88,8 @@ class TestStorageCrossThread(DbTestCase):
         def writer() -> None:
             assert self.conn is not None
             self.conn.execute(
-                "INSERT INTO main_item (name, code, sort, status) VALUES (?, ?, ?, 'active')",
-                ("跨线程项目", "cross_thread_item", 999),
+                "INSERT INTO patient (inpatient_no, name) VALUES (?, ?)",
+                ("CROSS001", "跨线程患者"),
             )
 
         thread = threading.Thread(target=writer)
@@ -99,7 +98,7 @@ class TestStorageCrossThread(DbTestCase):
 
         assert self.conn is not None
         row = self.conn.execute(
-            "SELECT id FROM main_item WHERE code = ?", ("cross_thread_item",)
+            "SELECT inpatient_no FROM patient WHERE inpatient_no = ?", ("CROSS001",)
         ).fetchone()
         self.assertIsNotNone(row, "跨线程写入应当生效并可见")
 
@@ -110,21 +109,18 @@ class TestConcurrentApiRequests(ApiTestCase):
     def setUp(self) -> None:
         super().setUp()
         self.migrate()
-        seed_dictionary(self.conn)
         self.admin = self.make_admin("A001")
         self.headers = self.login_headers("A001")
 
     # 覆盖各模块的列表接口，与后台首页同时发起的请求基本一致
+    # （字典 / 选项集 / 模板接口已随迁移 011/012 删除，模板改由 templates/*.json 承载）
     ENDPOINTS = [
         "/api/v1/patients?page=1&page_size=1",
         "/api/v1/users?page=1&page_size=5",
         "/api/v1/records?page=1&page_size=1",
+        "/api/v1/records/enums",
         "/api/v1/audit-logs?page=1&page_size=5",
-        "/api/v1/dict/tree",
-        "/api/v1/templates",
         "/api/v1/summary/date?date=2027-03-01",
-        "/api/v1/admin/option-sets?scope=global",
-        "/api/v1/response-defs",
         # 排期 / 请假接口已于 2026-10-05 随功能下线删除
         "/api/v1/timeline?page=1&page_size=1",
     ]
@@ -150,7 +146,7 @@ class TestConcurrentApiRequests(ApiTestCase):
         urls = [
             "/api/v1/patients?page=1&page_size=1",
             "/api/v1/users?page=1&page_size=5",
-            "/api/v1/dict/tree",
+            "/api/v1/records/enums",
         ]
         for round_index in range(5):
             with ThreadPoolExecutor(max_workers=6) as pool:

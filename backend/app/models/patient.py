@@ -36,10 +36,21 @@ from app.models.base import Conflict, NotFound, row_to_dict
 STATUS_IN_HOSPITAL = "in_hospital"
 STATUS_DISCHARGED = "discharged"
 STATUS_PAUSED = "paused"
-PATIENT_STATUSES = (STATUS_IN_HOSPITAL, STATUS_DISCHARGED, STATUS_PAUSED)
+# 2026-10-05（迁移 013）：治疗师提交出院小结后进入"待出院"，等管理员确认或满 7 天自动出院
+#（用户：「填完小结即待出院」+「1 周后自动出院」）。
+STATUS_PENDING_DISCHARGE = "pending_discharge"
+PATIENT_STATUSES = (
+    STATUS_IN_HOSPITAL,
+    STATUS_DISCHARGED,
+    STATUS_PAUSED,
+    STATUS_PENDING_DISCHARGE,
+)
 
 # "白板"上默认可见的状态（2026-10-03 全科白板决策）：
 # 在院与暂停都属于"当前在科室里的患者"；已出院默认隐藏，需要时用 status 筛选显式查。
+#
+# ★ `pending_discharge` **刻意不在**这里：患者已经填完出院小结、等着办手续，
+#   不该再出现在治疗师白板上（也就不会再被误记新记录）。管理员仍可用 scope=all 查看。
 ACTIVE_STATUSES = (STATUS_IN_HOSPITAL, STATUS_PAUSED)
 
 # 可用的数据范围（D10）。
@@ -226,11 +237,15 @@ def list_patients(
     if user_id is None:
         order_sql = "ORDER BY p.inpatient_no"
     else:
+        # 组内按"我最近一次已提交治疗"降序；同一天不再区分上午/下午 ——
+        # 迁移 011 删掉了 `session_period`，`v_patient_last_treated` 只剩 last_date
+        #（旧代码这里还 ORDER BY l.last_period_rank，那一列已不存在，会直接报
+        # "no such column: l.last_period_rank"）。
         order_sql = (
             "ORDER BY CASE WHEN v.visible_therapist_id = ? THEN 0"
             " WHEN v.visible_therapist_id IS NULL THEN 1 ELSE 2 END,"
             " COALESCE(l.last_date, '0000-01-01') DESC,"
-            " COALESCE(l.last_period_rank, 9), p.inpatient_no"
+            " p.inpatient_no"
         )
         order_params.append(user_id)
 
@@ -395,6 +410,102 @@ def release_all_for_therapist(
     return numbers
 
 
+# --------------------------------------------------------------------------- #
+# 出院流程（2026-10-05 用户要求）
+# --------------------------------------------------------------------------- #
+def mark_pending_discharge(
+    conn: sqlite3.Connection, inpatient_no: str, *, operator_user_id: int | None = None
+) -> dict[str, Any]:
+    """在院/暂停 → 待出院。
+
+    ⚠ **权限口径的用户决定**：发起出院**任何治疗师都能做**（不是 AdminUser），
+    因为治疗师才是填出院小结的人；管理员的专用改状态接口 `PUT /patients/{no}`
+    保持不动，仍可改回任何状态。真正落地出院仍需管理员确认（或满 7 天自动出院）。
+    """
+    patient = get_patient_or_raise(conn, inpatient_no)
+    if patient["status"] == STATUS_PENDING_DISCHARGE:
+        return patient
+    if patient["status"] == STATUS_DISCHARGED:
+        raise Conflict(
+            "该患者已出院", details={"inpatient_no": inpatient_no, "status": patient["status"]}
+        )
+    return update_patient(conn, inpatient_no, status=STATUS_PENDING_DISCHARGE)
+
+
+def confirm_discharge(conn: sqlite3.Connection, inpatient_no: str) -> dict[str, Any]:
+    """待出院 → 已出院（**管理员**确认）。"""
+    patient = get_patient_or_raise(conn, inpatient_no)
+    if patient["status"] != STATUS_PENDING_DISCHARGE:
+        raise Conflict(
+            "只有待出院的患者可以确认出院",
+            details={"inpatient_no": inpatient_no, "status": patient["status"]},
+        )
+    return update_patient(conn, inpatient_no, status=STATUS_DISCHARGED)
+
+
+def cancel_pending_discharge(conn: sqlite3.Connection, inpatient_no: str) -> dict[str, Any]:
+    """取消待出院 → 回在院（**管理员**纠正误操作）。"""
+    patient = get_patient_or_raise(conn, inpatient_no)
+    if patient["status"] != STATUS_PENDING_DISCHARGE:
+        raise Conflict(
+            "只有待出院的患者可以取消待出院",
+            details={"inpatient_no": inpatient_no, "status": patient["status"]},
+        )
+    return update_patient(conn, inpatient_no, status=STATUS_IN_HOSPITAL)
+
+
+def pending_discharge_since(conn: sqlite3.Connection, inpatient_no: str) -> str | None:
+    """该患者"进入待出院"的时刻（用于「满 7 天自动出院」）。
+
+    真源是**出院小结的提交时间**（`treatment_record.submitted_at`）：
+    那是患者进入待出院状态的业务时刻，且是可追溯的文书时间戳，
+    不在 `patient` 上另存一个"何时变的状态"（存了就会与文书不一致）。
+    万一找不到出院小结（例如管理员直接 `PUT` 改的状态），退回 `patient.updated_at`。
+    """
+    row = conn.execute(
+        "SELECT MAX(submitted_at) AS at FROM treatment_record"
+        " WHERE patient_no = ? AND kind = 'discharge' AND status IN ('submitted', 'locked')",
+        (inpatient_no,),
+    ).fetchone()
+    if row is not None and row["at"]:
+        return str(row["at"])
+    fallback = conn.execute(
+        "SELECT updated_at FROM patient WHERE inpatient_no = ?", (inpatient_no,)
+    ).fetchone()
+    return str(fallback["updated_at"]) if fallback is not None else None
+
+
+def auto_discharge_pending(
+    conn: sqlite3.Connection, *, days: int = 7, now: str | None = None, dry_run: bool = False
+) -> list[str]:
+    """待出院满 `days` 天的患者自动出院（用户明确要求「1 周后自动出院」「真的自动」）。
+
+    比较用**UTC ISO 字符串**（与库层时间戳同格式，可直接字典序比较）；
+    时钟可由 `now` 注入，便于测试与补跑。返回被（或将被）自动出院的住院编号。
+    """
+    from datetime import UTC, datetime, timedelta
+
+    stamp = now or datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+    cutoff = (datetime.fromisoformat(stamp.replace("Z", "+00:00")) - timedelta(days=days)).strftime(
+        "%Y-%m-%dT%H:%M:%S.%f"
+    )[:-3] + "Z"
+
+    rows = conn.execute(
+        "SELECT inpatient_no FROM patient WHERE status = ? ORDER BY inpatient_no",
+        (STATUS_PENDING_DISCHARGE,),
+    ).fetchall()
+    discharged: list[str] = []
+    for row in rows:
+        inpatient_no = str(row["inpatient_no"])
+        since = pending_discharge_since(conn, inpatient_no)
+        if since is None or since > cutoff:
+            continue
+        discharged.append(inpatient_no)
+        if not dry_run:
+            update_patient(conn, inpatient_no, status=STATUS_DISCHARGED)
+    return discharged
+
+
 def assignment_history(conn: sqlite3.Connection, inpatient_no: str) -> list[dict[str, Any]]:
     get_patient_or_raise(conn, inpatient_no)
     rows = conn.execute(
@@ -410,20 +521,27 @@ def assignment_history(conn: sqlite3.Connection, inpatient_no: str) -> list[dict
 
 
 __all__ = [
+    "ACTIVE_STATUSES",
     "PATIENT_STATUSES",
     "SELECT_COLUMN_NAMES",
     "STATUS_DISCHARGED",
     "STATUS_IN_HOSPITAL",
     "STATUS_PAUSED",
+    "STATUS_PENDING_DISCHARGE",
     "Scope",
     "VISIBILITY_VIEW_SQL",
     "assign_patient",
     "assignment_history",
+    "auto_discharge_pending",
+    "cancel_pending_discharge",
     "claim_patient",
+    "confirm_discharge",
     "create_patient",
     "get_patient",
     "get_patient_or_raise",
     "list_patients",
+    "mark_pending_discharge",
+    "pending_discharge_since",
     "release_all_for_therapist",
     "release_patient",
     "update_patient",

@@ -456,21 +456,35 @@ class TestPatientListOrdering(ApiTestCase):
         headers: dict,
         *,
         status: str = "submitted",
-        period: str = "am",
     ) -> dict:
-        """写一条记录：只有 `submitted` 会进 `v_patient_last_treated`。"""
-        resp = self.client.post(
-            "/api/v1/records",
-            json={
-                "patient_no": patient_no,
-                "record_date": record_date,
-                "session_period": period,
-                "status": status,
-            },
-            headers=headers,
+        """写一条**日常**记录：只有 `submitted` 的日常记录会进 `v_patient_last_treated`。
+
+        这里直接落库（不走 API）—— 本组用例测的是患者列表排序，
+        只需要"该患者在该日期被我治疗过"这个事实；走 API 还要先补首评、
+        受"同一天至多 2 条"与门禁约束，噪声太大。
+        """
+        seq = int(
+            self.conn.execute(
+                "SELECT COUNT(*) FROM treatment_record WHERE patient_no = ? AND discipline = 'PT'"
+                "   AND kind = 'daily'",
+                (patient_no,),
+            ).fetchone()[0]
+        ) + 1
+        cur = self.conn.execute(
+            "INSERT INTO treatment_record"
+            " (patient_no, therapist_id, record_date, discipline, kind, seq_no, body_json,"
+            "  rendered_text, status, submitted_at)"
+            " VALUES (?, ?, ?, 'PT', 'daily', ?, '{}', '康复治疗记录', ?, ?)",
+            (
+                patient_no,
+                int(self.t1["id"]),
+                record_date,
+                seq,
+                status,
+                "2027-03-01T00:00:00.000Z" if status == "submitted" else None,
+            ),
         )
-        self.assertEqual(resp.status_code, 201, resp.text)
-        return resp.json()
+        return {"id": int(cur.lastrowid)}
 
     def _order(self, headers: dict | None = None) -> list[str]:
         resp = self.client.get("/api/v1/patients", headers=headers or self.h1)
@@ -490,12 +504,17 @@ class TestPatientListOrdering(ApiTestCase):
         self._record("ZY002", "2027-03-09", self.h1)
         self.assertEqual(self._order(), ["ZY004", "ZY001", "ZY003", "ZY002"])
 
-    def test_same_day_orders_am_before_pm(self) -> None:
-        """同一天时按半日：上午在下午之前（视图取当天最早的半日）。"""
+    def test_same_day_orders_by_patient_no(self) -> None:
+        """同一天只按住院编号稳定排序。
+
+        > 旧行为是"同一天上午在下午之前"（视图取当天最早的半日）。迁移 011 删掉了
+        > `session_period`，`v_patient_last_treated` 只剩 `last_date`，
+        > 所以这条排序规则**已随半日概念一起消失**。
+        """
         self._add_patient("ZY004", "我的另一个患者", int(self.t1["id"]))
-        self._record("ZY001", "2027-03-01", self.h1, period="pm")
-        self._record("ZY004", "2027-03-01", self.h1, period="am")
-        self.assertEqual(self._order(), ["ZY004", "ZY001", "ZY003", "ZY002"])
+        self._record("ZY001", "2027-03-01", self.h1)
+        self._record("ZY004", "2027-03-01", self.h1)
+        self.assertEqual(self._order(), ["ZY001", "ZY004", "ZY003", "ZY002"])
 
     def test_draft_and_locked_records_do_not_count_as_treatment(self) -> None:
         """口径（迁移 007 明确写定）：只算 `submitted`。
