@@ -1,15 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'package:rehab_app/core/date_utils.dart';
+import 'package:rehab_app/core/worktime.dart';
 import 'package:rehab_app/features/patients/patients_providers.dart';
+import 'package:rehab_app/features/records/record_page.dart';
+import 'package:rehab_app/features/records/record_providers.dart';
 
-/// 患者详情（一期只读）。
+/// 患者详情。
 ///
 /// **注意事项（`admin_note`）要醒目**：治疗师只读、由管理员维护，
 /// 床旁最怕漏看"注意防跌倒"这类信息，所以放在最上面且用错误色。
 ///
-/// 时间轴与治疗记录列表在下一步接入（依赖记录表单），此处先给出明确占位，
-/// 不用假的空列表 —— 那会让人以为"这个患者没做过治疗"。
+/// 记录列表走**本地库**（响应式）：离线也能看历史、继续写没写完的草稿。
 class PatientDetailPage extends ConsumerWidget {
   const PatientDetailPage({super.key, required this.inpatientNo});
 
@@ -22,6 +25,11 @@ class PatientDetailPage extends ConsumerWidget {
 
     return Scaffold(
       appBar: AppBar(title: const Text('患者详情')),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () => _openRecord(context, null),
+        icon: const Icon(Icons.edit_note),
+        label: const Text('记录治疗'),
+      ),
       body: patient.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => Center(child: Text('$e')),
@@ -31,8 +39,10 @@ class PatientDetailPage extends ConsumerWidget {
           }
 
           final note = p.adminNote?.trim() ?? '';
+          final records = ref.watch(localRecordsProvider(inpatientNo));
+
           return ListView(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 96),
             children: [
               if (note.isNotEmpty)
                 Container(
@@ -97,25 +107,80 @@ class PatientDetailPage extends ConsumerWidget {
                     ? '未分配'
                     : '治疗师 #${p.assignedTherapistId}',
               ),
-              _InfoRow(label: '可见归属解析', value: p.visibilityState ?? '—'),
 
               const Divider(height: 32),
-              Row(
-                children: [
-                  Icon(Icons.construction_outlined, color: theme.colorScheme.outline),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      '治疗记录与时间轴将在记录页接入后显示在此处（下一步）。',
-                      style: theme.textTheme.bodySmall
-                          ?.copyWith(color: theme.colorScheme.outline),
-                    ),
-                  ),
-                ],
+              Text('治疗记录', style: theme.textTheme.titleMedium),
+              const SizedBox(height: 4),
+              Text(
+                '按日期倒序；未上传的草稿标「待上传」',
+                style: TextStyle(fontSize: 12, color: theme.colorScheme.outline),
+              ),
+              const SizedBox(height: 8),
+
+              records.when(
+                loading: () => const Padding(
+                  padding: EdgeInsets.all(16),
+                  child: Center(child: CircularProgressIndicator()),
+                ),
+                error: (e, _) => Text('$e'),
+                data: (rows) => rows.isEmpty
+                    ? const Padding(
+                        padding: EdgeInsets.symmetric(vertical: 16),
+                        child: Text('还没有治疗记录'),
+                      )
+                    : Column(
+                        children: [
+                          for (final r in rows)
+                            ListTile(
+                              contentPadding: EdgeInsets.zero,
+                              leading: CircleAvatar(
+                                radius: 18,
+                                child: Text('${r.seqNo ?? '草'}',
+                                    style: const TextStyle(fontSize: 12)),
+                              ),
+                              title: Text(
+                                '${shortDateFromIso(r.recordDate)}'
+                                '${r.sessionPeriod == null ? '' : ' ${periodLabel(r.sessionPeriod!)}'}'
+                                ' · ${r.status == 'draft' ? '草稿' : '已提交'}',
+                              ),
+                              subtitle: Text(
+                                [
+                                  if (r.seqNo != null) '第 ${r.seqNo} 次',
+                                  if (r.durationMin != null) '${r.durationMin} 分钟',
+                                  if (r.note != null && r.note!.isNotEmpty) r.note!,
+                                  if (r.syncStatus == 'pending') '待上传',
+                                ].join(' · '),
+                              ),
+                              trailing: r.syncStatus == 'pending'
+                                  ? Icon(Icons.cloud_upload_outlined,
+                                      size: 18, color: theme.colorScheme.outline)
+                                  : const Icon(Icons.chevron_right),
+                              // 只允许继续编辑本地草稿；已推送的记录属于"时间轴/修正"
+                              // 的范畴，留到下一步做（避免这里出现半套编辑语义）。
+                              onTap: r.id < 0
+                                  ? () => _openRecord(context, r.id)
+                                  : null,
+                            ),
+                        ],
+                      ),
               ),
             ],
           );
         },
+      ),
+    );
+  }
+
+  void _openRecord(BuildContext context, int? existingId) {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => RecordPage(
+          args: RecordEditorArgs(
+            patientNo: inpatientNo,
+            existingId: existingId,
+            recordDate: formatDate(DateTime.now()),
+          ),
+        ),
       ),
     );
   }

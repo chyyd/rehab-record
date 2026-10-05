@@ -125,11 +125,15 @@ class SyncEngine {
   ///
   /// [baseRevision] 必须是本地记录的、服务端**已知的**版本号。若本地行从未同步过
   /// （`revision == 0` 且无服务端 id），应改用 [enqueueInsert]。
+  ///
+  /// 但有个例外必须支持**传 null**：本地新建的草稿（负数占位 id）随后又被修改时，
+  /// 服务端还不知道这个 `client_uuid`。此时不带 `base_revision` 提交，服务端按
+  /// upsert 处理 —— 结果正确，且不违反协议 §4.4（带**过期**基线才会被误判成冲突）。
   Future<void> enqueueUpdate({
     required String entity,
     required String clientUuid,
     required Map<String, dynamic> payload,
-    required int baseRevision,
+    required int? baseRevision,
   }) =>
       _enqueue(
         entity: entity,

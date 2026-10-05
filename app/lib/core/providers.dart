@@ -6,6 +6,7 @@ import 'package:rehab_app/data/local/token_store.dart';
 import 'package:rehab_app/data/remote/api_client.dart';
 import 'package:rehab_app/data/remote/auth_service.dart';
 import 'package:rehab_app/data/repo/patient_repository.dart';
+import 'package:rehab_app/data/repo/record_repository.dart';
 import 'package:rehab_app/data/repo/schedule_repository.dart';
 import 'package:rehab_app/sync/sync_engine.dart';
 
@@ -24,6 +25,7 @@ class AppServices {
     required this.db,
     required this.patients,
     required this.schedule,
+    required this.records,
     required this.sync,
   });
 
@@ -34,6 +36,7 @@ class AppServices {
   final AppDatabase db;
   final PatientRepository patients;
   final ScheduleRepository schedule;
+  final RecordRepository records;
   final SyncEngine sync;
 
   Future<void> dispose() async {
@@ -99,6 +102,7 @@ Future<AppServices> _buildServices(Ref ref) async {
     db: db,
     patients: PatientRepository(client: client, db: db),
     schedule: ScheduleRepository(client: client, db: db, sync: sync),
+    records: RecordRepository(client: client, db: db, sync: sync),
     sync: sync,
   );
 }

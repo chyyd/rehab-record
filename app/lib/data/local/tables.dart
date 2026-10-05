@@ -91,6 +91,14 @@ class TreatmentRecords extends Table {
   TextColumn get clientUuid => text().nullable()();
   TextColumn get syncStatus => text().withDefault(const Constant('synced'))();
 
+  /// 明细快照（JSON 数组），**仅用于离线草稿**。
+  ///
+  /// 为什么需要它：服务端返回的 `payload.items` 里带着两层快照
+  /// （`sub_item_name_snapshot` + `params_snapshot_json`），所以**已同步**记录的明细
+  /// 走 `record_items` 表。但本地新建、**尚未推送**的草稿没有服务端 id，
+  /// 明细只能先整体存成一列 JSON；推送成功后由同步引擎落成 `record_items` 行。
+  TextColumn get pendingItemsJson => text().nullable()();
+
   @override
   Set<Column> get primaryKey => {id};
 }

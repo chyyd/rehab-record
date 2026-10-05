@@ -34,12 +34,19 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 2;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
         onCreate: (Migrator m) async {
           await m.createAll();
+        },
+        onUpgrade: (Migrator m, int from, int to) async {
+          // v2：记录页的离线草稿要把"尚未推送的明细"整体存成一列 JSON
+          //（本地新建的草稿没有服务端 id，走不了 record_items 表）。
+          if (from < 2) {
+            await m.addColumn(treatmentRecords, treatmentRecords.pendingItemsJson);
+          }
         },
         beforeOpen: (details) async {
           // 外键约束默认是关的，必须显式打开（与服务端一致的做法）。

@@ -1629,6 +1629,17 @@ class $TreatmentRecordsTable extends TreatmentRecords
     requiredDuringInsert: false,
     defaultValue: const Constant('synced'),
   );
+  static const VerificationMeta _pendingItemsJsonMeta = const VerificationMeta(
+    'pendingItemsJson',
+  );
+  @override
+  late final GeneratedColumn<String> pendingItemsJson = GeneratedColumn<String>(
+    'pending_items_json',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   @override
   List<GeneratedColumn> get $columns => [
     id,
@@ -1648,6 +1659,7 @@ class $TreatmentRecordsTable extends TreatmentRecords
     originalTherapistId,
     clientUuid,
     syncStatus,
+    pendingItemsJson,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -1787,6 +1799,15 @@ class $TreatmentRecordsTable extends TreatmentRecords
         syncStatus.isAcceptableOrUnknown(data['sync_status']!, _syncStatusMeta),
       );
     }
+    if (data.containsKey('pending_items_json')) {
+      context.handle(
+        _pendingItemsJsonMeta,
+        pendingItemsJson.isAcceptableOrUnknown(
+          data['pending_items_json']!,
+          _pendingItemsJsonMeta,
+        ),
+      );
+    }
     return context;
   }
 
@@ -1864,6 +1885,10 @@ class $TreatmentRecordsTable extends TreatmentRecords
         DriftSqlType.string,
         data['${effectivePrefix}sync_status'],
       )!,
+      pendingItemsJson: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}pending_items_json'],
+      ),
     );
   }
 
@@ -1899,6 +1924,14 @@ class TreatmentRecord extends DataClass implements Insertable<TreatmentRecord> {
   final int? originalTherapistId;
   final String? clientUuid;
   final String syncStatus;
+
+  /// 明细快照（JSON 数组），**仅用于离线草稿**。
+  ///
+  /// 为什么需要它：服务端返回的 `payload.items` 里带着两层快照
+  /// （`sub_item_name_snapshot` + `params_snapshot_json`），所以**已同步**记录的明细
+  /// 走 `record_items` 表。但本地新建、**尚未推送**的草稿没有服务端 id，
+  /// 明细只能先整体存成一列 JSON；推送成功后由同步引擎落成 `record_items` 行。
+  final String? pendingItemsJson;
   const TreatmentRecord({
     required this.id,
     required this.patientNo,
@@ -1917,6 +1950,7 @@ class TreatmentRecord extends DataClass implements Insertable<TreatmentRecord> {
     this.originalTherapistId,
     this.clientUuid,
     required this.syncStatus,
+    this.pendingItemsJson,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -1954,6 +1988,9 @@ class TreatmentRecord extends DataClass implements Insertable<TreatmentRecord> {
       map['client_uuid'] = Variable<String>(clientUuid);
     }
     map['sync_status'] = Variable<String>(syncStatus);
+    if (!nullToAbsent || pendingItemsJson != null) {
+      map['pending_items_json'] = Variable<String>(pendingItemsJson);
+    }
     return map;
   }
 
@@ -1990,6 +2027,9 @@ class TreatmentRecord extends DataClass implements Insertable<TreatmentRecord> {
           ? const Value.absent()
           : Value(clientUuid),
       syncStatus: Value(syncStatus),
+      pendingItemsJson: pendingItemsJson == null && nullToAbsent
+          ? const Value.absent()
+          : Value(pendingItemsJson),
     );
   }
 
@@ -2020,6 +2060,7 @@ class TreatmentRecord extends DataClass implements Insertable<TreatmentRecord> {
       ),
       clientUuid: serializer.fromJson<String?>(json['clientUuid']),
       syncStatus: serializer.fromJson<String>(json['syncStatus']),
+      pendingItemsJson: serializer.fromJson<String?>(json['pendingItemsJson']),
     );
   }
   @override
@@ -2043,6 +2084,7 @@ class TreatmentRecord extends DataClass implements Insertable<TreatmentRecord> {
       'originalTherapistId': serializer.toJson<int?>(originalTherapistId),
       'clientUuid': serializer.toJson<String?>(clientUuid),
       'syncStatus': serializer.toJson<String>(syncStatus),
+      'pendingItemsJson': serializer.toJson<String?>(pendingItemsJson),
     };
   }
 
@@ -2064,6 +2106,7 @@ class TreatmentRecord extends DataClass implements Insertable<TreatmentRecord> {
     Value<int?> originalTherapistId = const Value.absent(),
     Value<String?> clientUuid = const Value.absent(),
     String? syncStatus,
+    Value<String?> pendingItemsJson = const Value.absent(),
   }) => TreatmentRecord(
     id: id ?? this.id,
     patientNo: patientNo ?? this.patientNo,
@@ -2090,6 +2133,9 @@ class TreatmentRecord extends DataClass implements Insertable<TreatmentRecord> {
         : this.originalTherapistId,
     clientUuid: clientUuid.present ? clientUuid.value : this.clientUuid,
     syncStatus: syncStatus ?? this.syncStatus,
+    pendingItemsJson: pendingItemsJson.present
+        ? pendingItemsJson.value
+        : this.pendingItemsJson,
   );
   TreatmentRecord copyWithCompanion(TreatmentRecordsCompanion data) {
     return TreatmentRecord(
@@ -2130,6 +2176,9 @@ class TreatmentRecord extends DataClass implements Insertable<TreatmentRecord> {
       syncStatus: data.syncStatus.present
           ? data.syncStatus.value
           : this.syncStatus,
+      pendingItemsJson: data.pendingItemsJson.present
+          ? data.pendingItemsJson.value
+          : this.pendingItemsJson,
     );
   }
 
@@ -2152,7 +2201,8 @@ class TreatmentRecord extends DataClass implements Insertable<TreatmentRecord> {
           ..write('isTemporary: $isTemporary, ')
           ..write('originalTherapistId: $originalTherapistId, ')
           ..write('clientUuid: $clientUuid, ')
-          ..write('syncStatus: $syncStatus')
+          ..write('syncStatus: $syncStatus, ')
+          ..write('pendingItemsJson: $pendingItemsJson')
           ..write(')'))
         .toString();
   }
@@ -2176,6 +2226,7 @@ class TreatmentRecord extends DataClass implements Insertable<TreatmentRecord> {
     originalTherapistId,
     clientUuid,
     syncStatus,
+    pendingItemsJson,
   );
   @override
   bool operator ==(Object other) =>
@@ -2197,7 +2248,8 @@ class TreatmentRecord extends DataClass implements Insertable<TreatmentRecord> {
           other.isTemporary == this.isTemporary &&
           other.originalTherapistId == this.originalTherapistId &&
           other.clientUuid == this.clientUuid &&
-          other.syncStatus == this.syncStatus);
+          other.syncStatus == this.syncStatus &&
+          other.pendingItemsJson == this.pendingItemsJson);
 }
 
 class TreatmentRecordsCompanion extends UpdateCompanion<TreatmentRecord> {
@@ -2218,6 +2270,7 @@ class TreatmentRecordsCompanion extends UpdateCompanion<TreatmentRecord> {
   final Value<int?> originalTherapistId;
   final Value<String?> clientUuid;
   final Value<String> syncStatus;
+  final Value<String?> pendingItemsJson;
   const TreatmentRecordsCompanion({
     this.id = const Value.absent(),
     this.patientNo = const Value.absent(),
@@ -2236,6 +2289,7 @@ class TreatmentRecordsCompanion extends UpdateCompanion<TreatmentRecord> {
     this.originalTherapistId = const Value.absent(),
     this.clientUuid = const Value.absent(),
     this.syncStatus = const Value.absent(),
+    this.pendingItemsJson = const Value.absent(),
   });
   TreatmentRecordsCompanion.insert({
     this.id = const Value.absent(),
@@ -2255,6 +2309,7 @@ class TreatmentRecordsCompanion extends UpdateCompanion<TreatmentRecord> {
     this.originalTherapistId = const Value.absent(),
     this.clientUuid = const Value.absent(),
     this.syncStatus = const Value.absent(),
+    this.pendingItemsJson = const Value.absent(),
   }) : patientNo = Value(patientNo),
        therapistId = Value(therapistId),
        recordDate = Value(recordDate);
@@ -2276,6 +2331,7 @@ class TreatmentRecordsCompanion extends UpdateCompanion<TreatmentRecord> {
     Expression<int>? originalTherapistId,
     Expression<String>? clientUuid,
     Expression<String>? syncStatus,
+    Expression<String>? pendingItemsJson,
   }) {
     return RawValuesInsertable({
       if (id != null) 'id': id,
@@ -2297,6 +2353,7 @@ class TreatmentRecordsCompanion extends UpdateCompanion<TreatmentRecord> {
         'original_therapist_id': originalTherapistId,
       if (clientUuid != null) 'client_uuid': clientUuid,
       if (syncStatus != null) 'sync_status': syncStatus,
+      if (pendingItemsJson != null) 'pending_items_json': pendingItemsJson,
     });
   }
 
@@ -2318,6 +2375,7 @@ class TreatmentRecordsCompanion extends UpdateCompanion<TreatmentRecord> {
     Value<int?>? originalTherapistId,
     Value<String?>? clientUuid,
     Value<String>? syncStatus,
+    Value<String?>? pendingItemsJson,
   }) {
     return TreatmentRecordsCompanion(
       id: id ?? this.id,
@@ -2337,6 +2395,7 @@ class TreatmentRecordsCompanion extends UpdateCompanion<TreatmentRecord> {
       originalTherapistId: originalTherapistId ?? this.originalTherapistId,
       clientUuid: clientUuid ?? this.clientUuid,
       syncStatus: syncStatus ?? this.syncStatus,
+      pendingItemsJson: pendingItemsJson ?? this.pendingItemsJson,
     );
   }
 
@@ -2396,6 +2455,9 @@ class TreatmentRecordsCompanion extends UpdateCompanion<TreatmentRecord> {
     if (syncStatus.present) {
       map['sync_status'] = Variable<String>(syncStatus.value);
     }
+    if (pendingItemsJson.present) {
+      map['pending_items_json'] = Variable<String>(pendingItemsJson.value);
+    }
     return map;
   }
 
@@ -2418,7 +2480,8 @@ class TreatmentRecordsCompanion extends UpdateCompanion<TreatmentRecord> {
           ..write('isTemporary: $isTemporary, ')
           ..write('originalTherapistId: $originalTherapistId, ')
           ..write('clientUuid: $clientUuid, ')
-          ..write('syncStatus: $syncStatus')
+          ..write('syncStatus: $syncStatus, ')
+          ..write('pendingItemsJson: $pendingItemsJson')
           ..write(')'))
         .toString();
   }
@@ -4784,6 +4847,7 @@ typedef $$TreatmentRecordsTableCreateCompanionBuilder =
       Value<int?> originalTherapistId,
       Value<String?> clientUuid,
       Value<String> syncStatus,
+      Value<String?> pendingItemsJson,
     });
 typedef $$TreatmentRecordsTableUpdateCompanionBuilder =
     TreatmentRecordsCompanion Function({
@@ -4804,6 +4868,7 @@ typedef $$TreatmentRecordsTableUpdateCompanionBuilder =
       Value<int?> originalTherapistId,
       Value<String?> clientUuid,
       Value<String> syncStatus,
+      Value<String?> pendingItemsJson,
     });
 
 class $$TreatmentRecordsTableFilterComposer
@@ -4897,6 +4962,11 @@ class $$TreatmentRecordsTableFilterComposer
 
   ColumnFilters<String> get syncStatus => $composableBuilder(
     column: $table.syncStatus,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get pendingItemsJson => $composableBuilder(
+    column: $table.pendingItemsJson,
     builder: (column) => ColumnFilters(column),
   );
 }
@@ -4994,6 +5064,11 @@ class $$TreatmentRecordsTableOrderingComposer
     column: $table.syncStatus,
     builder: (column) => ColumnOrderings(column),
   );
+
+  ColumnOrderings<String> get pendingItemsJson => $composableBuilder(
+    column: $table.pendingItemsJson,
+    builder: (column) => ColumnOrderings(column),
+  );
 }
 
 class $$TreatmentRecordsTableAnnotationComposer
@@ -5075,6 +5150,11 @@ class $$TreatmentRecordsTableAnnotationComposer
     column: $table.syncStatus,
     builder: (column) => column,
   );
+
+  GeneratedColumn<String> get pendingItemsJson => $composableBuilder(
+    column: $table.pendingItemsJson,
+    builder: (column) => column,
+  );
 }
 
 class $$TreatmentRecordsTableTableManager
@@ -5131,6 +5211,7 @@ class $$TreatmentRecordsTableTableManager
                 Value<int?> originalTherapistId = const Value.absent(),
                 Value<String?> clientUuid = const Value.absent(),
                 Value<String> syncStatus = const Value.absent(),
+                Value<String?> pendingItemsJson = const Value.absent(),
               }) => TreatmentRecordsCompanion(
                 id: id,
                 patientNo: patientNo,
@@ -5149,6 +5230,7 @@ class $$TreatmentRecordsTableTableManager
                 originalTherapistId: originalTherapistId,
                 clientUuid: clientUuid,
                 syncStatus: syncStatus,
+                pendingItemsJson: pendingItemsJson,
               ),
           createCompanionCallback:
               ({
@@ -5169,6 +5251,7 @@ class $$TreatmentRecordsTableTableManager
                 Value<int?> originalTherapistId = const Value.absent(),
                 Value<String?> clientUuid = const Value.absent(),
                 Value<String> syncStatus = const Value.absent(),
+                Value<String?> pendingItemsJson = const Value.absent(),
               }) => TreatmentRecordsCompanion.insert(
                 id: id,
                 patientNo: patientNo,
@@ -5187,6 +5270,7 @@ class $$TreatmentRecordsTableTableManager
                 originalTherapistId: originalTherapistId,
                 clientUuid: clientUuid,
                 syncStatus: syncStatus,
+                pendingItemsJson: pendingItemsJson,
               ),
           withReferenceMapper: (p0) => p0
               .map(
