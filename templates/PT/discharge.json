@@ -28,7 +28,7 @@
           "type": "text",
           "label": "治疗过程汇总",
           "auto": "latest_vs_initial",
-          "hint": "自动生成，只读：住院期间共治疗 N 次、首评→最近复评的功能变化"
+          "hint": "自动生成，只读：住院期间共治疗 N 次 + 与首评相比的肌力/平衡变化。★ 只列 O 段**不含**的项（如肌力、平衡等级），避免与 O 段重复。"
         },
         {
           "key": "subjective_change",
@@ -77,6 +77,30 @@
           "type": "number",
           "label": "患肢肌力MMT 下肢",
           "unit": "级"
+        },
+        {
+          "key": "ashworth",
+          "type": "single",
+          "label": "肌张力Ashworth",
+          "options": [
+            "0级",
+            "1级",
+            "1+级",
+            "2级",
+            "3级",
+            "4级"
+          ]
+        },
+        {
+          "key": "rom",
+          "type": "single",
+          "label": "关节活动度",
+          "options": [
+            "正常",
+            "轻度受限",
+            "中度受限",
+            "重度受限"
+          ]
         },
         {
           "key": "sit_balance",

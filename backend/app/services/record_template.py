@@ -365,6 +365,12 @@ def render_value(field_def: dict[str, Any], value: Any, label: str | None = None
     else:
         body = str(value).strip()
 
+    # 自动生成的整段文字（如出院小结的「治疗过程汇总」）自带句末标点，
+    # 再拼 `；` 会得到「…中风险。；出院时…」这种双标点。这里去掉行尾标点，
+    # 由渲染器统一负责分隔。**只对 auto 字段做** —— 治疗师手写的 text 保留原样。
+    if ftype == "text" and field_def.get("auto"):
+        body = body.rstrip("。；;，,、 ")
+
     return f"{name}：{body}"
 
 
