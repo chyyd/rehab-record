@@ -631,6 +631,7 @@ def update_record(
     body: dict[str, Any] | None = None,
     status: str | None = None,
     record_date: str | None = None,
+    note: str | None = None,
 ) -> dict[str, Any]:
     """修改记录。留痕与 `edit_count` 由库层触发器负责（status <> 'draft' 时生效）。
 
@@ -675,6 +676,15 @@ def update_record(
     if record_date is not None:
         sets.append("record_date = ?")
         params.append(next_date)
+    # `note` 是**记录级**的自由备注（与模板里的 `extra_note` 字段不同 ——
+    # 那个进 body_json、是文书内容的一部分；这个是记录上的附加说明）。
+    #
+    # ★ 2026-10-05 修 bug：`RecordUpdateRequest` 一直收着 `note`，但这里没有该参数、
+    #   路由也没往下传 → 「改备注」**永远静默无效**（不报错也不生效）。
+    #   收了就必须生效，不能假装成功。
+    if note is not None:
+        sets.append("note = ?")
+        params.append(note)
     if status is not None:
         sets.append("status = ?")
         params.append(new_status)

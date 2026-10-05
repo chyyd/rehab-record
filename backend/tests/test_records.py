@@ -354,6 +354,50 @@ class TestRenderedTextFrozen(RecordTestCase):
         self.assertEqual(updated.status_code, 200, updated.text)
         self.assertIn("疼痛VAS：9分", updated.json()["rendered_text"])
 
+    def test_update_note_actually_persists(self) -> None:
+        """★ 回归：`PUT /records/{id}` 的 `note` 曾经**静默无效**。
+
+        `RecordUpdateRequest` 一直收着 `note`，但 `models/treatment.py::update_record`
+        的签名里没有它、路由也没往下传 —— 于是「改备注」不报错也不生效（假装成功）。
+        这种 bug 比报错更危险：调用方以为存上了。
+
+        `note` 是**记录级**自由备注，与模板里的 `extra_note` 字段是两回事
+        （后者进 body_json、属于文书内容）。
+        """
+        self.create_ok(kind="initial", body=initial_body())
+        record = self.create_ok(kind="daily", body=daily_body(), status="draft")
+        self.assertIsNone(record["note"])
+
+        resp = self.client.put(
+            f"/api/v1/records/{record['id']}",
+            json={"note": "家属要求在下午加一次训练"},
+            headers=self.h1,
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertEqual(resp.json()["note"], "家属要求在下午加一次训练")
+
+        # 重新读一遍，确认真的落库（而不是只在响应里回显）
+        reread = self.client.get(
+            f"/api/v1/records/{record['id']}", headers=self.h1
+        ).json()
+        self.assertEqual(reread["note"], "家属要求在下午加一次训练")
+
+    def test_update_note_absent_does_not_clear_it(self) -> None:
+        """不传 `note` 不应该把它清空 —— 与 `body` 的「传了才整体替换」语义一致。"""
+        self.create_ok(kind="initial", body=initial_body())
+        record = self.create_ok(kind="daily", body=daily_body(), status="draft")
+        self.client.put(
+            f"/api/v1/records/{record['id']}", json={"note": "先留着"}, headers=self.h1
+        )
+        # 只改 body，不带 note
+        resp = self.client.put(
+            f"/api/v1/records/{record['id']}",
+            json={"body": daily_body(vas=7)},
+            headers=self.h1,
+        )
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertEqual(resp.json()["note"], "先留着", "不传 note 不该清空它")
+
 
 class TestRecordLifecycle(RecordTestCase):
     def test_create_draft_keeps_seq_no(self) -> None:

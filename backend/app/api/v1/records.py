@@ -257,6 +257,7 @@ def update_record(
         body=payload.body,
         status=payload.status,
         record_date=payload.record_date,
+        note=payload.note,
     )
     write_audit(conn, user_id=int(user["id"]), action="update", target_type="treatment_record",
                 target_id=str(record_id),

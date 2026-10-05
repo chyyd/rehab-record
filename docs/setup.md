@@ -1,7 +1,15 @@
 # 环境搭建与运行（setup）
 
-**当前状态**：阶段 0–5 后端、管理后台与安卓 App 均已交付并验证（**454 个测试通过、0 skip**；
-端到端 182 项、跨文档一致性由 `check_docs_consistency.py` 自报（231 项）、浏览器 UI 验收 60 项）。
+**当前状态**：阶段 0–5 后端、管理后台与安卓 App 均已交付并验证（**336 个测试通过、0 skip**；
+端到端 228 项、跨文档一致性由 `check_docs_consistency.py` 自报（367 项）、浏览器 UI 验收 60 项）。
+
+**2026-10-05（第三步）：治疗记录从「参数表格」改成「SOAP 模板驱动」** —— 迁移 011 重建
+`treatment_record`（19 列，含 `body_json` / `rendered_text`），012 删掉字典 / 选项集 / 患者反应定义
+六张表，013 给 `patient.status` 加 `pending_discharge`；有效表从 17 张降到 **8 张**、视图 **2 个**；
+记录模板改由仓库根的 `templates/*.json`（**16 份**）承载，**不进数据库**。
+代价：后端测试 454 → **334**，安卓端（`app/`）**尚未适配 SOAP 记录页 —— 待适配**，
+`admin/` 的字典 / 选项集 / 反应定义 / 模板四个页面**待删除**。
+
 **排期、休息块、请假三项功能已于 2026-10-05 整体下线**（科室确认排班不是本系统的职责），
 `appointment`/`rest_block`/`leave_record` 三张表已由迁移 008 删除；
 **临时指派（`temporary_assignment`）与 `scope=temp` 筛选也已删除**（迁移 009），
@@ -46,11 +54,14 @@ DSH 自带的 `dsh-primary-runtime` Python 3.12 **不要用** —— 那个环�
 cd backend
 $py = "C:\Users\youda\AppData\Local\Programs\Python\Python313\python.exe"
 
-& $py -m app.cli init      # 建库 + 迁移到最新 + 健康检查
-& $py -m app.cli seed      # 导入全部种子（字典/反应定义/选项集/四大高频模板，幂等）
-& $py -m app.cli health    # 健康检查（JSON）
-& $py -m app.cli periods   # 半日制作息（Q11：只决定记录的 session_period）
-& $py -m app.cli tables    # 列出表与行数
+& $py -m app.cli init           # 建库 + 应用迁移 001–013 到最新 + 健康检查
+& $py -m app.cli seed           # 已废弃：种子数据（字典/选项集/反应定义/模板）随迁移 012 下线，
+                                # 现在不再有任何需要导入的种子；记录模板是 templates/*.json 文件
+& $py -m app.cli health         # 健康检查（JSON）
+& $py -m app.cli periods        # 半日制作息（Q11；`session_period` 已删除，这里只用于 /health 与作息展示）
+& $py -m app.cli tables         # 列出表与行数
+& $py -m app.cli auto-discharge --days 7   # 待出院满 7 天的患者自动出院（管理员也可用
+                                           # POST /patients/{no}/discharge/confirm 提前确认）
 ```
 
 数据库默认落在 `data/kf.db`，可用环境变量覆盖：
@@ -65,22 +76,30 @@ $py = "C:\Users\youda\AppData\Local\Programs\Python\Python313\python.exe"
 
 ```powershell
 cd backend
-& $py -m unittest discover -s tests -t . -v      # 454 个测试
+& $py -m unittest discover -s tests -t . -v      # 336 个测试
 & $py scripts\verify_http.py                     # 阶段 0 HTTP 端到端（14 项）
 & $py scripts\verify_stage1.py                   # 阶段 1 认证与患者（25 项）
-& $py scripts\verify_stage2.py                   # 患者列表排序：我最近一次已提交治疗（22 项）
-& $py scripts\verify_stage3.py                   # 阶段 3 字典与治疗记录（35 项）
-& $py scripts\verify_stage4.py                   # 阶段 4 离线与同步（28 项）
-& $py scripts\verify_stage5.py                   # 阶段 5 汇总打印、后台与模板种子（58 项）
-& $py scripts\count_verify_checks.py             # 复核上面 6 个脚本的项数（合计 182 项）
+& $py scripts\verify_stage2.py                   # 患者列表排序：我最近一次已提交治疗（31 项）
+& $py scripts\verify_stage3.py                   # 阶段 3 SOAP 模板记录（56 项）
+& $py scripts\verify_stage4.py                   # 阶段 4 离线与同步（35 项）
+& $py scripts\verify_stage5.py                   # 阶段 5 汇总打印、后台与 SOAP 文本（67 项）
+& $py scripts\count_verify_checks.py             # 复核上面 6 个脚本的项数（合计 228 项）
 & $py scripts\check_docs_consistency.py          # 跨文档一致性
 ```
 
 > **数字怎么来的**：`scripts/count_verify_checks.py` 用 AST 数"运行时会执行的 `check()` 次数"
-> （字面量循环会展开，如 `verify_stage2.py` 里一次核对 3 个已下线的接口路径）。
+> （字面量循环会展开，如 `verify_stage2.py` 里一次核对 6 个已下线的接口路径、
+> `verify_stage5.py` 里一次核对 7 个 PDF 关键词）。
 > `check_docs_consistency.py` 会拿这份结果去核对本节的数字，改了脚本却忘了改文档就会失败。
-> 注意 `verify_stage2.py` 已**重写**为"患者列表排序"验收（原排期/请假断言随功能下线作废），
-> 所以项数由 29 降到 22；`verify_stage4.py` 去掉了 1 条排期幂等断言（29 → 28）。
+> 口径已用**运行时输出**复核：把 6 个脚本各跑一遍、数 `OK` / `FAIL` 行，
+> 得到 14 / 25 / 31 / 56 / 35 / 67，与静态结果逐个吻合。
+>
+> **2026-10-05（SOAP 改造）后的主题变化**：`verify_stage3.py` 由「字典 / 记录 / 患者反应」
+> **重写为「SOAP 模板记录」验收**（取表单 → 建首评 → 当天日常、缺首评/缺复评 409、
+> 同一天同一大类至多 2 条、必填缺失 422、`rendered_text` 落库且是 SOAP 文本），35 → 56 项；
+> `verify_stage4.py` 改用 `body` payload，并**新增「离线推送同样受硬阻断约束」**一项，28 → 35 项；
+> `verify_stage5.py` 断言输出是 **SOAP 文本而不是表格**、多日按时间顺序连排，58 → 67 项；
+> `verify_stage2.py` 31 项（新增"评估文书不参与排序"）。
 
 ---
 
@@ -101,8 +120,13 @@ cd backend
 **方案：`reportlab` + 内置 CID 字体 `STSong-Light`**，不用 WeasyPrint。
 
 - 该字体是 reportlab **自带的**，不依赖任何系统字体文件，Windows 开发机与 Linux 容器都一样可用；
-- 实测渲染中文表格后，用 `pypdf` 反向提取文本，`康复科`/`偏瘫肢体综合训练`/`糊状`/`张三` 全部命中；
+- 实测渲染中文后，用 `pypdf` 反向提取文本，`康复医学科`/`主观资料：`/`本次训练项目`/`张三`
+  全部命中；
 - 因此**不需要**在容器里打包 `fonts-noto-cjk`，也避开了 WeasyPrint 的 GTK/Pango 原生依赖。
+
+**版式（2026-10-05 SOAP 改造）**：正文是记录落库时**冻结的 `rendered_text`（SOAP 纯文本）**，
+不再是参数表格；**多日按时间顺序往下排，不分页、不一天一张**。只有「基本信息 / 统计」
+这类元信息仍用小表格（那是抬头，不是病历内容）。
 
 回归防线：`tests/test_pdf_smoke.py` 会真实渲染 PDF 并校验文本层，字体方案一旦退化就会失败。
 
@@ -131,9 +155,16 @@ cd backend
 ## 5. 后续
 
 系统 Python 3.13 已具备 FastAPI / SQLAlchemy / Alembic / PyJWT / reportlab / pypdf，
-阶段 0–5 后端、管理后台 Web 与安卓 App 均已交付并验证完毕。
-**排期、休息块、请假与临时指派已整体下线**（2026-10-05，迁移 008 与 009），
-当前没有排期/临时指派相关待办，见 `README.md` 进度表与 `开发计划.md` 末尾的下一步。
+阶段 0–5 后端、管理后台 Web 与安卓 App（**记录页待适配 SOAP 改造**）均已交付。
+
+**2026-10-05 的两次下线**：
+1. **排期、休息块、请假与临时指派已整体下线**（迁移 008 与 009）；
+2. **参数表格模型（字典 / 选项集 / 患者反应定义 / 科室模板）已整体下线**（迁移 011 与 012）——
+   治疗记录改为 SOAP 模板驱动，模板是 `templates/*.json` 文件（**不进数据库**）。
+
+当前剩余待办：`app/` 的安卓记录页与离线 payload 尚未适配 SOAP 契约（**待适配**）；
+`admin/` 的字典 / 选项集 / 反应定义 / 模板四个页面**待删除**。
+见 `README.md` 进度表与 `开发计划.md` 第 9 章的下一步。
 
 **不建议**为本项目另建 venv：当前系统 Python 已装好全部所需包，另建 venv 需要重新下载安装，
 反而引入不必要的失败点。如果后续要隔离，再迁到 venv 也不影响仓库内容。
