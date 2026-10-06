@@ -27,6 +27,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from reportlab.lib import colors
+from reportlab.lib.enums import TA_RIGHT
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import mm
@@ -75,6 +76,11 @@ def _styles() -> dict[str, ParagraphStyle]:
         # 所以比 `heading` 小、且只用极少的上间距（用户嫌空白多）。
         "day": ParagraphStyle("day", fontName=font, fontSize=9.5, leading=13,
                               spaceBefore=4, spaceAfter=3, textColor=colors.HexColor("#444444")),
+        # ★ 2026-10-06 用户：「将单个记录里面的『治疗师签名：张三』这种右对齐」。
+        # 签名独立成段并靠右（原来是混在 SOAP 正文里左对齐），
+        # 右侧留白正好给手写签名。
+        "signature": ParagraphStyle("signature", fontName=font, fontSize=9.5, leading=15,
+                                    alignment=TA_RIGHT, spaceBefore=2, spaceAfter=4),
     }
 
 
@@ -142,17 +148,50 @@ def _soap_block(
     rule = Table([[""]], colWidths=["100%"], rowHeights=[0.5])
     rule.setStyle(TableStyle([("LINEBELOW", (0, 0), (-1, -1), 0.3, colors.HexColor("#cccccc"))]))
 
-    # ★ 2026-10-06 用户：「pdf 每一页下面有不少的空白，似乎特意保持了单次的记录
-    #   不被截断，这没有意义，连续往下页写就行」。
+    # ★ 2026-10-06 用户：「将单个记录里面的『治疗师签名：张三』这种右对齐」。
+    #
+    # 签名原来是混在 SOAP 正文里的**左对齐**一行。现在把它**摘出来单独成段**并靠右：
+    # 文书正文左对齐、签名右对齐，右侧留白正好落笔。
+    #
+    # 摘出来还有个好处：签名不会因为正文跨页而被单独留在页首（它是紧随正文的
+    # 独立段落，reportlab 会与正文一起考虑换页）。
+    body, signature = _split_signature(content)
+
+    # ★ 用户：「pdf 每一页下面有不少的空白，似乎特意保持了单次的记录不被截断，
+    #   这没有意义，连续往下页写就行」。
     #
     # 原来这里用 `KeepTogether([段落, 间距, 分隔线, 间距])` 把**整条文书**当成
-    # 一个不可分割的块。一份文书长约一页，当前页剩余空间放不下它就**整块推到
-    # 下一页**，于是页底留一大片空白 —— 就是用户看到的现象，而且多页时很费纸。
+    # 一个不可分割的块，放不下就整块推到下一页。现在各元素**各自参与排版**，
+    # 段落允许跨页断开、从断点继续写。
     #
-    # 现在四个元素**各自参与排版**，段落允许跨页断开、从断点继续写。
-    # 代价是分隔线可能落在页首（上一个记录刚结束）或页尾，属可接受：
-    # 分隔线只是视觉区隔，不是内容。
-    return [_soap_paragraph(content, style), Spacer(1, 1 * mm), rule, Spacer(1, 3 * mm)]
+    # 代价是分隔线可能落在页首或页尾，属可接受：分隔线只是视觉区隔，不是内容。
+    story: list[Any] = [_soap_paragraph(body, style)]
+    if signature:
+        story.append(Paragraph(_escape(signature), style["signature"]))
+    story.extend([Spacer(1, 1 * mm), rule, Spacer(1, 3 * mm)])
+    return story
+
+
+# 签名行：模板 `footer` 里写的是 `治疗师签名：__________`（10 个下划线）。
+# `_fill_signature` 会把下划线换成姓名，所以这里按"行首是治疗师签名："识别。
+_SIGNATURE_LINE_RE = re.compile(r"^治疗师签名：.*$")
+
+
+def _split_signature(text: str) -> tuple[str, str]:
+    """把末尾的签名行从正文里摘出来，返回 `(正文, 签名行)`。
+
+    签名行视为**最后一个非空行**且以 `治疗师签名：` 开头 —— 模板把它放在 `footer`，
+    渲染出来永远是最后一行。没有签名行时返回 `(原文本, "")`，不硬造一行。
+    """
+    lines = text.split("\n")
+    for index in range(len(lines) - 1, -1, -1):
+        line = lines[index].strip()
+        if not line:
+            continue  # 跳过尾部空行再判断
+        if _SIGNATURE_LINE_RE.match(line):
+            return "\n".join(lines[:index]).strip(), line
+        break  # 最后一个非空行不是签名 → 这份文书没有签名行
+    return text, ""
 
 
 # 签名占位符：模板 `footer` 里写的是 `治疗师签名：__________`（10 个下划线）。

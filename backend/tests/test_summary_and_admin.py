@@ -468,6 +468,13 @@ class TestPdfRendering(SummaryTestCase):
         self.assertIn("治疗师签名：张三", text, "签名应自动带入治疗师姓名")
         self.assertNotIn("治疗师签名：_", text, "不应再留下划线占位符")
 
+        # ⑥.5 ★ 2026-10-06：签名行**右对齐**（用户：「将单个记录里面的
+        #     『治疗师签名：张三』这种右对齐」）。
+        #     用坐标断言，而不是"看文案"—— 对齐只有坐标能证明。
+        self._assert_signature_is_right_aligned(
+            pdf_service.patient_daily_pdf(daily)
+        )
+
         # 多日记录仍按时间升序往下排
         positions = [text.index(day) for day in ("2027-03-01", "2027-03-03")]
         self.assertEqual(positions, sorted(positions), "多日记录按时间升序往下排")
@@ -495,6 +502,36 @@ class TestPdfRendering(SummaryTestCase):
         # 四段连续出现且顺序不变（没有被挤成一行、也没丢内容）
         idx = [text.index(seg) for seg in ("主观资料：", "客观资料：", "评估分析：", "康复计划：")]
         self.assertEqual(idx, sorted(idx), "四段顺序不变")
+
+    def _assert_signature_is_right_aligned(self, content: bytes) -> None:
+        """断言签名行的 x 起点**明显靠右**，而正文靠左。
+
+        ★ 为什么用坐标：对齐是**版式**属性，`pdf_text()` 抽出来的纯文本里，
+        「治疗师签名：张三」左对齐和右对齐长得**一模一样** ——
+        任何只看文本的断言都守不住这个需求。
+        """
+        import pypdf
+
+        page = pypdf.PdfReader(io.BytesIO(content)).pages[0]
+        rows: list[tuple[str, float]] = []
+
+        def collect(text, _cm, tm, _font, _size, *_args) -> None:  # noqa: ANN001
+            if text.strip():
+                rows.append((text.strip(), float(tm[4])))
+
+        page.extract_text(visitor_text=collect)
+        signatures = [x for label, x in rows if label.startswith("治疗师签名")]
+        bodies = [x for label, x in rows if label.startswith("主观资料")]
+        self.assertTrue(signatures, "第一页应能找到签名行")
+        self.assertTrue(bodies, "第一页应能找到正文行")
+
+        # 正文从左边距开始（≈0），签名靠右（实测 ≈445pt）。
+        self.assertLess(max(bodies), 20, "正文应左对齐")
+        self.assertGreater(
+            min(signatures),
+            200,
+            "签名行应右对齐（x 起点要明显靠右，而不是跟着正文左对齐）",
+        )
 
     def test_empty_pdf_does_not_crash(self) -> None:
         overview = summary_service.patient_overview(self.conn, patient_no="ZY001")

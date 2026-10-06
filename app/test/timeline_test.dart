@@ -1,9 +1,12 @@
 import 'dart:convert';
 
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:rehab_app/core/api_endpoints.dart';
+import 'package:rehab_app/core/date_utils.dart';
 import 'package:rehab_app/data/remote/timeline_dto.dart';
 import 'package:rehab_app/data/repo/timeline_repository.dart';
+import 'package:rehab_app/features/timeline/timeline_providers.dart';
 
 import 'support.dart';
 
@@ -292,6 +295,57 @@ void main() {
       final repo = TimelineRepository(client: buildScriptedClient({}));
       final url = repo.pdfUrl(kPrintSummaryDate, query: {'date': '2026-10-06'});
       expect(url, 'http://test.local/api/v1/print/summary/date?date=2026-10-06');
+    });
+  });
+
+  group('时间轴默认筛选（2026-10-06 用户要求只显示今日）', () {
+    /// 用户原话：「时间轴页面现在显示全部记录，太多了，仅显示今日的就行」。
+    ///
+    /// 所以默认必须是 `from == to == 今天`，而不是"全部"（两个都为 null）。
+    /// 这条测试同时守住"默认不是全部"和"区间=单独一天"两件事。
+    test('★ 默认筛选是今天（不是全部）', () {
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+
+      final filter = container.read(timelineFilterProvider);
+      final today = formatDate(DateTime.now());
+
+      expect(filter.dateFrom, today, reason: '默认应从今天开始');
+      expect(filter.dateTo, today, reason: '默认应到今天为止');
+      expect(
+        filter.hasDateRange,
+        isTrue,
+        reason: '默认必须带日期区间 —— 不带就是"显示全部"，正是用户要去掉的',
+      );
+    });
+
+    test('「重置全部」回到默认（今天），不是清成全部', () {
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+
+      final controller = container.read(timelineFilterProvider.notifier);
+      controller.setDateRange(DateTime(2026, 1, 1), DateTime(2026, 1, 7));
+      controller.setDiscipline('PT');
+      expect(container.read(timelineFilterProvider).dateFrom, '2026-01-01');
+
+      controller.reset();
+
+      final after = container.read(timelineFilterProvider);
+      final today = formatDate(DateTime.now());
+      expect(after.dateFrom, today, reason: '重置后应与刚打开时一致');
+      expect(after.dateTo, today);
+      expect(after.discipline, isNull, reason: '其它筛选维度仍要清空');
+    });
+
+    test('用户仍可清掉区间看全部（只改默认值，没拿掉能力）', () {
+      final container = ProviderContainer();
+      addTearDown(container.dispose);
+
+      container.read(timelineFilterProvider.notifier).clearDateRange();
+      final filter = container.read(timelineFilterProvider);
+      expect(filter.hasDateRange, isFalse);
+      expect(filter.dateFrom, isNull);
+      expect(filter.dateTo, isNull);
     });
   });
 }

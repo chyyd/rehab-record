@@ -196,8 +196,19 @@ final timelineFilterProvider =
         TimelineFilterController.new);
 
 class TimelineFilterController extends Notifier<TimelineFilter> {
+  /// ★ 2026-10-06 用户：「时间轴页面现在显示全部记录，太多了，仅显示今日的就行」。
+  ///
+  /// 所以默认筛选是**今天**（`from` = `to` = 本地今天），而不是"全部"。
+  /// 时间是**每次 `build()` 重新取的**：应用隔夜没重启时，`build()` 会在
+  /// provider 重建时拿到新的"今天"，不会把昨天的日期一直用下去。
+  ///
+  /// 用户仍可在筛选面板里清掉区间看全部（`clearDateRange`）——
+  /// 这里只改**默认值**，没有拿掉能力。
   @override
-  TimelineFilter build() => const TimelineFilter();
+  TimelineFilter build() {
+    final today = formatDate(DateTime.now());
+    return TimelineFilter(dateFrom: today, dateTo: today);
+  }
 
   void setScope(TimelineScope scope) => state = state.copyWith(scope: scope);
 
@@ -213,7 +224,11 @@ class TimelineFilterController extends Notifier<TimelineFilter> {
 
   void setKind(String? kind) => state = state.copyWith(kind: kind);
 
-  void reset() => state = const TimelineFilter();
+  /// 回到**默认筛选**（= 今天），不是"清空成全部"。
+  ///
+  /// 「重置全部」按字面是"把你改过的都回退"，而默认值现在是今天 ——
+  /// 所以这里复用 `build()` 的口径，避免出现"重置后和刚打开时不一样"。
+  void reset() => state = build();
 }
 
 final timelineControllerProvider =

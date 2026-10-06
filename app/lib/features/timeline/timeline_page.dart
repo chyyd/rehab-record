@@ -486,9 +486,13 @@ class _EmptyView extends StatelessWidget {
           const SizedBox(height: 12),
           Center(
             child: Text(
-              switch (filter.scope) {
-                TimelineScope.visible => '这段时间没有治疗记录',
-                TimelineScope.mine => '这段时间没有我写的记录',
+              // 默认筛选是"今天"（2026-10-06 起），所以单日时文案说"今天"更贴切；
+              // 用户自己拉了区间才说"这段时间"。
+              switch ((filter.scope, filter.dateFrom == filter.dateTo)) {
+                (TimelineScope.visible, true) => '今天还没有治疗记录',
+                (TimelineScope.visible, false) => '这段时间没有治疗记录',
+                (TimelineScope.mine, true) => '今天还没有我写的记录',
+                (TimelineScope.mine, false) => '这段时间没有我写的记录',
               },
               style: theme.textTheme.bodyLarge,
             ),
