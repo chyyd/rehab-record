@@ -4,7 +4,7 @@
 
 .DESCRIPTION
     做的事：
-      1. 校验 Python / Node 环境，首次运行时自动建库、导种子、创建管理员；
+      1. 校验 Python / Node 环境，首次运行时自动建库并应用迁移、创建管理员；
       2. 起后端 uvicorn（默认 8000）；
       3. 起管理后台 Vite dev（默认 5173，已配置 /api 代理）；
       4. 在命令行窗口里打印登录地址与**管理员账号密码**；
@@ -15,7 +15,7 @@
 
 .PARAMETER IncludeData
     仅与 `clean` 配合：连开发数据库 `data\kf.db` 一起删除
-    （下次启动会自动重建并导种子）。默认**保留**数据库。
+    （下次启动会自动重建并应用迁移）。默认**保留**数据库。
 
 .PARAMETER NoBrowser
     不自动打开浏览器（服务器上跑或只想看日志时用）。
@@ -24,8 +24,8 @@
     端口，默认 8000 / 5173。
 
 .EXAMPLE
-    .\start.ps1                 # 启动并打开浏览器（只绑本机）
-    .\start.ps1 -Lan            # 额外让**内网其它客户端**访问（IPv4，放行防火墙）
+    .\start.ps1                 # 启动并打开浏览器（默认**同时**供内网其它客户端访问）
+    .\start.ps1 -LocalOnly      # 只绑本机，不给内网访问
     .\start.ps1 -NoBrowser      # 只启动
     .\start.ps1 stop            # 停止（含看门狗）
     .\start.ps1 status          # 看状态
@@ -35,9 +35,12 @@
       powershell -ExecutionPolicy Bypass -File .\start.ps1
       Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 
-    `-Lan` 会把后端绑到 `0.0.0.0` 并放行防火墙入站端口（这一步可能需要
-    **管理员**权限；没有权限时脚本会打印要手动执行的命令）。
+    **默认**把后端与前端都绑到 `0.0.0.0`，并放行防火墙入站端口，
+    这样科室局域网里其它机器（治疗师/护士的电脑）可以直接访问管理后台。
     只监听 **IPv4**，不监听 IPv6。
+
+    放行防火墙需要**管理员**权限；没有权限时脚本会打印要手动执行的命令
+    （服务照样能起，只是内网连不上）。确实不需要内网访问时用 `-LocalOnly`。
 #>
 
 [CmdletBinding()]
@@ -47,15 +50,17 @@ param(
     [string]$Action = 'start',
 
     [switch]$NoBrowser,
-    # ★ 只绑本机回环，还是会**一并给内网其它客户端**用（2026-10-06）。
+    # ★ **默认就给内网访问**（2026-10-06 用户要求：「改默认，把服务开到局域网上，
+    #   并通过脚本开放端口」）。这个开关是用来**关掉**它的。
     #
-    # 默认**不开**：把服务开到局域网上应该是一个显式选择，不该是"悄悄发生"的
-    # —— 这个后台没有 TLS、也没有额外的访问控制，能连上就能用。
+    # 为什么默认开：这是科室内部的系统，实际用法就是治疗师/护士从自己的电脑打开
+    # 管理后台 —— 默认只有本机能访问反而是"默认不可用"。
     #
-    # 加了它之后：后端绑 `0.0.0.0`（IPv4 全接口），内网其它机器可以用
-    # `http://<本机IPv4>:5173` 访问管理后台（Vite 会把 `/api` 反代到本机后端）。
-    # 只用 IPv4、**不监听 IPv6**。
-    [switch]$Lan,
+    # `-LocalOnly` 的场景：本机调试、或这台机器接在不可信的网络上时想收紧。
+    #
+    # 生效范围：后端与 Vite 都绑 `0.0.0.0`（**IPv4 全接口**，不监听 IPv6），
+    # 并尝试放行防火墙入站端口（见 Invoke-Start 里那段说明）。
+    [switch]$LocalOnly,
     # 仅与 clean 配合：连开发数据库一起删
     [switch]$IncludeData,
     [int]$BackendPort = 8000,
@@ -100,8 +105,10 @@ function Get-LanIPv4 {
         return @()
     }
 }
-# `-Lan` 时后端绑 0.0.0.0；否则只绑回环。
-$BackendHost = if ($Lan) { '0.0.0.0' } else { '127.0.0.1' }
+# 是否给内网访问（默认给；`-LocalOnly` 关掉）。
+$ServeLan    = -not $LocalOnly
+# `-LocalOnly` 时后端绑 0.0.0.0 以外的回环；否则全 IPv4 接口。
+$BackendHost = if ($ServeLan) { '0.0.0.0' } else { '127.0.0.1' }
 
 function Write-Head([string]$Text) {
     Write-Host ''
@@ -250,21 +257,24 @@ function Invoke-BackendCli {
     注意：默认库路径是**仓库根目录**的 `data/kf.db`
     （`config.py` 里 `REPO_ROOT = parents[3]`，即 `backend/app/core/config.py` 上溯三层）。
 
-    `init`（建库+迁移）与 `seed`（导种子）是**两件事**，必须分开判断：
-    早先这里用"库文件是否存在"来决定要不要导种子，于是**库存在但为空**时会跳过种子
-    —— 表现为字典/选项集/模板/患者反应各页全空，而脚本一声不响（实测踩到过：
-    手动跑过 init、或首次 seed 中途失败，都会留下这种空库）。
-    所以这里**直接查库**判断是否已导过种子，`seed` 本身是幂等的，重复跑没有副作用。
+    ★ 2026-10-06：这一段原来是**种子探测** —— 查 `main_item` 表有几行来决定
+    "是不是首次运行"。但 `main_item` 随迁移 012（记录模型改造）**整表删除了**，
+    于是探测**永远**报 `no such table: main_item`，表现为：
+      - 每轮启动都打印一句吓人的「种子探测未成功：OperationalError…」；
+      - 每轮都判成"首次运行"，白跑一次已废弃的 `app.cli seed`。
+
+    现在改成查 `schema_migrations`（建库后一直存在）的行数：
+      - 库不存在/为空 → 探测报错 → 视为首次运行（这正是我们要的语义）；
+      - 否则报出"已应用 N 个迁移"。
+    种子导入的整段逻辑也删掉了 —— `app.cli seed` 自 2026-10-05 起就是**空操作**，
+    再留一段"检测到字典为空就导种子"的代码只会误导后来的人。
 #>
 function Initialize-Data {
     param([string]$Python)
 
-    # 用"字典主项目是否有数据"作为"是否导过种子"的判据：
-    # 主项目是字典的根，选项集/模板/患者反应都挂在它下面，它为空说明种子没进去。
+    # 这里不去猜库文件在哪：默认是**仓库根目录的 `data/kf.db`**，
+    # 但也可能被 `KB_DB_PATH` 覆盖 —— 直接问库里的表才是唯一可靠的判据。
     #
-    # 这里不去猜库文件在哪：默认是**仓库根目录的 `data/kf.db`**
-    # （`config.py` 里 `REPO_ROOT = parents[3]`），但也可能被 `KB_DB_PATH` 覆盖。
-    # 直接问"库里的表"才是唯一可靠的判据。
     # 注意两个坑（都踩过）：
     #   1. `@'...'@` 是**字面** here-string，里面的 `%` 不会折叠，所以
     #      `print("...%%d" %% count)` 生成出来是非法 Python（SyntaxError）；
@@ -281,58 +291,46 @@ from app.db import storage
 try:
     conn = storage.connect(get_settings(), read_only=True)
     try:
-        count = int(conn.execute("SELECT COUNT(*) FROM main_item").fetchone()[0])
+        row = conn.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()
+        applied = int(row[0])
     finally:
         conn.close()
-    print(f"KB_MAIN_ITEM_COUNT={count}")
+    print(f"KB_MIGRATIONS_APPLIED={applied}")
 except Exception as exc:
     print(f"KB_PROBE_ERROR={type(exc).__name__}: {exc}")
 '@
     $probe = $probe.Replace('__BACKEND_DIR__', $BackendDir)
 
     if (-not (Test-Path $RunDir)) { New-Item -ItemType Directory -Path $RunDir -Force | Out-Null }
-    $probeFile = Join-Path $RunDir '_probe_seed.py'
+    $probeFile = Join-Path $RunDir '_probe_db.py'
     [System.IO.File]::WriteAllText($probeFile, $probe, (New-Object System.Text.UTF8Encoding($false)))
     $probeResult = Invoke-NativeCommand -FilePath $Python -Arguments @($probeFile) -WorkingDirectory $BackendDir
     Remove-Item $probeFile -Force -ErrorAction SilentlyContinue
 
     # 按**前缀**找结果，不依赖行序
-    $mainItemCount = -1
+    $appliedMigrations = -1
     foreach ($line in $probeResult.Output) {
         $text = "$line"
-        if ($text -match 'KB_MAIN_ITEM_COUNT=(\d+)') {
-            $mainItemCount = [int]$Matches[1]
+        if ($text -match 'KB_MIGRATIONS_APPLIED=(\d+)') {
+            $appliedMigrations = [int]$Matches[1]
         } elseif ($text -match 'KB_PROBE_ERROR=(.+)') {
-            Write-Host "        种子探测未成功：$($Matches[1])" -ForegroundColor DarkGray
+            # 库还不存在 / 还是空的 —— 那就是首次运行，不需要报警。
+            Write-Host "        （数据库尚未就绪：$($Matches[1])）" -ForegroundColor DarkGray
         }
     }
-    $isFirstRun = $mainItemCount -lt 0
+    $isFirstRun = $appliedMigrations -le 0
 
     if ($isFirstRun) {
         Write-Step '首次运行：建库并应用迁移…'
     } else {
-        Write-Step '检查数据库迁移…'
+        Write-Step "检查数据库迁移（已应用 $appliedMigrations 个）…"
     }
     $r = Invoke-BackendCli -Python $Python -CliArgs @('init')
     if ($r.ExitCode -ne 0) {
         $r.Output | ForEach-Object { Write-Host "        $_" -ForegroundColor DarkGray }
         throw '建库/迁移失败，请查看上方输出'
     }
-
-    if ($mainItemCount -eq 0) {
-        Write-Step '检测到字典为空：导入种子数据（字典 / 反应定义 / 选项集 / 四大高频模板）…'
-        $r = Invoke-BackendCli -Python $Python -CliArgs @('seed')
-        if ($r.ExitCode -ne 0) {
-            $r.Output | ForEach-Object { Write-Host "        $_" -ForegroundColor DarkGray }
-            throw '种子导入失败，请查看上方输出'
-        }
-        Write-Ok '种子数据已导入'
-    } elseif ($mainItemCount -gt 0) {
-        Write-Ok "种子数据已存在（字典主项目 $mainItemCount 项），跳过导入"
-    } else {
-        # 探测异常（既不是"空"也不是"有"）：不阻断启动，种子可用 CLI 手动补。
-        Write-Warn '无法确认种子是否已导入；如页面数据为空，请手动执行：python -m app.cli seed'
-    }
+    Write-Ok '数据库已是迁移后的最新状态'
 }
 
 function Ensure-Admin {
@@ -630,8 +628,8 @@ function Invoke-Start {
         -ExtraEnv @{
             VITE_API_TARGET = $BackendUrl
             # `KB_LAN=1` 让 `admin/vite.config.ts` 把 Vite 绑到全 IPv4 接口；
-            # 否则只绑回环（见那里的说明）。
-            KB_LAN = if ($Lan) { '1' } else { '0' }
+            # 否则只绑回环（见那里的说明）。默认开，`-LocalOnly` 才关。
+            KB_LAN = if ($ServeLan) { '1' } else { '0' }
         }
 
     if (-not (Wait-HttpOk -Url $FrontendUrl -TimeoutSec 90 -Name '前端')) {
@@ -640,31 +638,61 @@ function Invoke-Start {
         Write-Ok '管理后台已就绪'
     }
 
-    # -- `-Lan`：放行防火墙（否则内网连不上，而"连不上"很难自己排查出来）--
+    # -- 放行防火墙（默认就做；否则内网连不上，而"连不上"很难自己排查出来）--
     #
     # 为什么必须显式做：`backend/scripts/run_on_emulator.ps1` 的注释里就记过这个坑 ——
     # 「Windows 防火墙入站默认阻止，而 uvicorn 没有对应的放行规则」，
     # 当时是靠 `adb reverse` 绕过去的。内网客户端绕不过去，只能放行。
     #
-    # 只放行**入站 TCP** 的这两个端口，且规则名固定（重复运行会复用，不会越积越多）。
-    if ($Lan) {
+    # 只放行**入站 TCP** 的这两个端口，规则名固定（重复运行会复用，不会越积越多）。
+    #
+    # ★ 先判管理员再动手：`New-NetFirewallRule` 非管理员时会抛"拒绝访问"，
+    #   而 `$ErrorActionPreference = 'Stop'` 下那是**终止性**错误。
+    #   与其让它炸在半路（服务已经起来了，用户看到一堆红字不知道成没成），
+    #   不如先判权限、再给一条能直接复制的命令。
+    if ($ServeLan) {
         $ports = @($FrontendPort, $BackendPort) | Sort-Object -Unique
+        $isAdminUser = $false
+        try {
+            $wid = [Security.Principal.WindowsIdentity]::GetCurrent()
+            $wpr = New-Object Security.Principal.WindowsPrincipal($wid)
+            $isAdminUser = $wpr.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+        } catch {
+            $isAdminUser = $false
+        }
+
+        $manualCmds = @()
         foreach ($port in $ports) {
             $ruleName = "康复系统 $port (TCP-In)"
-            try {
-                $existing = Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue
-                if ($existing) {
-                    Write-Ok "防火墙规则已存在：$ruleName"
-                } else {
-                    New-NetFirewallRule -DisplayName $ruleName -Direction Inbound -Action Allow `
-                        -Protocol TCP -LocalPort $port -Profile Any -ErrorAction Stop | Out-Null
-                    Write-Ok "已放行防火墙入站：$ruleName"
-                }
-            } catch {
-                Write-Warn "放行防火墙失败（$ruleName）：$($_.Exception.Message)"
-                Write-Host "        需要**管理员** PowerShell 手动执行一次：" -ForegroundColor Yellow
-                Write-Host "          New-NetFirewallRule -DisplayName '康复系统 $port (TCP-In)' -Direction Inbound -Action Allow -Protocol TCP -LocalPort $port -Profile Any" -ForegroundColor Yellow
+            $existing = $null
+            try { $existing = Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue } catch { }
+            if ($existing) {
+                Write-Ok "防火墙已放行：$ruleName"
+                continue
             }
+            if (-not $isAdminUser) {
+                $manualCmds += "New-NetFirewallRule -DisplayName '$ruleName' -Direction Inbound -Action Allow -Protocol TCP -LocalPort $port -Profile Any"
+                continue
+            }
+            try {
+                New-NetFirewallRule -DisplayName $ruleName -Direction Inbound -Action Allow `
+                    -Protocol TCP -LocalPort $port -Profile Any -ErrorAction Stop | Out-Null
+                Write-Ok "已放行防火墙入站：$ruleName"
+            } catch {
+                Write-Warn "放行失败（$ruleName）：$($_.Exception.Message)"
+                $manualCmds += "New-NetFirewallRule -DisplayName '$ruleName' -Direction Inbound -Action Allow -Protocol TCP -LocalPort $port -Profile Any"
+            }
+        }
+
+        if ($manualCmds.Count -gt 0) {
+            Write-Host ''
+            Write-Warn '当前不是**管理员**，防火墙没能自动放行 —— 内网其它客户端会连不上。'
+            Write-Host '        用「管理员 PowerShell」执行下面命令即可（执行一次，之后一直有效）：' -ForegroundColor Yellow
+            foreach ($cmd in $manualCmds) {
+                Write-Host "          $cmd" -ForegroundColor Yellow
+            }
+            Write-Host '        或者：右键开始菜单 →「终端(管理员)」→ 粘贴上面的命令。' -ForegroundColor DarkGray
+            Write-Host '        本机访问不受影响，照常可用。' -ForegroundColor DarkGray
         }
     }
 
@@ -676,7 +704,7 @@ function Invoke-Start {
         frontendPort  = $FrontendPort
         python        = $python
         loginUrl      = $LoginUrl
-        lan           = [bool]$Lan
+        lan           = [bool]$ServeLan
         backendHost   = $BackendHost
     }
 
@@ -699,7 +727,7 @@ function Invoke-Start {
     Write-Host '        停止服务 : ' -NoNewline -ForegroundColor Gray
     Write-Host '.\start.ps1 stop' -ForegroundColor White
     Write-Host ''
-    if ($Lan) {
+    if ($ServeLan) {
         # 把内网地址直接打出来 —— 让用户去 `ipconfig` 里翻是一件很烦的事。
         $lanIps = Get-LanIPv4
         if ($lanIps.Count -gt 0) {
@@ -711,11 +739,11 @@ function Invoke-Start {
         } else {
             Write-Warn '没有找到可用的 IPv4 网卡地址，内网客户端可能连不上（检查网络连接）。'
         }
-        Write-Host '        （只监听 IPv4；防火墙入站已放行。改回只绑本机：去掉 -Lan）' -ForegroundColor DarkGray
+        Write-Host '        （只监听 IPv4；不需要内网访问时用 -LocalOnly）' -ForegroundColor DarkGray
         Write-Host ''
     } else {
-        Write-Host '        只绑本机（127.0.0.1）。要让内网其它客户端访问，用：' -ForegroundColor DarkGray
-        Write-Host '          .\start.ps1 -Lan' -ForegroundColor DarkGray
+        Write-Host '        只绑本机（127.0.0.1）—— 内网其它客户端访问不了。' -ForegroundColor DarkGray
+        Write-Host '        要去掉这个限制，直接用：.\start.ps1' -ForegroundColor DarkGray
         Write-Host ''
     }
     Write-Host '        后端与管理后台各在一个独立窗口里运行；关闭那些窗口也会停止服务。' -ForegroundColor DarkGray
@@ -792,7 +820,7 @@ function Invoke-Status {
 # 这些都是可再生成的：缓存、浏览器剖析目录、日志、测试临时库。
 #
 # **默认不动数据库**（`data/kf.db` 里有你录入的数据）。要连库一起删请显式加
-# `-IncludeData` —— 那种情况下下次启动会自动重新建库并导种子。
+# `-IncludeData` —— 那种情况下下次启动会自动重新建库并应用迁移。
 # --------------------------------------------------------------------------- #
 function Invoke-Clean {
     param([switch]$IncludeData)
@@ -852,9 +880,9 @@ function Invoke-Clean {
             ForEach-Object { $targets.Add([pscustomobject]@{ Path = $_.FullName; Label = "backend\data\$($_.Name)" }) }
     }
 
-    # 5) 可选：连开发数据库一起删（下次启动会重建并导种子）
+    # 5) 可选：连开发数据库一起删（下次启动会重建并应用迁移）
     if ($IncludeData) {
-        Write-Warn '-IncludeData 已指定：将删除开发数据库 data\kf.db（下次启动会重建并导种子）'
+        Write-Warn '-IncludeData 已指定：将删除开发数据库 data\kf.db（下次启动会重建并应用迁移）'
         Get-ChildItem (Join-Path $Root 'data') -Force -ErrorAction SilentlyContinue |
             Where-Object { $_.Name -like 'kf.db*' } |
             ForEach-Object { $targets.Add([pscustomobject]@{ Path = $_.FullName; Label = "data\$($_.Name)" }) }
