@@ -58,6 +58,15 @@ class _PatientFormSheetState extends ConsumerState<PatientFormSheet> {
     'paused': '暂停',
   };
 
+  /// 状态码 → 中文（界面一律显示中文，不给用户看 `pending_discharge` 这种原始值）。
+  static String _statusLabel(String code) => const {
+        'in_hospital': '在院',
+        'paused': '暂停',
+        'pending_discharge': '待出院',
+        'discharged': '已出院',
+      }[code] ??
+      code;
+
   @override
   void initState() {
     super.initState();
@@ -221,19 +230,22 @@ class _PatientFormSheetState extends ConsumerState<PatientFormSheet> {
                   decoration: const InputDecoration(
                     labelText: '注意事项',
                     hintText: '如 过敏、防跌倒、体位限制',
-                    // ★ 2026-10-06：原来是"治疗师只读"，用户要求取消该限制。
-                    //   这里明确写出来，避免后来的人又把它当成只读字段加锁。
-                    helperText: '治疗师可以修改（2026-10-06 起不再是只读）',
+                    // 这里原来写了一句 helper「治疗师可以修改（2026-10-06 起不再是只读）」。
+                    // 用户 2026-10-06：「那一行都去掉，标出来干什么？多余」——
+                    // 确实多余：能改就是能改，把"现在已经不是只读"写在界面上是废话。
+                    // 权限本身由后端门禁保证（见 api/v1/patients.py），不靠在界面上声明。
                     border: OutlineInputBorder(),
                   ),
                 ),
                 const SizedBox(height: 12),
 
                 if (_isEdit && !_statuses.containsKey(widget.existing!.status))
-                  // 已出院/待出院：不在选项里，也不能在这里改 —— 说清楚去哪改。
+                  // 已出院 / 待出院：状态不在选项里，也不能在这里改。
+                  // 这一条**不是**废话，必须留：没有它，状态框会凭空消失，
+                  // 用户不知道去哪改。只把原始状态码换成中文（原来会显示 discharged）。
                   Text(
-                    '当前状态：${widget.existing!.status}。'
-                    '改状态请用患者页的出院/恢复操作（会单独记入审计）。',
+                    '当前状态「${_statusLabel(widget.existing!.status)}」，'
+                    '不在这里改 —— 请用患者页的出院/恢复操作。',
                     style: theme.textTheme.bodySmall
                         ?.copyWith(color: theme.colorScheme.outline),
                   )
