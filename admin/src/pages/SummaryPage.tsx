@@ -191,15 +191,27 @@ function RowMeta({ row, showPatient = true }: { row: SummaryRowOut; showPatient?
     <Space size={4} wrap style={{ marginBottom: 6 }}>
       {showPatient ? (
         <Typography.Text strong>
-          {row.patient_name ?? '—'}（{row.patient_no}）
+          {`${row.patient_name ?? '—'}（${row.patient_no}）`}
         </Typography.Text>
       ) : null}
       <Tag>{disciplineText(row)}</Tag>
       <Tag color={row.kind === 'daily' ? 'default' : 'geekblue'}>{kindText(row)}</Tag>
       <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-        {row.therapist_name ?? '—'}
-        {row.is_temporary ? '（临时）' : ''}
-        {row.kind === 'daily' && row.seq_no ? ` · 第 ${row.seq_no} 次` : ''}
+        {/* ★ 2026-10-06：这一段原来是 3 个并列子节点（治疗师名 + 条件"（临时）" +
+            条件"第 N 次"），而 antd 的 Typography 内部会把 children **原样**塞进
+            `<span>{node}</span>`（见 `typography/Base/index.js`：
+            `node.length > 0 && … ? <span key="show-content">{node}</span> : node`）。
+            于是"多个子节点"变成一个**没有 key 的数组**，React 报
+            `Each child in a list should have a unique "key" prop …
+             Check the render method of Card. It was passed a child from DateSummary.`
+            —— 警告指向 Card / DateSummary，真正的原因却在这里，很难找。
+
+            合并成**一个字符串**即可：警告消失，渲染结果完全一样。 */}
+        {[
+          row.therapist_name ?? '—',
+          row.is_temporary ? '（临时）' : '',
+          row.kind === 'daily' && row.seq_no ? ` · 第 ${row.seq_no} 次` : '',
+        ].join('')}
       </Typography.Text>
       <Tag color={status.color}>{status.text}</Tag>
     </Space>
@@ -279,7 +291,18 @@ function DateSummary() {
               >
                 {group.rows.map((row) => (
                   <SoapTextBlock
-                    key={row.id}
+                    // ★ 2026-10-06：这里原来写 `key={row.id}`，而**汇总接口的行没有 `id`
+                    //   字段**（只有 `record_id`）。`key={undefined}` 等于没给 key，于是
+                    //   React 报：
+                    //     `Each child in a list should have a unique "key" prop …
+                    //      Check the render method of Card. It was passed a child from DateSummary.`
+                    //   警告指向 Card / DateSummary，真正的原因是这里字段名写错了 ——
+                    //   找它花了很久，故留此说明。
+                    //
+                    //   类型检查当时没拦住：`SummaryRowOut extends RecordListItemOut` 从基接口
+                    //   **继承**了 `id: number`，但后端这个接口并不返回它
+                    //（已把 `SummaryRowOut` 的 `id` 收紧成可选，编译器以后能拦）。
+                    key={row.record_id}
                     caption={<RowMeta row={row} showPatient={groupBy !== 'patient'} />}
                     text={row.rendered_text || '（无正文）'}
                   />
@@ -416,8 +439,7 @@ function PatientSummary() {
                   <Space size={4} wrap style={{ marginBottom: 8 }}>
                     {day.therapists.length > 0 ? (
                       <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                        治疗师：{day.therapists.join('、')}
-                        {day.temporary ? '（含临时）' : ''}
+                        {`治疗师：${day.therapists.join('、')}${day.temporary ? '（含临时）' : ''}`}
                       </Typography.Text>
                     ) : null}
                     {day.disciplines.map((d) => (
@@ -440,11 +462,13 @@ function PatientSummary() {
                               {kindText(record)}
                             </Tag>
                             <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                              {record.therapist_name ?? '—'}
-                              {record.is_temporary ? '（临时）' : ''}
-                              {record.kind === 'daily' && record.seq_no
-                                ? ` · 第 ${record.seq_no} 次`
-                                : ''}
+                              {[
+                                record.therapist_name ?? '—',
+                                record.is_temporary ? '（临时）' : '',
+                                record.kind === 'daily' && record.seq_no
+                                  ? ` · 第 ${record.seq_no} 次`
+                                  : '',
+                              ].join('')}
                             </Typography.Text>
                             <Tag color={status.color}>{status.text}</Tag>
                           </Space>

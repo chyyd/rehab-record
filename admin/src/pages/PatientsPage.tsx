@@ -1,5 +1,5 @@
 /** 患者管理（M1）：CRUD + 注意事项 + 归属分配/取消 + 归属历史 + 出院流程。 */
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   Alert,
   Button,
@@ -25,6 +25,8 @@ import { errorMessage } from '../api/client'
 import { ErrorBox, PageHeader, PageSkeleton, useAsync } from '../components/Feedback'
 import { useAuth } from '../auth/AuthProvider'
 import { notify } from '../components/notify'
+import { RequiredHint, SoapFormFields, isBlank, missingRequired } from '../components/SoapFormFields'
+import type { RecordFormOut, SoapSection } from '../api/endpoints'
 
 const STATUS_LABEL: Record<string, { text: string; color: string }> = {
   in_hospital: { text: '在院', color: 'green' },
@@ -110,16 +112,11 @@ export function PatientsPage() {
           <Typography.Text type="secondary">—</Typography.Text>
         ),
     },
-    {
-      title: '归属治疗师',
-      dataIndex: 'assigned_therapist_id',
-      width: 130,
-      render: (id: number | null) => {
-        if (!id) return <Tag>未分配</Tag>
-        const t = therapists.data?.find((x) => x.id === id)
-        return t?.name ?? `#${id}`
-      },
-    },
+    // ★ 2026-10-06 用户要求：「患者管理页去掉归属治疗师列」。
+    //
+    // 归属现在只影响**排序与文书署名**（不再是可见性闸门），
+    // 后台看列表时更关心"谁在院、什么状态、要不要出院"。
+    // 需要看归属时点「详情」——那里的抽屉里仍然有，并且带归属历史。
     {
       title: '状态',
       dataIndex: 'status',
@@ -336,8 +333,21 @@ function DischargeModal({
 }) {
   const [selected, setSelected] = useState<number | undefined>()
   const [saving, setSaving] = useState(false)
+  const [form] = Form.useForm()
 
-  // 只列**已提交/已锁定**的出院小结：后端拿不到合格小结会报错，先把选项过滤掉更清楚
+  // ★ 2026-10-06：没有已提交小结时**直接在这里写**（用户要求「逻辑同 app 的出院按钮」）。
+  //
+  // 用户原话：「操作的发起出院，如果没有出院小结，那么小结选择填写窗，
+  //           逻辑同 app 的出院按钮」。
+  //
+  // 所以本弹窗有两种形态：
+  //  A. 已有已提交的出院小结 → 列出来挑一份（原来的行为）；
+  //  B. 一份都没有 → 选大类 + 填小结，提交后**自动**进入待出院。
+  //     后端在"提交出院小结"时就会把患者置为 `pending_discharge`
+  //（`records.py::_mark_pending_discharge`），所以这里**不需要**再调一次
+  //     `/discharge`；调了也无害（该接口幂等），但多一次往返没必要。
+  const [discipline, setDiscipline] = useState<string | undefined>()
+
   const summaries = useAsync(
     () =>
       patient
@@ -354,8 +364,51 @@ function DischargeModal({
   const candidates = (summaries.data?.items ?? []).filter(
     (r) => r.status === 'submitted' || r.status === 'locked',
   )
+  const noSummaryYet = !summaries.loading && !summaries.error && candidates.length === 0
 
-  const handleOk = async () => {
+  // 四大类选项与后端同源（`/records/enums`），不在这里写死。
+  const enums = useAsync(() => recordsApi.enums(), [])
+  const disciplines = enums.data?.disciplines ?? []
+
+  // 一份小结都没有时，默认选中"已有记录最多的那个大类" —— 出院小结通常写在
+  // 该患者真正做过治疗的大类下（"治疗过程汇总"只汇总该大类）。
+  const records = useAsync(
+    () =>
+      patient
+        ? recordsApi.list({ page: 1, page_size: 50, patient_no: patient.inpatient_no })
+        : Promise.resolve(null),
+    [patient?.inpatient_no],
+  )
+
+  const draftForm = useAsync<RecordFormOut | null>(
+    () =>
+      patient && discipline
+        ? recordsApi.form({
+            patient_no: patient.inpatient_no,
+            discipline,
+            kind: 'discharge',
+          })
+        : Promise.resolve(null),
+    [patient?.inpatient_no, discipline],
+  )
+
+  const sections: SoapSection[] = draftForm.data?.soap ?? []
+
+  // 默认大类：该患者**记录最多的那个**（出院小结通常写在真正做过治疗的大类下）。
+  // 用 effect 而不是在 render 里算：它要同时等 `records` 与 `enums` 两份异步数据，
+  // 少等一份就会"先选中一个不存在的大类"。
+  useEffect(() => {
+    if (!noSummaryYet || discipline || !records.data || disciplines.length === 0) return
+    const counts = new Map<string, number>()
+    for (const r of records.data.items) {
+      counts.set(r.discipline, (counts.get(r.discipline) ?? 0) + 1)
+    }
+    const best = [...counts.entries()].sort((a, b) => b[1] - a[1])[0]?.[0]
+    if (best && disciplines.some((d) => d.key === best)) setDiscipline(best)
+  }, [noSummaryYet, discipline, records.data, disciplines])
+
+  /** 形态 A：从小结列表里挑一份，调 `/discharge`。 */
+  const submitPick = async () => {
     if (!patient) return
     if (!selected) {
       notify.warning('请选择一份已提交的出院小结')
@@ -374,36 +427,133 @@ function DischargeModal({
     }
   }
 
+  /** 形态 B：现场填写出院小结；提交后后端自动把患者置为待出院。 */
+  const submitDraft = async () => {
+    if (!patient || !discipline) {
+      notify.warning('请先选择出院小结写在哪个大类下')
+      return
+    }
+    let values: Record<string, unknown>
+    try {
+      values = await form.validateFields()
+    } catch {
+      // antd 自己会把出错的字段标红，这里不用再弹提示
+      return
+    }
+    // 自动字段（如「治疗过程汇总」）由服务端生成，不提交 —— 提交了也会被忽略。
+    const body: Record<string, unknown> = {}
+    for (const section of sections) {
+      for (const field of section.fields) {
+        if (field.auto) continue
+        const v = values[field.key]
+        if (!isBlank(v)) body[field.key] = v
+      }
+    }
+    const stillMissing = missingRequired(sections, body)
+    if (stillMissing.length > 0) {
+      notify.warning(`还差：${stillMissing.join('、')}`)
+      return
+    }
+
+    setSaving(true)
+    try {
+      await recordsApi.create({
+        patient_no: patient.inpatient_no,
+        discipline,
+        kind: 'discharge',
+        body,
+        status: 'submitted',
+      })
+      notify.success('出院小结已提交，患者进入「待出院」，等待管理员确认')
+      form.resetFields()
+      onSaved()
+    } catch (err) {
+      notify.error(errorMessage(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const reset = () => {
+    setSelected(undefined)
+    form.resetFields()
+    onClose()
+  }
+
   return (
     <Modal
       title={`发起出院：${patient?.name ?? ''}`}
       open={patient !== null}
-      onOk={handleOk}
-      onCancel={() => {
-        setSelected(undefined)
-        onClose()
-      }}
-      okText="发起出院"
+      onOk={noSummaryYet ? submitDraft : submitPick}
+      onCancel={reset}
+      okText={noSummaryYet ? '提交小结并发起出院' : '发起出院'}
       cancelText="取消"
       confirmLoading={saving}
       destroyOnHidden
+      // 23 个字段的表单要宽一点，否则标签与输入框挤在一起
+      width={noSummaryYet ? 760 : 520}
     >
       <Alert
-        type="info"
+        type={noSummaryYet ? 'warning' : 'info'}
         showIcon
         style={{ marginBottom: 12 }}
-        message="出院小结先写完，再点这里"
-        description="发起后患者进入「待出院」：从治疗师白板消失、不能再记新治疗，需管理员确认出院（或满 7 天自动出院）。"
+        message={noSummaryYet ? '还没有出院小结 —— 就在这里写一份' : '选一份已提交的出院小结'}
+        description={
+          noSummaryYet
+            ? '与 App 的出院按钮同一条路径：小结写完提交后，患者自动进入「待出院」。' +
+              '「治疗过程汇总」由系统按该大类的记录自动生成，不用手填。'
+            : '发起后患者进入「待出院」：从治疗师白板消失、不能再记新治疗，需管理员确认出院（或满 7 天自动出院）。'
+        }
       />
       {summaries.loading ? (
         <PageSkeleton />
       ) : summaries.error ? (
         <ErrorBox message={summaries.error} onRetry={summaries.reload} />
-      ) : candidates.length === 0 ? (
-        <Empty
-          image={Empty.PRESENTED_IMAGE_SIMPLE}
-          description="该患者还没有已提交的出院小结，无法发起出院。"
-        />
+      ) : noSummaryYet ? (
+        /* 形态 B：现场填写出院小结。 */
+        <div>
+          <Space style={{ marginBottom: 12 }} wrap>
+            <Typography.Text>小结写在哪个大类下：</Typography.Text>
+            <Select
+              placeholder="请选择大类"
+              style={{ width: 200 }}
+              value={discipline}
+              onChange={(v) => {
+                setDiscipline(v)
+                form.resetFields()
+              }}
+              options={disciplines.map((d) => ({ label: d.name, value: d.key }))}
+            />
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              每个大类有自己的出院小结（「治疗过程汇总」只汇总该大类）
+            </Typography.Text>
+          </Space>
+
+          {!discipline ? (
+            <Empty
+              image={Empty.PRESENTED_IMAGE_SIMPLE}
+              description="先选一个大类，就会出现该大类的出院小结表单。"
+            />
+          ) : draftForm.loading ? (
+            <PageSkeleton />
+          ) : draftForm.error ? (
+            <ErrorBox message={draftForm.error} onRetry={draftForm.reload} />
+          ) : (
+            <>
+              <RequiredHint sections={sections} />
+              <Form
+                form={form}
+                layout="horizontal"
+                // 用模板里的带入值（`prefill`）作为初值：出院小结的很多项
+                // 是"最近一次评估"的延续，让医生改而不是从零填。
+                initialValues={draftForm.data?.prefill ?? {}}
+                style={{ marginTop: 8 }}
+              >
+                <SoapFormFields sections={sections} prefill={draftForm.data?.prefill} />
+              </Form>
+            </>
+          )}
+        </div>
       ) : (
         <List
           size="small"

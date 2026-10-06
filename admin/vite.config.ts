@@ -8,6 +8,13 @@ const API_TARGET = process.env.VITE_API_TARGET ?? 'http://127.0.0.1:8000'
 export default defineConfig({
   plugins: [react()],
   server: {
+    // ★ 显式绑 IPv4（2026-10-06）。
+    //
+    // 不写 `host` 时 Vite 只监听 `[::1]` —— 本机实测 `netstat` 是
+    // `TCP [::1]:5173 LISTENING`，于是 `http://127.0.0.1:5173` **连不上**，
+    // 而 127.0.0.1 恰恰是脚本、文档、各种工具最常用的写法，
+    // 排查时很容易误判成"服务没起来"。
+    host: '127.0.0.1',
     port: 5173,
     proxy: {
       '/api': {

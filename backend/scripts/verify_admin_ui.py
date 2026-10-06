@@ -71,6 +71,23 @@ def _resolve_admin_password() -> str:
 ADMIN_PW = _resolve_admin_password()
 THERAPIST_PW = "Ther#2026pass"
 
+
+def _latest_schema_version() -> int:
+    """迁移目录里的**最高版本号**（`001_…sql` → 1）。
+
+    为什么要算而不是写死：这里原来断言的是 `schema_version == 5`，
+    而迁移早就走到 014 了 —— 于是脚本**必然失败**，而失败信息
+    （`FAIL 数据库迁移到最新  [14]`）看起来像"数据库有问题"，
+    实际上坏的是这句断言。写死的版本号会随每次迁移悄悄过期。
+    """
+    mig_dir = _REPO_ROOT / "backend" / "app" / "db" / "migrations"
+    versions = [
+        int(p.name.split("_", 1)[0])
+        for p in mig_dir.glob("*.sql")
+        if p.name.split("_", 1)[0].isdigit()
+    ]
+    return max(versions) if versions else 0
+
 failures: list[str] = []
 checks = 0
 
@@ -114,8 +131,9 @@ def main() -> int:
         with urllib.request.urlopen(f"{API_URL}/api/v1/health", timeout=8) as resp:
             health = json.loads(resp.read().decode())
         check("后端在运行", resp.status == 200, str(resp.status))
-        check("数据库迁移到最新", health.get("database", {}).get("schema_version") == 5,
-              str(health.get("database", {}).get("schema_version")))
+        check("数据库迁移到最新", health.get("database", {}).get("schema_version") == _latest_schema_version(),
+              f"实际 {health.get('database', {}).get('schema_version')}，"
+              f"迁移目录最新 {_latest_schema_version()}")
     except Exception as exc:  # noqa: BLE001
         print(f"  后端不可达：{exc}\n  请先启动：python -m uvicorn app.main:app --port 8000")
         return 2
@@ -229,17 +247,29 @@ def main() -> int:
         check("总览页显示了当前登录人", "科室管理员" in body_text, body_text[:200])
 
         # 5) 逐页导航
+        #
+        # ⚠ 这里**只列真的存在的页面**。2026-10-06 清掉了四条过期项：
+        # `/dict`（字典管理）、`/option-sets`（选项集管理）、
+        # `/response-defs`（患者反应定义）、`/templates`（科室模板）——
+        # 它们**随迁移 011/012 一起删掉了**（记录改由 JSON 模板驱动，
+        # 那四组接口也已删除），但脚本还在验证它们，于是长期 FAIL。
+        # 失败信息（"缺少 ['主项目', '子项目']"）看着像页面坏了，
+        # 实际上坏的是这句断言 —— 与上面那个写死的 `schema_version == 5` 同类。
+        #
+        # 与 2026-10-05 删「全局排期 / 请假管理」时的口径一致：
+        # **不补占位项**，页面真的没了就不该在这里留一条。
         routes = [
-            ("/patients", "患者管理", ["界面测试患者甲", "住院编号"]),
-            # 2026-10-05：「全局排期」与「请假管理」随排期功能下线一并移除。
-            # 这里**不补占位项** —— 页面真的没了，补一个假的反而会掩盖"没删干净"。
+            # ★ 2026-10-06：这里原来直接断言列表里有「界面测试患者甲」。
+            # 但本脚本每次运行都会**新建患者**（"浏览器新建患者" / "出院恢复验收患者"），
+            # 而患者列表是分页的 —— 跑够多次之后这条断言必然失败
+            #（实测库里已积累 21 个测试患者，把 UITEST1 挤到了第 2 页）。
+            # 那属于"脚本自己污染了自己的前置条件"。
+            #
+            # 改成只断言**列本身**（住院编号），并在 §7 里用搜索精确验证那条数据。
+            ("/patients", "患者管理", ["住院编号"]),
             ("/records", "治疗记录", ["状态"]),
             ("/summary", "汇总与打印", ["按日期汇总", "导出 PDF"]),
             ("/users", "用户管理", ["工号", "新建用户"]),
-            ("/dict", "字典管理", ["主项目", "子项目", "参数定义"]),
-            ("/option-sets", "选项集管理", ["解析预览"]),
-            ("/response-defs", "患者反应定义", ["显示名", "类型", "适用主项目"]),
-            ("/templates", "科室模板", ["模板名称"]),
             ("/audit-logs", "审计日志", ["操作人", "对象类型"]),
         ]
         for path, menu_name, needles in routes:
@@ -269,25 +299,7 @@ def main() -> int:
             crashed = "页面出错" in text or "Something went wrong" in text
             check(f"{menu_name} 未出现错误页", not crashed, text[:160])
 
-        # 6) 字典三级联动：点主项目应带出子项目
-        browser.eval(
-            """
-            (() => {
-              const link = [...document.querySelectorAll('a')].find(a => a.getAttribute('href') === '/dict');
-              if (link) link.click();
-              return true;
-            })()
-            """
-        )
-        time.sleep(2.0)
-        dict_text = browser.eval("document.body.innerText") or ""
-        check("字典页显示主项目与子项目",
-              "运动功能障碍训练" in dict_text and "偏瘫肢体综合训练" in dict_text,
-              dict_text[:220])
-        check("字典页显示参数定义",
-              any(k in dict_text for k in ("体位", "侧别", "训练次数")), dict_text[:220])
-
-        # 7) 患者页表格确实有数据行
+        # 6) 患者页表格确实有数据行 + **归属治疗师列已去掉**（2026-10-06 用户要求）
         browser.eval(
             """
             (() => {
@@ -300,6 +312,76 @@ def main() -> int:
         time.sleep(2.2)
         row_count = browser.eval("document.querySelectorAll('.ant-table-tbody tr.ant-table-row').length")
         check("患者表格渲染出数据行", int(row_count or 0) > 0, f"行数 {row_count}")
+
+        # 用户原话：「患者管理页去掉归属治疗师列」。
+        # 注意**不能**用 `"归属治疗师" not in text` 来判：列头虽然没了，
+        # 但行内的「分配归属」按钮还在，`innerText` 里仍会出现"归属"二字。
+        # 所以直接按**表头单元格文本**比对。
+        headers = browser.eval(
+            "JSON.stringify([...document.querySelectorAll('.ant-table-thead th')]"
+            + ".map(th => th.innerText.trim()))"
+        )
+        header_list = json.loads(headers) if headers else []
+        check("患者表格的表头里没有「归属治疗师」",
+              not any("归属治疗师" in h for h in header_list), str(header_list))
+        check("患者表格仍有「注意事项」列（只删该删的）",
+              any("注意事项" in h for h in header_list), str(header_list))
+
+        # 6b) 用**搜索**精确验证既有患者能在列表里显示
+        #     （不再依赖分页 —— 见 routes 里的说明）。
+        #
+        #     注意这是 antd 的 `Input.Search`：**光 set value + input 事件不会触发搜索**，
+        #     要点那个放大镜按钮（或回车）。所以这里填完值再点按钮。
+        browser.eval(
+            """
+            (() => {
+              const input = [...document.querySelectorAll('input')]
+                .find(i => (i.placeholder || '').includes('住院编号'));
+              if (!input) return 'no-input';
+              const setter = Object.getOwnPropertyDescriptor(
+                window.HTMLInputElement.prototype, 'value').set;
+              setter.call(input, '界面测试患者甲');
+              input.dispatchEvent(new Event('input', { bubbles: true }));
+              // `Input.Search` 支持回车触发；比点放大镜更稳（不用猜按钮在哪一层）。
+              for (const type of ['keydown', 'keypress', 'keyup']) {
+                input.dispatchEvent(new KeyboardEvent(type, {
+                  key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true,
+                }));
+              }
+              return 'entered';
+            })()
+            """
+        )
+        time.sleep(2.6)
+        found_text = browser.eval("document.body.innerText") or ""
+        check("搜「界面测试患者甲」能搜到 UITEST1",
+              "界面测试患者甲" in found_text and "UITEST1" in found_text,
+              found_text[:200])
+
+        # ★ 搜完必须**把筛选清掉**再继续。
+        # 下面 §7b 会新建患者并断言"提交后新患者出现在列表里" ——
+        # 列表若还筛着「界面测试患者甲」，那条断言必然失败（而且后面几条会连锁失败）。
+        # 我自己第一版就漏了这一步，一次跑出 6 条无关失败。
+        browser.eval(
+            """
+            (() => {
+              const input = [...document.querySelectorAll('input')]
+                .find(i => (i.placeholder || '').includes('住院编号'));
+              if (!input) return false;
+              const setter = Object.getOwnPropertyDescriptor(
+                window.HTMLInputElement.prototype, 'value').set;
+              setter.call(input, '');
+              input.dispatchEvent(new Event('input', { bubbles: true }));
+              for (const type of ['keydown', 'keypress', 'keyup']) {
+                input.dispatchEvent(new KeyboardEvent(type, {
+                  key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true,
+                }));
+              }
+              return true;
+            })()
+            """
+        )
+        time.sleep(2.4)
 
         # 7b) 交互：打开"新建患者"弹窗并提交，确认表单能真正写库
         #     （只验证渲染不够 —— 表单绑定、校验、提交链路都要走一遍）
@@ -521,6 +603,17 @@ def main() -> int:
             if "favicon" not in e.lower()
             and "status of 400" not in e and "status of 401" not in e
         ]
+        # ★ 2026-10-06：剔掉**浏览器扩展**抛的异常。
+        #
+        # 本脚本用本机 Edge 跑，而真实 Edge 会加载用户已装的扩展；实测有个扩展
+        # （`chrome-extension://amkbmndfnliijdhojkpoglbnaaahippg`）在每次按键时
+        # 抛 `TypeError: Cannot read properties of undefined (reading 'toLowerCase')`。
+        # 那与后台代码无关，却会把"没有未捕获的页面异常"这项**永远**判失败 ——
+        # 一项永远失败的检查等于没有检查。
+        #
+        # 只按来源过滤，**不按错误内容**过滤：后台自己的异常仍会被抓到。
+        page_errors = [e for e in page_errors if "chrome-extension://" not in e]
+        console_errors = [e for e in console_errors if "chrome-extension://" not in e]
         check("没有未捕获的页面异常", not page_errors, str(page_errors[:3]))
         check("没有 console.error", not console_errors, str(console_errors[:3]))
 

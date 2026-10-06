@@ -176,12 +176,34 @@ class Cdp:
             self.console_errors.append(text[:500])
         elif method == "Runtime.exceptionThrown":
             detail = params.get("exceptionDetails", {})
-            desc = (
-                detail.get("exception", {}).get("description")
-                or detail.get("text")
-                or "未知异常"
-            )
-            self.page_errors.append(str(desc)[:500])
+            exc = detail.get("exception", {}) or {}
+            # ★ 2026-10-06：原来只取 `exception.description`，取不到就退成 `detail.text`，
+            # 而 `text` 是个**普通字符串**（如 "Uncaught"）—— 于是报错内容常常只有
+            # `Object` 或 `未知异常`，**根本没法定位**。这里把类型、消息、值、位置
+            # 与调用栈的头部都拼进去，让"没有未捕获的页面异常"这条检查真的可用。
+            parts: list[str] = []
+            if exc.get("className"):
+                parts.append(str(exc["className"]))
+            if exc.get("description"):
+                parts.append(str(exc["description"]))
+            elif exc.get("value") is not None:
+                parts.append(str(exc["value"]))
+            if detail.get("text"):
+                parts.append(str(detail["text"]))
+            loc = detail.get("url") or ""
+            if loc:
+                parts.append(
+                    f"@ {loc}:{detail.get('lineNumber', '?')}:{detail.get('columnNumber', '?')}"
+                )
+            frames = (detail.get("stackTrace", {}) or {}).get("callFrames", []) or []
+            for f in frames[:4]:
+                fn = f.get("functionName") or "(anonymous)"
+                parts.append(
+                    f"    at {fn} ({f.get('url', '')}:{f.get('lineNumber', '?')}:"
+                    f"{f.get('columnNumber', '?')})"
+                )
+            desc = "\n".join(parts) or "未知异常"
+            self.page_errors.append(str(desc)[:2000])
         elif method == "Log.entryAdded":
             entry = params.get("entry", {})
             if entry.get("level") == "error":

@@ -230,6 +230,55 @@ export interface RecordOut extends RecordListItemOut {
   revision: number
 }
 
+/**
+ * SOAP 表单里的一个字段（`GET /records/form` 的 `soap[].fields[]`）。
+ *
+ * 只有 4 种类型 + 1 个"自动只读"标志，所以后台可以像 App 那样**通用渲染**，
+ * 不需要为每个大类写死界面（出院小结 17–23 个字段、四大类各不相同）。
+ */
+export interface SoapField {
+  key: string
+  /** `single` / `multi` / `number` / `text`。 */
+  type: string
+  label: string
+  options?: string[]
+  required?: boolean
+  /** `number` 的单位（如 `分` / `级`）。 */
+  unit?: string | null
+  hint?: string | null
+  /** `auto` 非空即"服务端算好的只读字段"（如出院小结的「治疗过程汇总」）。 */
+  auto?: unknown
+  collapsible_after?: number | null
+}
+
+export interface SoapSection {
+  key: string
+  label: string
+  heading: string
+  fields: SoapField[]
+}
+
+/** `GET /records/form`：App/后台渲染一次录入所需的全部信息。 */
+export interface RecordFormOut {
+  patient: { inpatient_no: string; name: string; status: string }
+  discipline: string
+  discipline_name: string
+  kind: string
+  kind_label: string
+  title: string
+  next_seq: number
+  total_daily: number
+  pending_document?: string | null
+  template_version: number
+  soap: SoapSection[]
+  frequent_options?: Record<string, string[]>
+  /** 每个字段的带入值（`{field_key: value}`）。 */
+  prefill: Record<string, unknown>
+  prefill_source?: Record<string, string>
+  footer?: string[]
+  existing?: RecordOut | null
+}
+
 export const recordsApi = {
   /** 记录列表。`status` 走 `status` 参数；日期区间走 `from` / `to`。 */
   list: (params: PageParams & {
@@ -247,6 +296,28 @@ export const recordsApi = {
   submit: (id: number) => api.post<RecordOut>(`/api/v1/records/${id}/submit`),
   /** 状态 / 形态 / 四大类枚举（界面的下拉项应与后端同源）。 */
   enums: () => api.get<RecordEnumsOut>('/api/v1/records/enums'),
+  /**
+   * 取一次录入的表单（模板字段定义 + 预填值）。
+   *
+   * `kind='discharge'` 用来取出院小结 —— 它不是门禁推出来的，
+   * 而是"要出院"这个显式动作（与 App 的出院按钮同源）。
+   */
+  form: (params: {
+    patient_no: string
+    discipline: string
+    date?: string
+    kind?: string
+  }) => api.get<RecordFormOut>('/api/v1/records/form', params),
+  /** 新建记录。`status='submitted'` 时出院小结会**自动把患者置为待出院**。 */
+  create: (payload: {
+    patient_no: string
+    discipline: string
+    kind: string
+    body: Record<string, unknown>
+    record_date?: string
+    status?: string
+    note?: string | null
+  }) => api.post<RecordOut>('/api/v1/records', payload),
   timeline: (params: PageParams & {
     from?: string
     to?: string
@@ -275,7 +346,19 @@ export interface TotalsOut {
 }
 
 /** 汇总行 = 列表项 + 患者姓名与临时标记（后端 `SummaryRowOut`）。 */
-export interface SummaryRowOut extends RecordListItemOut {
+/**
+ * 按日期汇总里的一行。
+ *
+ * ⚠ **不要写成 `extends RecordListItemOut`**：从那里继承来的 `id: number` 是必填的，
+ * 而汇总接口**根本不返回 `id`**（只有 `record_id`）。
+ *
+ * 2026-10-06：`SummaryPage` 里写了 `key={row.id}` —— `key={undefined}` 等于没给 key，
+ * React 报 "Each child in a list should have a unique key prop … Check the render
+ * method of Card. It was passed a child from DateSummary."。
+ * 因为基接口声明了必填的 `id`，**tsc 拦不住这个笔误**，警告又指向别处，很难查。
+ * 用 `Omit` 去掉 `id` 之后，再写成 `row.id` 会被类型检查直接指出。
+ */
+export interface SummaryRowOut extends Omit<RecordListItemOut, 'id'> {
   record_id: number
 }
 
