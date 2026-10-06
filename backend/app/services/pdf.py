@@ -422,27 +422,24 @@ def patient_daily_pdf(daily: dict[str, Any], *, dept_name: str = DEFAULT_DEPT_NA
             style,
         )
     )
-    story.append(Spacer(1, 4 * mm))
-    story.append(Paragraph("每日汇总", style["heading"]))
+    # ★ 2026-10-06（第二批）用户：「每日汇总 / 2026-09-26 ← 很轻的日期小线
+    #   这些去掉」。
+    #
+    # 所以「每日汇总」这个小标题**和**每天的日期小线都删掉了。
+    # 现在文书直接从信息表下面开始连排（多日按时间升序、不分页、不一天一张）。
+    #
+    # 日期没有丢：每条文书自己的抬头里就有 `治疗日期：YYYY-MM-DD`
+    #（那是模板渲染时冻结进去的文书内容，不是排版加的装饰）。
+    #
+    # 两个标题去掉后信息表会紧贴第一条文书，所以留一点间距透气
+    #（原来是「标题 + 间距」占位，现在只保留间距）。
+    story.append(Spacer(1, 3 * mm))
 
     # ★ 多日记录**按时间顺序往下排**（由早到晚），不分页、不一天一张
     days = sorted(daily["days"], key=lambda d: str(d["record_date"]))
     if not days:
         story.append(Paragraph("（区间内无已提交记录）", style["body"]))
     for day in days:
-        # ★ 2026-10-06 用户：「将类似『2026-09-26 张三、李四（临时）』
-        #   『2026-09-27 张三、李四（临时）』这样的行去掉，我不知道这是什么，
-        #   但是多余」。
-        #
-        # 那一行原来是把每天的**日期 + 当天所有治疗师**拼成 `heading` 当大标题。
-        # 治疗师名字是多余的：**每条文书的抬头上已经有治疗师**（`_record_meta`
-        # 里那行），再来一份汇总只会让人以为是别的东西 —— 用户的原话正是
-        # "我不知道这是什么"。
-        #
-        # 所以这里只留**日期**这一条很轻的小线，作用只是"换了一天"的落点：
-        # 下面紧接着就是当天的第一条文书，它的 `治疗日期：YYYY-MM-DD` 与其一致。
-        # 不再加粗、不再放大、不再列治疗师。
-        story.append(Paragraph(_escape(str(day["record_date"])), style["day"]))
         records = day.get("records") or []
         if not records:
             story.append(Paragraph("（当天无已提交记录）", style["body"]))
@@ -459,7 +456,13 @@ def patient_daily_pdf(daily: dict[str, Any], *, dept_name: str = DEFAULT_DEPT_NA
     return _build(
         story,
         title="康复治疗记录",
-        subtitle=f"{patient.get('name')}　{patient.get('inpatient_no')}",
+        # ★ 2026-10-06（第二批）用户：「康复治疗记录下面的端到端患者甲 E2E001 也去掉」。
+        #
+        # 那是抬头第三行（`_build` 的 `subtitle`）。去掉它，抬头就只剩
+        #   ① 虎林市中医医院康复医学科
+        #   ② 康复治疗记录
+        # 患者身份**没有丢**：紧接着的信息表里有「住院编号」和「姓名」两行。
+        subtitle="",
         dept_name=dept_name,
     )
 

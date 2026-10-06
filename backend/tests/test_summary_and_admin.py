@@ -447,10 +447,22 @@ class TestPdfRendering(SummaryTestCase):
         # ④ 「汇总」→ 按大类分别报次数（这里只有 PT 运动）
         self.assertIn("运动 2 次", text, "汇总栏要按大类报次数")
 
-        # ⑤ 不再有「归属」行（「日期」由每日小标题逐日体现，不再单列一行）
+        # ⑤ 不再有「归属」行
         self.assertNotIn("归属", text, "「归属」行按用户要求去掉")
-        self.assertIn("2027-03-01", text)
-        self.assertIn("2027-03-03", text)
+        # ★ 2026-10-06（第二批）：「每日汇总」小标题、每天的日期小线、
+        #   抬头第三行（姓名 + 住院编号）全部去掉。
+        self.assertNotIn("每日汇总", text, "「每日汇总」小标题按用户要求去掉")
+        self.assertNotIn(
+            "患者甲 ZY001",
+            text,
+            "抬头第三行（姓名 + 住院编号）按用户要求去掉",
+        )
+        # 但**日期与患者身份都不能丢**：
+        #   日期在每条文书自己的抬头里（`治疗日期：`），身份在信息表的住院编号/姓名里。
+        self.assertIn("治疗日期：2027-03-01", text, "每条文书的治疗日期必须还在")
+        self.assertIn("治疗日期：2027-03-03", text)
+        self.assertIn("ZY001", text, "信息表里的住院编号必须还在")
+        self.assertIn("患者甲", text, "信息表里的姓名必须还在")
 
         # ⑥ 签名自动带入治疗师姓名（模板里是 `治疗师签名：__________`）
         self.assertIn("治疗师签名：张三", text, "签名应自动带入治疗师姓名")
@@ -460,16 +472,17 @@ class TestPdfRendering(SummaryTestCase):
         positions = [text.index(day) for day in ("2027-03-01", "2027-03-03")]
         self.assertEqual(positions, sorted(positions), "多日记录按时间升序往下排")
 
-        # ⑦ 2026-10-06：去掉「日期 + 当天所有治疗师」那种大标题行。
-        #    用户原话：「将类似『2026-09-26 张三、李四（临时）』这样的行去掉，
-        #    我不知道这是什么，但是多余」—— 治疗师名字每条文书的抬头上已经有了。
-        #    现在只留一条很轻的**日期小线**（单独一行、只有日期、不加粗）。
-        self.assertNotIn("（临时）", text, "日期行里不该再拼治疗师（含「临时」标记）")
+        # ⑦ 2026-10-06：日期再也不是排版加出来的行。
+        #    第一批删掉了「日期 + 当天所有治疗师」的大标题（用户：「我不知道这是什么，
+        #    但是多余」），第二批连**只剩日期的日期小线也删了**（用户：「这些去掉」）。
+        #    所以现在"看起来像日期行"的东西只应来自文书自身的 `治疗日期：`。
+        self.assertNotIn("（临时）", text, "不该再有日期+治疗师的汇总行")
         for day in ("2027-03-01", "2027-03-03"):
-            self.assertTrue(
+            self.assertIsNone(
                 re.search(rf"^{re.escape(day)}$", text, re.M),
-                f"{day} 应作为**单独一行**的日期小线出现（不跟治疗师名）",
+                f"{day} 不应再作为独立的日期行出现（已按用户要求去掉）",
             )
+            self.assertIn(f"治疗日期：{day}", text, f"{day} 只能出现在文书自身的治疗日期里")
 
         # ⑧ 2026-10-06：去掉段间多余空行（用户：「空行有些多…占用大量空间，去掉」）。
         #    `rendered_text` 里各段之间本来就有一个空行，再叠上 spaceAfter 就太空；
@@ -543,7 +556,13 @@ class TestPrintEndpoints(SummaryTestCase):
         self.write_record(day="2027-03-01")
         resp = self.client.get("/api/v1/print/summary/patient/ZY001", headers=self.h1)
         self.assertEqual(resp.status_code, 200, resp.text[:200])
-        self.assertIn("每日汇总", pdf_text(resp.content))
+        text = pdf_text(resp.content)
+        # 2026-10-06：「每日汇总」小标题与抬头的姓名/住院编号行都已按用户要求去掉，
+        # 所以改断言**抬头两行 + 信息表里的患者身份**（而不是那个已删的标题）。
+        self.assertIn("虎林市中医医院康复医学科", text)
+        self.assertIn("康复治疗记录", text)
+        self.assertIn("住院编号", text)
+        self.assertIn("ZY001", text)
 
     def test_print_covers_department_patients(self) -> None:
         self.write_record(day="2027-03-01", headers=self.h1)
