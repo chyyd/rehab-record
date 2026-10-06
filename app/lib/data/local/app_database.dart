@@ -26,7 +26,22 @@ part 'app_database.g.dart';
   ],
 )
 class AppDatabase extends _$AppDatabase {
-  AppDatabase() : super(_openConnection());
+  /// [backendFingerprint] 让**每台后端一个独立的库文件**。
+  ///
+  /// 2026-10-06 加运行期"手填后端地址"之后，必须这么分：
+  /// 本地库把服务端主键当自己的主键用（`treatment_records.id` 就是服务端记录 id、
+  /// `patients.inpatient_no` 就是服务端住院号、`sync_state.last_cursor` 是服务端
+  /// 变更日志游标）。换一台服务器，这些标识全部对不上 ——
+  /// 同一个住院号在两边是不同的患者、同一个记录 id 在两边是不同的记录。
+  ///
+  /// 分文件是**比"切地址时记得清库"更可靠**的做法：清库依赖每个切换路径都写对，
+  /// 而分文件是**结构上不可能串**。旧库文件留在设备上不碍事（也能留作排障），
+  /// 想省空间可以后续加一招"清理非当前指纹的库"。
+  AppDatabase({DatabaseNaming? naming})
+      : super(_openConnection(naming ?? const DatabaseNaming(
+          backendFingerprint: 'default',
+          isEnvironmentDefault: true,
+        )));
 
   /// 测试用：注入内存库，不碰设备文件系统。
   AppDatabase.forTesting(super.executor);
@@ -107,10 +122,39 @@ class AppDatabase extends _$AppDatabase {
       );
 }
 
-QueryExecutor _openConnection() {
+QueryExecutor _openConnection(DatabaseNaming naming) {
   return LazyDatabase(() async {
     final dir = await getApplicationDocumentsDirectory();
-    final file = File(p.join(dir.path, 'rehab_app.sqlite'));
+    final file = File(p.join(dir.path, databaseFileName(naming)));
     return NativeDatabase.createInBackground(file);
   });
+}
+
+/// 本地库该用哪个文件。
+///
+/// - [backendFingerprint]：当前后端的指纹。
+/// - [isEnvironmentDefault]：当前后端**就是编译期默认的那台**。
+///
+/// 为什么需要第二个字段：升级前的库文件就叫 `rehab_app.sqlite`，
+/// 而那时只有一台后端（编译期注入）。把"默认后端"继续映射到这个名字，
+/// 老用户升级后数据还在，不会因为改名被"清空"。
+///
+/// ⚠ 这里**不能**用 `fingerprint == 'default'` 来判断 ——
+/// `backendFingerprint()` 只在地址解析不出 host 时才返回 `'default'`，
+/// 真实地址（如 `10.0.2.2:8000`）的指纹是 `10_0_2_2_8000`，
+/// 拿 `'default'` 比会永远不相等，兼容逻辑等于没写（我第一版就是这么错的）。
+String databaseFileName(DatabaseNaming naming) =>
+    naming.isEnvironmentDefault
+        ? 'rehab_app.sqlite'
+        : 'rehab_app_${naming.backendFingerprint}.sqlite';
+
+/// [databaseFileName] 的入参（把两个容易搞混的字段绑在一起，避免传错顺序）。
+class DatabaseNaming {
+  const DatabaseNaming({
+    required this.backendFingerprint,
+    required this.isEnvironmentDefault,
+  });
+
+  final String backendFingerprint;
+  final bool isEnvironmentDefault;
 }

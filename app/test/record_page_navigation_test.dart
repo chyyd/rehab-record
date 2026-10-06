@@ -12,6 +12,7 @@ import 'package:rehab_app/data/local/token_store.dart';
 import 'package:rehab_app/data/remote/auth_service.dart';
 import 'package:rehab_app/data/repo/patient_repository.dart';
 import 'package:rehab_app/data/repo/record_repository.dart';
+import 'package:rehab_app/data/repo/settings_repository.dart';
 import 'package:rehab_app/data/repo/timeline_repository.dart';
 import 'package:rehab_app/features/auth/auth_controller.dart';
 import 'package:rehab_app/features/records/record_page.dart';
@@ -137,6 +138,7 @@ void main() {
             records: RecordRepository(client: client, db: db, sync: sync),
             timeline: TimelineRepository(client: client),
             sync: sync,
+            settings: SettingsRepository(),
           )),
         ),
       ],

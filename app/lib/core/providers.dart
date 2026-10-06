@@ -7,6 +7,7 @@ import 'package:rehab_app/data/remote/api_client.dart';
 import 'package:rehab_app/data/remote/auth_service.dart';
 import 'package:rehab_app/data/repo/patient_repository.dart';
 import 'package:rehab_app/data/repo/record_repository.dart';
+import 'package:rehab_app/data/repo/settings_repository.dart';
 import 'package:rehab_app/data/repo/timeline_repository.dart';
 import 'package:rehab_app/sync/sync_engine.dart';
 
@@ -27,6 +28,7 @@ class AppServices {
     required this.records,
     required this.timeline,
     required this.sync,
+    required this.settings,
   });
 
   final AppConfig config;
@@ -38,6 +40,9 @@ class AppServices {
   final RecordRepository records;
   final TimelineRepository timeline;
   final SyncEngine sync;
+
+  /// 服务器地址设置（登录页的「服务器设置」在用）。
+  final SettingsRepository settings;
 
   Future<void> dispose() async {
     await client.close();
@@ -70,8 +75,12 @@ final appServicesProvider = FutureProvider<AppServices>((ref) async {
 });
 
 Future<AppServices> _buildServices(Ref ref) async {
-  final config = AppConfig.fromEnvironment();
-  final db = AppDatabase();
+  // ★ 2026-10-06：地址改成**运行期可解析**（用户在登录页手填的优先）。
+  //   必须在开库之前拿到 —— 本地库文件名由后端指纹决定（见 AppDatabase）。
+  final settings = SettingsRepository();
+  final config = await AppConfig.load();
+  final naming = await settings.databaseNaming(config.baseUrl);
+  final db = AppDatabase(naming: naming);
   final tokens = TokenStore();
 
   // 令牌读取器指向内存中的 access token；刷新交给 AuthService。
@@ -104,6 +113,7 @@ Future<AppServices> _buildServices(Ref ref) async {
     records: RecordRepository(client: client, db: db, sync: sync),
     timeline: TimelineRepository(client: client),
     sync: sync,
+    settings: settings,
   );
 }
 
