@@ -44,6 +44,7 @@ final localRecordsProvider =
 class RecordEditorState {
   const RecordEditorState({
     this.args,
+    this.sessionSeq = 0,
     this.patientNo = '',
     this.recordDate = '',
     this.discipline = '',
@@ -66,6 +67,13 @@ class RecordEditorState {
 
   /// 当前编辑目标（`null` = 还没打开过）。
   final RecordEditorArgs? args;
+
+  /// 本次编辑的**会话号**（每次真正"打开一次编辑"由记录页 +1）。
+  ///
+  /// 用来区分"新打开一次"与"同一会话内的重建"（热重载）——
+  /// 两者的 `args` 完全相同，只看 args 会把新会话误判成重复调用，
+  /// 从而复用上一次的 `next_seq`（见 `start` 的说明）。
+  final int sessionSeq;
 
   final String patientNo;
   final String recordDate;
@@ -137,9 +145,16 @@ class RecordEditorState {
     bool? discharged,
     bool? savedSubmitted,
     bool? datePicked,
+    // 会话号**不是**可改参数（只有 `start()` 能开启新会话）。这里声明它，
+    // 是为了让构造体里的裸 `sessionSeq` 解析到这个参数而不是字段 ——
+    // 否则"参数名 = 字段名"会让 `sessionSeq: sessionSeq` 变成自我引用。
+    int? sessionSeq,
   }) {
     return RecordEditorState(
       args: args ?? this.args,
+      // 会话号必须原样带过去：`copyWith` 丢掉它会让"同会话"判断失效，
+      // 下次打开又可能被误判成重复调用、复用旧的 next_seq。
+      sessionSeq: sessionSeq ?? this.sessionSeq,
       patientNo: patientNo ?? this.patientNo,
       recordDate: recordDate ?? this.recordDate,
       discipline: discipline ?? this.discipline,
@@ -212,16 +227,50 @@ class RecordEditorController extends Notifier<RecordEditorState> {
   @override
   RecordEditorState build() => const RecordEditorState();
 
+  /// 调用方没传 `sessionSeq` 时用的自增计数器（见 [start] 的说明）。
+  ///
+  /// 用**负数**：与记录页那个从 1 开始的计数器不会撞。
+  static int _anonymousSession = 0;
+
+  /// 下一个"匿名会话"号（递减，保证与显式传的正数不冲突）。
+  static int get _nextAnonymousSession => --_anonymousSession;
+
   /// 打开一次编辑（页面 `initState` 调用）。
   ///
-  /// 同一个目标重复调用是**幂等**的：避免热重载/重建把已填内容清空。
-  Future<void> start(RecordEditorArgs args) async {
-    if (state.args?.sameTarget(args) == true && (state.loading || state.form != null)) {
+  /// ## ★ 2026-10-06 修的缺陷：第二次打开同一个大类时带着**上一次的 next_seq**
+  ///
+  /// 用户：「E2E001 建立今日的运动记录是总第 21 次，但是，我再点运动按钮时，
+  /// 提示还是第 21 次，这样就产生了冲突」。
+  ///
+  /// 这里原来有一句"同一个目标重复调用是幂等的"（为热重载保留已填内容），
+  /// 但**新打开一次**与**热重载重建**的参数是**一模一样**的
+  ///（都是 patientNo + discipline，没有 existingId / kind）——
+  /// 于是第二次打开被当成"重复调用"直接 `return`，
+  /// 用的还是上次那份 `next_seq=21`、`existing=null` 的表单，
+  /// 提交时撞 `ux_record_daily_seq`（唯一索引）。
+  ///
+  /// 所以现在**按会话判断**：由调用方（记录页）传 [sessionSeq]，
+  /// 每次真正"打开一次编辑"就 +1。同一个会话内重复调用仍幂等（热重载安全），
+  /// 新会话一律重新取表单 —— `next_seq` / `existing` 本来就该重算。
+  ///
+  /// [sessionSeq] 不传时**每次调用生成一个新值**（等价于"当作新会话"）：
+  /// 这样"忘了传"的后果是"多取一次表单"（正确但略慢），
+  /// 而不是"复用旧的 next_seq 导致 409"（错误且难查）。
+  ///
+  /// ⚠ 不能用一个固定默认值（如 `-1`）：那样两次"忘了传"的调用会拿到**同一个**
+  /// 会话号，又被判成同会话 —— 我第一版就是这么写的，被测试直接抓住了。
+  Future<void> start(RecordEditorArgs args, {int? sessionSeq}) async {
+    final seq = sessionSeq ?? _nextAnonymousSession;
+    final sameSession = state.sessionSeq == seq;
+    if (sameSession &&
+        state.args?.sameTarget(args) == true &&
+        (state.loading || state.form != null)) {
       return;
     }
 
     state = RecordEditorState(
       args: args,
+      sessionSeq: seq,
       patientNo: args.patientNo,
       recordDate: args.recordDate ?? formatDate(DateTime.now()),
       discipline: args.discipline,

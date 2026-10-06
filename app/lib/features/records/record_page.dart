@@ -32,6 +32,15 @@ class RecordPage extends ConsumerStatefulWidget {
 }
 
 class _RecordPageState extends ConsumerState<RecordPage> with WidgetsBindingObserver {
+  /// 本次编辑的**会话号**：每个页面实例一个，全进程自增。
+  ///
+  /// ★ 2026-10-06：用它区分"新打开一次编辑"与"同一会话内的重建"（热重载）。
+  /// 两者的 `RecordEditorArgs` **完全相同**（都是 patientNo + discipline），
+  /// 只看 args 会把新会话误判成重复调用，复用上一次的 `next_seq`
+  /// ——用户报的"建完第 21 次，再点还是 21，产生冲突"就是这个。
+  static int _sessionCounter = 0;
+  late final int _sessionSeq = ++_sessionCounter;
+
   @override
   void initState() {
     super.initState();
@@ -40,7 +49,9 @@ class _RecordPageState extends ConsumerState<RecordPage> with WidgetsBindingObse
     // build 期间不能改 provider 状态，放到首帧后。
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
-        ref.read(recordEditorProvider.notifier).start(widget.args);
+        ref
+            .read(recordEditorProvider.notifier)
+            .start(widget.args, sessionSeq: _sessionSeq);
       }
     });
   }

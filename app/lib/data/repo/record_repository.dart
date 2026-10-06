@@ -43,6 +43,29 @@ class RecordRepository {
   // ------------------------------------------------------------------------- //
   // 表单（离线优先：联网时拉一份整包缓存，断网时用缓存）
   // ------------------------------------------------------------------------- //
+  /// 表单缓存的有效期。
+  ///
+  /// ★ 2026-10-06 修的缺陷：用户「E2E001 建立今日的运动记录是总第 21 次，
+  /// 但是，我再点运动按钮时，提示还是第 21 次，这样就产生了冲突」。
+  ///
+  /// 根因是**缓存从不失效**：表单里有 `next_seq`（第几次）与 `existing`
+  ///（今天是否已经填过），而这两个值**每存一条记录就会变**。
+  /// 缓存键又刻意不含日期，于是第一条存下去之后，第二份表单还是"第 21 次"，
+  /// 提交时撞 `ux_record_daily_seq`。
+  ///
+  /// 两道防线（都要）：
+  ///  1. **写入即失效**：[save] 成功后删掉该患者该大类的全部表单缓存（根治）；
+  ///  2. **时鲜度**：超过 [formCacheTtl] 的缓存**只当网络失败时的兜底**，
+  ///     联网时一律重新取。防止将来又冒出某条"改数据但忘了清缓存"的路径。
+  ///
+  /// 为什么缓存键不能加 `next_seq` 来区分：取表单时还不知道下一个序号是多少
+  ///（那正是要问服务端的）。
+  static const Duration formCacheTtl = Duration(minutes: 2);
+
+  /// 表单缓存键前缀（一次清掉某患者某大类的**全部形态**）。
+  static String _formCachePrefix(String patientNo, String discipline) =>
+      'record_form:$patientNo:$discipline:';
+
   /// 表单缓存键。
   ///
   /// ★ 必须带上 `discipline` 与 `kind`：它们是**两份内容完全不同**的表单
@@ -54,7 +77,7 @@ class RecordRepository {
     String discipline, {
     String? kind,
   }) =>
-      'record_form:$patientNo:$discipline:${kind ?? 'auto'}';
+      '${_formCachePrefix(patientNo, discipline)}${kind ?? 'auto'}';
 
   /// 取记录表单（`GET /records/form`）。
   ///
@@ -89,12 +112,17 @@ class RecordRepository {
     } on AppError {
       final cached = await readCachedForm(patientNo, discipline, kind: kind);
       if (cached == null) rethrow;
-      return (form: cached, fromCache: true);
+      // 缓存只在**网络失败**时兜底（保住离线可用），并且要把"这份是旧的"告诉上层。
+      return (form: cached.form, fromCache: true);
     }
   }
 
   /// 只读缓存（不带网络请求）。
-  Future<RecordFormData?> readCachedForm(
+  ///
+  /// 返回 `(form, isStale)`：`isStale` 为真表示已超过 [formCacheTtl]。
+  /// **仍然返回它**（离线时旧表单也好过打不开），但上层可以据此提示
+  /// "这份可能不是最新的" —— 序号过期时这一点很重要。
+  Future<({RecordFormData form, bool isStale})?> readCachedForm(
     String patientNo,
     String discipline, {
     String? kind,
@@ -103,10 +131,14 @@ class RecordRepository {
           ..where((t) => t.key.equals(formCacheKey(patientNo, discipline, kind: kind))))
         .getSingleOrNull();
     if (row == null) return null;
+    final fetchedAt = DateTime.tryParse(row.fetchedAt);
+    final stale = fetchedAt == null ||
+        DateTime.now().toUtc().difference(fetchedAt) > formCacheTtl;
     try {
-      return RecordFormData.fromJson(
+      final form = RecordFormData.fromJson(
         Map<String, dynamic>.from(jsonDecode(row.payloadJson) as Map),
       );
+      return (form: form, isStale: stale);
     } on FormatException {
       // 缓存坏了不该让整个页面打不开。
       return null;
@@ -306,7 +338,28 @@ class RecordRepository {
         payload: payload,
       );
     }
+
+    // ★ 2026-10-06：**写入即让表单缓存失效**。
+    //
+    // 表单里有 `next_seq`（第几次）与 `existing`（今天是否已填过），
+    // 这两个值每存一条就变。缓存键刻意不含这些（取表单时还不知道下一个序号），
+    // 所以必须靠"改数据时清缓存"来保持一致 ——
+    // 否则断网时回落的那份缓存会给出过期的序号，提交时撞唯一索引。
+    await clearFormCache(patientNo, discipline);
+
     return (localId: id, clientUuid: uuid);
+  }
+
+  /// 清掉某患者某大类的**全部**表单缓存（各形态一起清）。
+  ///
+  /// 为什么连别的 `kind` 也清：`kind='auto'` 时服务端门禁可能因为
+  /// "首评/复评已完成"而改变**该填哪份文书**，所以同一大类下
+  /// 各形态的表单是相互关联的，只清当前那一个会留下会过期的邻居。
+  Future<void> clearFormCache(String patientNo, String discipline) async {
+    final prefix = _formCachePrefix(patientNo, discipline);
+    await (_db.delete(_db.refCache)
+          ..where((t) => t.key.like('$prefix%')))
+        .go();
   }
 
   /// 待推送的本地记录条数。

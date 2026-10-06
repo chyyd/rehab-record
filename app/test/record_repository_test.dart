@@ -565,8 +565,8 @@ void main() {
 
       final cached = await repo.readCachedForm('ZY001', 'PT');
       expect(cached, isNotNull);
-      expect(cached!.patientName, '患者甲');
-      expect(cached.allFields.length, 5);
+      expect(cached!.form.patientName, '患者甲');
+      expect(cached.form.allFields.length, 5);
 
       // 断网：抛 NETWORK_ERROR 时应回落到缓存。
       final offlineRepo = RecordRepository(
@@ -602,8 +602,8 @@ void main() {
       final daily = await repo2.readCachedForm('ZY001', 'PT');
       final discharge =
           await repo2.readCachedForm('ZY001', 'PT', kind: 'discharge');
-      expect(daily!.kind, 'daily');
-      expect(discharge!.kind, 'discharge');
+      expect(daily!.form.kind, 'daily');
+      expect(discharge!.form.kind, 'discharge');
       // 没缓存过的大类返回 null，而不是错误地回落到别的大类。
       expect(await repo2.readCachedForm('ZY001', 'ST_SP'), isNull);
     });
