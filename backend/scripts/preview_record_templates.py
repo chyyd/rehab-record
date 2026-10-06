@@ -96,17 +96,63 @@ def main() -> int:
         mark = "计入次数" if rt.counts_as_session(kind) else "不计次（独立文书）"
         print(f"  {kind:<13} {rt.KIND_LABELS[kind]:<8} {mark}")
     print()
-    expected = {1: "initial", 2: "daily", 20: "daily", 21: "reassessment",
-                40: "daily", 41: "reassessment", 61: "reassessment"}
-    for seq, want in expected.items():
-        got = rt.kind_for_seq(seq)
-        mark = OK if got == want else BAD
-        if got != want:
-            failures.append(f"kind_for_seq({seq}) = {got}，期望 {want}")
-        docs = rt.pending_documents(seq)
-        doc_txt = f"需补 {docs}" if docs else "只需日常记录"
-        print(f"{mark} 第 {seq:>3} 次日常 → {doc_txt:<20}"
-              f"（距下次复评还差 {rt.sessions_until_reassessment(seq)} 次）")
+    print("  复评周期：**30 个自然日**（用户 2026-10-06「也就是 1 个月评一次」）。")
+    print("  锚点是**首评日**（唯一不动的时间原点），应做日 = 首评日 + 30 × k；")
+    print("  补做晚了周期也不漂 —— 已复评过的格子跳过，下一个应做日仍是原来的格子。")
+    print("  计量单位是「天」，不是「第几次日常」—— 次数只回答『这是第几次治疗』。")
+    print()
+    # 复评判定：锚点是**首评日**，应做日 = 首评日 + 30 天（再按 30 天逐格推进）
+    base = "2026-11-01"
+    due = rt.next_reassessment_due(base)
+    mark = OK if str(due) == "2026-12-01" else BAD
+    if str(due) != "2026-12-01":
+        failures.append(f"next_reassessment_due({base}) = {due}，期望 2026-12-01")
+    print(f"{mark} 首评 {base} → 复评应做日 {due}（+{rt.REASSESS_INTERVAL_DAYS} 天）")
+    print()
+    print("  距应做日    该填哪种形态")
+    _date_cases = [
+        ("2026-11-01", "daily", 30),
+        ("2026-11-20", "daily", 11),
+        ("2026-11-30", "daily", 1),
+        ("2026-12-01", "reassessment", 0),
+        ("2026-12-15", "reassessment", -14),
+    ]
+    for on, want, want_days in _date_cases:
+        got = rt.reassessment_document_for(
+            has_initial=True, initial_date=base, on_date=on
+        )
+        got_kind = rt.kind_for_date(
+            has_initial=True, initial_date=base, on_date=on
+        )
+        days = rt.days_until_reassessment(base, on)
+        mark = OK if got_kind == want and days == want_days else BAD
+        if got_kind != want or days != want_days:
+            failures.append(
+                f"{on}: kind={got_kind}（期望 {want}）days={days}（期望 {want_days}）")
+        label = "需补复评" if got else "只需日常记录"
+        print(f"{mark} {on}  距应做日 {days:>4} 天 → {label}")
+
+    # 周期不漂移：拖到应做日之后才补做，下一次应做日仍落在「首评日 + 30 × k」的格子上。
+    # ★ 锚点是**首评日**（唯一不动的时间原点），不是"最近一次评估日" ——
+    #   后者会越拖越漂（拖到第 35 天补做，下一次就变第 65 天）。
+    #   已经做过复评的格子由 `done_dates` 标出，跳过它取下一格。
+    _drift = rt.next_reassessment_due(
+        "2026-01-01", done_dates=["2026-02-05"], on_date="2026-02-05"
+    )
+    mark = OK if str(_drift) == "2026-03-02" else BAD
+    if str(_drift) != "2026-03-02":
+        failures.append(
+            f"晚 5 天补做后下一次应做日 = {_drift}，期望 2026-03-02（不能漂成 03-07）")
+    print(f"{mark} 拖 5 天补做 → 下一次应做日 {_drift}（周期不漂移）")
+    # 补过的那一格要**跳过**：01-31 这格已被 02-05 的复评覆盖，所以下一个是 03-02，不是 01-31
+    _skip = rt.next_reassessment_due(
+        "2026-01-01", done_dates=["2026-01-31"], on_date="2026-02-05"
+    )
+    mark = OK if str(_skip) == "2026-03-02" else BAD
+    if str(_skip) != "2026-03-02":
+        failures.append(
+            f"补过 01-31 这格后下一个应做日 = {_skip}，期望 2026-03-02（已复评的格子要跳过）")
+    print(f"{mark} 01-31 那格已补过 → 下一个应做日 {_skip}（已复评的格子跳过）")
 
     # 评估文书不得显示序号 —— 否则「出院小结 第 21 次」会被误读成第 21 次治疗记录
     print()
@@ -129,34 +175,39 @@ def main() -> int:
     print("=" * 78)
     print("  点大类后先弹评估文书，填完才进当天的日常记录；三份文书都不能跳过。")
     print()
-    print("  第 N 次日常   还缺哪份文书")
+    print("  场景                                        还缺哪份文书")
     _gate_cases = [
-        (1, False, set(), "initial"),
-        (1, True, set(), None),
-        (2, True, set(), None),
-        (20, True, set(), None),
-        (21, True, set(), "reassessment"),
-        (21, True, {21}, None),
-        (22, True, {21}, None),
-        (41, True, {21}, "reassessment"),
-        (41, True, {21, 41}, None),
-        (61, True, {21, 41}, "reassessment"),
+        # (有无首评, 首评日, 本次记录日, 期望)
+        (False, None, "2026-11-01", "initial"),
+        (True, "2026-11-01", "2026-11-02", None),
+        (True, "2026-11-01", "2026-11-30", None),
+        (True, "2026-11-01", "2026-12-01", "reassessment"),
+        (True, "2026-11-01", "2026-11-15", None),
+        # 顺延：应做日那天没治疗，拖到 12-20 来记，仍然要求复评
+        (True, "2026-11-01", "2026-12-20", "reassessment"),
     ]
-    for seq, has_initial, spans, want in _gate_cases:
-        got = rt.next_session_gate(seq, has_initial=has_initial, reassessment_spans=spans)
+    for has_initial, initial, on, want in _gate_cases:
+        got = rt.reassessment_document_for(
+            has_initial=has_initial, initial_date=initial, on_date=on
+        )
         mark = OK if got == want else BAD
         if got != want:
             failures.append(
-                f"next_session_gate({seq}, initial={has_initial}, spans={spans}) = {got}，期望 {want}")
-        print(f"{mark} 第 {seq:>3} 次    {got or '（可记）'}")
+                f"reassessment_document_for(initial={has_initial}, 首评日={initial}, on={on})"
+                f" = {got}，期望 {want}")
+        desc = f"首评={has_initial} 首评日={initial or '—'} 本次={on}"
+        print(f"{mark} {desc:<44} {got or '（可记）'}")
 
-    # 评估挂在哪个序号上 —— 决定「该序号下有没有这份文书」这个查询
-    _span_cases = {1: 1, 2: 1, 20: 1, 21: 21, 22: 21, 40: 21, 41: 41, 61: 61}
-    for seq, want in _span_cases.items():
-        got = rt.assessment_span_seq(seq)
-        if got != want:
-            failures.append(f"assessment_span_seq({seq}) = {got}，期望 {want}")
-    print(f"{OK} 评估区间标识：首评挂序号 1，复评挂 21/41/61…（便于查『本序号有没有这份文书』）")
+    # 已复评过的格子要跳过：12-01 这格补过之后，12-20 就不再要求复评（下一个是 12-31）
+    _next_cell = rt.reassessment_document_for(
+        has_initial=True, initial_date="2026-11-01",
+        done_dates=["2026-12-01"], on_date="2026-12-20",
+    )
+    mark = OK if _next_cell is None else BAD
+    if _next_cell is not None:
+        failures.append(
+            f"补过 12-01 这格后 12-20 仍要求 {_next_cell}，期望不要求（该格已复评）")
+    print(f"{mark} {'补过 12-01 这格 → 12-20 不再要求复评':<44} {_next_cell or '（可记）'}")
 
     print()
     print("=" * 78)

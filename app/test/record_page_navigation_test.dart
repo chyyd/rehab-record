@@ -69,7 +69,7 @@ void main() {
         'title': '康复治疗记录（PT运动）',
         'next_seq': 3,
         'total_daily': 2,
-        'sessions_until_reassessment': 18,
+        'days_until_reassessment': 18,
         'template_version': 1,
         'soap': [
           {

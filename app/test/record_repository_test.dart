@@ -40,7 +40,7 @@ Map<String, dynamic> formJson({
       'title': '康复治疗记录（PT运动）',
       'next_seq': 3,
       'total_daily': 2,
-      'sessions_until_reassessment': 18,
+      'days_until_reassessment': 18,
       'pending_document': pendingDocument,
       'pending_document_label':
           pendingDocument == null ? null : (pendingDocument == 'initial' ? '首评' : '阶段性复评'),
@@ -119,7 +119,7 @@ void main() {
       expect(form.title, '康复治疗记录（PT运动）');
       expect(form.nextSeq, 3);
       expect(form.totalDaily, 2);
-      expect(form.sessionsUntilReassessment, 18);
+      expect(form.daysUntilReassessment, 18);
       expect(form.pendingDocument, isNull);
       expect(form.showsSeqNo, isTrue, reason: '日常记录显示"第 N 次"');
       expect(form.isAssessment, isFalse);
@@ -186,7 +186,7 @@ void main() {
       expect(again.patientNo, form.patientNo);
       expect(again.kind, form.kind);
       expect(again.totalDaily, 2);
-      expect(again.sessionsUntilReassessment, 18);
+      expect(again.daysUntilReassessment, 18);
       expect(again.prefill['therapy_items'], ['偏瘫肢体综合训练']);
       expect(again.allFields.length, form.allFields.length);
     });

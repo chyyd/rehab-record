@@ -219,7 +219,7 @@
           "label": "下次复评",
           "options": [
             "2周后",
-            "再20次治疗后"
+            "30天后复评"
           ],
           "prefill": "last_assessment"
         },

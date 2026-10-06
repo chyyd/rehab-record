@@ -10,7 +10,7 @@
 ///  - 展示用**服务端冻结的 SOAP 纯文本** `rendered_text`，客户端不再拼表格。
 ///
 /// ★ 客户端**不自己算**"该填什么/预填什么"：`kind`（含"缺评估文书时先弹那份"）、
-/// `prefill`、`prefill_source`、`next_seq`、`sessions_until_reassessment`
+/// `prefill`、`prefill_source`、`next_seq`、`days_until_reassessment`
 /// 全部由服务端算好。客户端重算一遍只会与服务端分歧。
 // ignore_for_file: use_null_aware_elements
 library;
@@ -199,7 +199,6 @@ class RecordData {
     this.disciplineName,
     this.kindLabel,
     this.seqNo,
-    this.spanSeq,
     this.body = const {},
     this.renderedText = '',
     this.renderedExcerpt = '',
@@ -226,8 +225,9 @@ class RecordData {
   /// 第几次**日常**记录；评估文书不占次数，所以它们是 null。
   final int? seqNo;
 
-  /// 评估文书挂靠的日常序号。
-  final int? spanSeq;
+  // 2026-10-06：`spanSeq`（评估文书挂靠的日常序号）**已删除** ——
+  // 服务端的 `span_seq` 列随迁移 014 去掉，复评改成按「30 个自然日」判定，
+  // 不再用"挂在第几次日常上"这种标识。
 
   final Map<String, dynamic> body;
 
@@ -268,7 +268,6 @@ class RecordData {
         kind: '${json['kind'] ?? 'daily'}',
         kindLabel: json['kind_label'] as String?,
         seqNo: (json['seq_no'] as num?)?.toInt(),
-        spanSeq: (json['span_seq'] as num?)?.toInt(),
         body: Map<String, dynamic>.from((json['body'] as Map?) ?? const {}),
         renderedText: '${json['rendered_text'] ?? ''}',
         renderedExcerpt: '${json['rendered_excerpt'] ?? ''}',
@@ -291,7 +290,6 @@ class RecordData {
         'kind': kind,
         if (kindLabel != null) 'kind_label': kindLabel,
         if (seqNo != null) 'seq_no': seqNo,
-        if (spanSeq != null) 'span_seq': spanSeq,
         'body': body,
         'rendered_text': renderedText,
         if (renderedExcerpt.isNotEmpty) 'rendered_excerpt': renderedExcerpt,
@@ -331,7 +329,9 @@ class RecordFormData {
     this.patientStatus,
     this.nextSeq = 1,
     this.totalDaily = 0,
-    this.sessionsUntilReassessment = 0,
+    this.daysUntilReassessment,
+    this.reassessmentDue,
+    this.reassessmentIntervalDays = 30,
     this.pendingDocument,
     this.pendingDocumentLabel,
     this.templateVersion = 1,
@@ -364,8 +364,18 @@ class RecordFormData {
   /// 该大类已完成（含草稿）的日常记录数。
   final int totalDaily;
 
-  /// 距下一次复评还差几次日常。
-  final int sessionsUntilReassessment;
+  /// 距复评**应做日**还有几天（负数 = 已逾期；null = 该大类还没有评估）。
+  ///
+  /// 2026-10-06：复评周期从"每 20 次日常"改成"**30 个自然日**"，
+  /// 所以这里报的是**天**。原来的 `sessionsUntilReassessment` 已删除 ——
+  /// 次数不再是复评判据，继续显示它只会误导治疗师。
+  final int? daysUntilReassessment;
+
+  /// 复评应做日（上次评估日 + 30 天）；null = 还没评估过。
+  final String? reassessmentDue;
+
+  /// 复评周期（自然日），服务端下发，界面提示文案用它而不是写死 30。
+  final int reassessmentIntervalDays;
 
   /// 还缺哪份评估文书（`initial` / `reassessment`），null = 不缺。
   final String? pendingDocument;
@@ -451,8 +461,10 @@ class RecordFormData {
       title: '${json['title'] ?? '治疗记录'}',
       nextSeq: (json['next_seq'] as num?)?.toInt() ?? 1,
       totalDaily: (json['total_daily'] as num?)?.toInt() ?? 0,
-      sessionsUntilReassessment:
-          (json['sessions_until_reassessment'] as num?)?.toInt() ?? 0,
+      daysUntilReassessment: (json['days_until_reassessment'] as num?)?.toInt(),
+      reassessmentDue: json['reassessment_due'] as String?,
+      reassessmentIntervalDays:
+          (json['reassessment_interval_days'] as num?)?.toInt() ?? 30,
       pendingDocument: json['pending_document'] as String?,
       pendingDocumentLabel: json['pending_document_label'] as String?,
       templateVersion: (json['template_version'] as num?)?.toInt() ?? 1,
@@ -484,7 +496,10 @@ class RecordFormData {
         'title': title,
         'next_seq': nextSeq,
         'total_daily': totalDaily,
-        'sessions_until_reassessment': sessionsUntilReassessment,
+        if (daysUntilReassessment != null)
+          'days_until_reassessment': daysUntilReassessment,
+        if (reassessmentDue != null) 'reassessment_due': reassessmentDue,
+        'reassessment_interval_days': reassessmentIntervalDays,
         'pending_document': pendingDocument,
         'pending_document_label': pendingDocumentLabel,
         'template_version': templateVersion,

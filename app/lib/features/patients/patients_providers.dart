@@ -121,15 +121,19 @@ final patientDetailProvider =
 /// 一个大类的状态摘要（详情页按钮上要显示的那两个数字）。
 ///
 /// 数据直接来自记录表单接口 —— 它本来就返回 `total_daily`（该大类已记录次数）
-/// 与 `sessions_until_reassessment`（距复评还差几次），
+/// 与 `days_until_reassessment`（距复评应做日还有几天），
 /// 以及 `pending_document`（点进去会先弹哪份评估文书）。
 /// **不本地重算**：序号/复评口径的唯一真源在服务端。
+///
+/// 2026-10-06：复评周期从"每 20 次日常"改成"30 个自然日"，
+/// 所以摘要里带的是**天**而不是次数。
 class DisciplineSummary {
   const DisciplineSummary({
     required this.key,
     required this.name,
     this.totalDaily = 0,
-    this.sessionsUntilReassessment = 0,
+    this.daysUntilReassessment,
+    this.reassessmentIntervalDays = 30,
     this.pendingDocument,
     this.pendingDocumentLabel,
     this.fromCache = false,
@@ -139,7 +143,10 @@ class DisciplineSummary {
   final String key;
   final String name;
   final int totalDaily;
-  final int sessionsUntilReassessment;
+
+  /// 距复评应做日还有几天（负数 = 已逾期；null = 该大类还没有评估）。
+  final int? daysUntilReassessment;
+  final int reassessmentIntervalDays;
 
   /// 非 null 表示"点进去要先填这份评估文书"（首评 / 复评）。
   final String? pendingDocument;
@@ -171,7 +178,8 @@ final disciplineSummariesProvider =
               ? d.name
               : result.form.disciplineName,
           totalDaily: result.form.totalDaily,
-          sessionsUntilReassessment: result.form.sessionsUntilReassessment,
+          daysUntilReassessment: result.form.daysUntilReassessment,
+          reassessmentIntervalDays: result.form.reassessmentIntervalDays,
           pendingDocument: result.form.pendingDocument,
           pendingDocumentLabel: result.form.pendingDocumentLabel,
           fromCache: result.fromCache,

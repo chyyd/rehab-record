@@ -85,6 +85,7 @@ MIG010 = MIG.get("010", "")
 MIG011 = MIG.get("011", "")
 MIG012 = MIG.get("012", "")
 MIG013 = MIG.get("013", "")
+MIG014 = MIG.get("014", "")
 
 CONFIG = _read("backend", "app", "core", "config.py")
 CLOCK_PY = _read("backend", "app", "core", "clock.py")
@@ -129,16 +130,21 @@ EXPECTED_TABLES = {
 }
 EXPECTED_VIEWS = {"v_patient_visibility", "v_patient_last_treated"}
 
-# `treatment_record` 的 19 列（顺序即 DDL 顺序，`models/treatment.py::COLUMN_NAMES` 必须与之一致）
+# `treatment_record` 的 18 列（顺序即 DDL 顺序，`models/treatment.py::COLUMN_NAMES` 必须与之一致）
+#
+# 2026-10-06：`span_seq` 随迁移 014 删除（复评改成按 30 个自然日，不再"挂靠第几次日常"），
+# 19 列 → 18 列。
 EXPECTED_RECORD_COLUMNS = (
     "id", "patient_no", "therapist_id", "record_date", "discipline", "kind", "seq_no",
-    "span_seq", "body_json", "rendered_text", "note", "status", "edit_count", "locked_at",
+    "body_json", "rendered_text", "note", "status", "edit_count", "locked_at",
     "created_at", "submitted_at", "updated_at", "revision", "client_uuid",
 )
 RECORD_INDEXES = (
     "ix_record_patient_date", "ix_record_therapist_date", "ix_record_status",
     "ix_record_discipline", "ux_record_client_uuid", "ux_record_daily_seq",
-    "ux_record_assessment_span",
+    # 2026-10-06：`ux_record_assessment_span` 随 span_seq 一起删，
+    # 换成"每个大类只能一份首评"（复评之间本来就可能有多份）
+    "ux_record_one_initial",
 )
 
 DISCIPLINES = ("PT", "OT", "ST_SW", "ST_SP")
@@ -220,12 +226,12 @@ def _no_deprecated(label: str, text: str, tokens: tuple[str, ...] = DEPRECATED_T
 # --------------------------------------------------------------------------- #
 _MIGRATION_FILES = sorted(path.name for path in _MIGRATION_PATHS)
 check(
-    f"迁移清单与 README 一致（共 {len(_MIGRATION_FILES)} 个：001–013，"
-    "末个为 013_patient_pending_discharge.sql）",
-    len(_MIGRATION_FILES) == 13
-    and _MIGRATION_FILES[-1] == "013_patient_pending_discharge.sql"
-    and "13 个 SQL 迁移" in README
-    and "001–013" in README,
+    f"迁移清单与 README 一致（共 {len(_MIGRATION_FILES)} 个：001–014，"
+    "末个为 014_drop_span_seq.sql）",
+    len(_MIGRATION_FILES) == 14
+    and _MIGRATION_FILES[-1] == "014_drop_span_seq.sql"
+    and "14 个 SQL 迁移" in README
+    and "001–014" in README,
 )
 
 # --------------------------------------------------------------------------- #
@@ -235,21 +241,49 @@ check(
 # （`ALTER TABLE x RENAME TO y` 视为 x 消失、y 出现；同一迁移里"先 DROP 后 CREATE"
 #  视为仍然存在 —— 迁移 011 重建 treatment_record 就是这种写法）
 _all_migrations = [MIG[key] for key in sorted(MIG)]
-_created_at: dict[str, int] = {}
-_dropped_at: dict[str, int] = {}
+# 每张表记录"最后一次建"与"最后一次删"的**全局位置**（迁移序号, 迁移内字符偏移）。
+# 用位置而不是迁移序号比较，是因为同一迁移里可能**先建后删**（014 的临时旧表）
+# 也可能**先删后建**（011 的重建）—— 只看迁移序号无法区分，会把前者误判成"仍存在"。
+_created_pos: dict[str, tuple[int, int]] = {}
+_dropped_pos: dict[str, tuple[int, int]] = {}
 for _index, _sql in enumerate(_all_migrations):
-    for _table in re.findall(r"CREATE TABLE (?:IF NOT EXISTS )?([a-z_][a-z0-9_]*)", _sql):
-        _created_at[_table] = _index
-    for _table in re.findall(r"DROP TABLE (?:IF EXISTS )?([a-z_][a-z0-9_]*)", _sql):
-        _dropped_at[_table] = _index
-    for _src, _dst in re.findall(
+    # ⚠ 必须按**文本出现顺序**处理 CREATE / DROP / RENAME。
+    #
+    # 原来分三轮跑（CREATE 一轮、DROP 一轮、RENAME 一轮），那样 RENAME 被当成
+    # "发生在最后"的事件。迁移 014 是「先改名留旧表 → 建新表 → 删旧表」：
+    #   L56 ALTER TABLE treatment_record RENAME TO treatment_record_old;
+    #   L58 CREATE TABLE treatment_record (…);
+    #   L99 DROP TABLE treatment_record_old;
+    # 分轮处理时 L99 的 DROP 在改名**之前**就执行了（那时 `treatment_record_old`
+    # 还没登记），于是推演结果多出一张幽灵表 `treatment_record_old`、
+    # 同时把被改名的 `treatment_record` 判成"已删" —— 而真实库两张都是对的。
+    _events: list[tuple[int, str, str, str]] = []
+    for _m in re.finditer(
+        r"CREATE TABLE (?:IF NOT EXISTS )?([a-z_][a-z0-9_]*)", _sql
+    ):
+        _events.append((_m.start(), "create", _m.group(1), ""))
+    for _m in re.finditer(r"DROP TABLE (?:IF EXISTS )?([a-z_][a-z0-9_]*)", _sql):
+        _events.append((_m.start(), "drop", _m.group(1), ""))
+    for _m in re.finditer(
         r"ALTER TABLE ([a-z_][a-z0-9_]*) RENAME TO ([a-z_][a-z0-9_]*)", _sql
     ):
-        _created_at[_dst] = _index
-        _created_at.pop(_src, None)
-        _dropped_at.pop(_src, None)
+        _events.append((_m.start(), "rename", _m.group(1), _m.group(2)))
+
+    for _pos, _kind, _a, _b in sorted(_events):
+        if _kind == "create":
+            _created_pos[_a] = (_index, _pos)
+        elif _kind == "drop":
+            _dropped_pos[_a] = (_index, _pos)
+        else:  # rename：旧名在此刻消失，新名在此刻出现
+            _created_pos[_b] = (_index, _pos)
+            _dropped_pos[_a] = (_index, _pos)
+            _created_pos.pop(_a, None)
+
 _effective = {
-    _table for _table, _at in _created_at.items() if _at >= _dropped_at.get(_table, -1)
+    _table
+    for _table, _cpos in _created_pos.items()
+    # 建得比删晚（或从没删过）→ 仍然存在
+    if _cpos > _dropped_pos.get(_table, (-1, -1))
 }
 check("storage.py 自己建 schema_migrations（迁移账本，不属于业务表，也不在任何迁移里）",
       "CREATE TABLE IF NOT EXISTS schema_migrations" in STORAGE_PY
@@ -368,19 +402,24 @@ check("worktime 也删掉了 period_end_datetime / period_label",
       and "day_period_bounds" in CLI_PY)
 
 # --------------------------------------------------------------------------- #
-# 3. treatment_record 的 19 列、枚举 CHECK、索引与触发器（迁移 011 = 唯一落点）
+# 3. treatment_record 的 18 列、枚举 CHECK、索引与触发器
+#
+# ⚠ 2026-10-06 起，**列清单要看迁移 014**（它重建了表、删掉 span_seq）。
+#   011 是历史的 19 列定义，留着不动（迁移账本按 sha256 校验，已应用的不能改）。
 # --------------------------------------------------------------------------- #
-_record_block = MIG011.split("CREATE TABLE treatment_record (", 1)[1].split("\n);", 1)[0]
+_record_block = MIG014.split("CREATE TABLE treatment_record (", 1)[1].split("\n);", 1)[0]
 _record_columns = tuple(re.findall(r"^\s{4}([a-z_]+)\s+(?:INTEGER|TEXT)", _record_block, re.M))
-check(f"treatment_record 恰好 19 列（实际 {len(_record_columns)} 列）", len(_record_columns) == 19)
-check("treatment_record 的 19 列与约定逐字一致", _record_columns == EXPECTED_RECORD_COLUMNS)
+check(f"treatment_record 恰好 18 列（实际 {len(_record_columns)} 列）", len(_record_columns) == 18)
+check("treatment_record 的 18 列与约定逐字一致", _record_columns == EXPECTED_RECORD_COLUMNS)
 for _column in EXPECTED_RECORD_COLUMNS:
     check(f"treatment_record 有列 {_column}", _column in _record_columns)
+check("span_seq 已不在现行定义里（复评改按 30 个自然日）",
+      "span_seq" not in _record_columns)
 
 _py_columns = tuple(
     re.findall(r'"([a-z_]+)"', TREATMENT_PY.split("COLUMN_NAMES = (", 1)[1].split(")", 1)[0])
 )
-check("models/treatment.py 的 COLUMN_NAMES 与迁移 011 一致（同样 19 列）",
+check("models/treatment.py 的 COLUMN_NAMES 与迁移 014 一致（同样 18 列）",
       _py_columns == EXPECTED_RECORD_COLUMNS)
 check("treatment.py 用 ASSESSMENT_KINDS 区分日常与评估文书",
       "ASSESSMENT_KINDS" in TREATMENT_PY and "KINDS = record_template.KINDS" in TREATMENT_PY)
@@ -405,11 +444,13 @@ check("011 不再有 session_period / patient_response_json / params 列",
                        "params_snapshot_json") if c in _record_block])
 
 for _index in RECORD_INDEXES:
-    check(f"011 建索引 {_index}",
-          f"CREATE INDEX {_index}" in MIG011 or f"CREATE UNIQUE INDEX {_index}" in MIG011)
+    # `ux_record_one_initial` 是迁移 014 建的（011 那时候还有 span_seq），其余在 011。
+    _mig = MIG014 if _index == "ux_record_one_initial" else MIG011
+    check(f"{'014' if _index == 'ux_record_one_initial' else '011'} 建索引 {_index}",
+          f"CREATE INDEX {_index}" in _mig or f"CREATE UNIQUE INDEX {_index}" in _mig)
 check("ux_record_daily_seq 只在 seq_no 非空时生效（评估文书不占号）",
       "WHERE seq_no IS NOT NULL" in MIG011)
-check("ux_record_assessment_span 保证每个区间同形态唯一",
+check("011 曾用 ux_record_assessment_span 保证每个区间同形态唯一（已被 014 取代）",
       "WHERE span_seq IS NOT NULL" in MIG011)
 check("ux_record_client_uuid 带 WHERE client_uuid IS NOT NULL",
       "WHERE client_uuid IS NOT NULL" in MIG011)
@@ -420,6 +461,21 @@ check("edit_trace 只在已提交的实质改动上累加（草稿不留痕）",
       and "NEW.body_json <> OLD.body_json OR NEW.rendered_text <> OLD.rendered_text" in MIG011)
 check("011 已删掉旧的 trg_record_edit_count（与 edit_trace 合并）",
       "DROP TRIGGER IF EXISTS trg_record_edit_count;" in MIG011)
+
+# 014：复评改成 30 个自然日 → span_seq 彻底删除（重建表 + 换唯一索引）
+check("014 重建 treatment_record 且不再有 span_seq 列",
+      "CREATE TABLE treatment_record (" in MIG014 and "span_seq" not in MIG014.split("CREATE TABLE")[1].split(");")[0])
+check("014 先删依赖的视图/触发器/索引再重建（否则悬空引用会让迁移失败）",
+      MIG014.index("DROP VIEW IF EXISTS v_patient_last_treated;")
+      < MIG014.index("CREATE TABLE treatment_record ("))
+check("014 把 ux_record_assessment_span 换成 ux_record_one_initial",
+      "DROP INDEX IF EXISTS ux_record_assessment_span;" in MIG014
+      and "CREATE UNIQUE INDEX ux_record_one_initial" in MIG014
+      and "WHERE kind = 'initial'" in MIG014)
+check("014 重建了 updated_at 与 edit_trace 触发器、以及 v_patient_last_treated",
+      "CREATE TRIGGER trg_treatment_record_updated_at" in MIG014
+      and "CREATE TRIGGER trg_record_edit_trace" in MIG014
+      and "CREATE VIEW v_patient_last_treated" in MIG014)
 
 # 013：patient.status 新增 pending_discharge（重建表，因为 001 的 CHECK 不能改）
 check("013 重建 patient 表并在 CHECK 里加 pending_discharge",
@@ -538,20 +594,37 @@ check("设计.md 写明首评与复评的 O 段共用 key 是出院小结自动�
 # --------------------------------------------------------------------------- #
 # 5. record_template.py 的关键 API 与业务规则
 # --------------------------------------------------------------------------- #
-for _api in ("counts_as_session", "kind_for_seq", "next_session_gate", "assessment_span_seq",
-             "render", "apply_prefill", "validate_answers", "sessions_until_reassessment",
+for _api in ("counts_as_session", "kind_for_date", "reassessment_document_for",
+             "next_reassessment_due", "days_until_reassessment",
+             "render", "apply_prefill", "validate_answers",
              "blank_answers", "load", "load_disciplines"):
     check(f"record_template.py 提供 {_api}()", f"def {_api}(" in RECORD_TEMPLATE_PY)
 check("只有 daily 计入治疗次数（counts_as_session 的语义）",
       'return kind == "daily"' in RECORD_TEMPLATE_PY)
-check("复评周期写死为 20（REASSESS_EVERY = 20）", "REASSESS_EVERY = 20" in RECORD_TEMPLATE_PY)
-check("kind_for_seq 的语义：第 1 次→首评、第 21/41/61…→复评、其余→日常",
-      "(seq_no - 1) % REASSESS_EVERY == 0" in RECORD_TEMPLATE_PY)
-check("首评挂 1、复评挂 21/41/61…（assessment_span_seq）",
-      "((seq_no - 1) // REASSESS_EVERY) * REASSESS_EVERY + 1" in RECORD_TEMPLATE_PY)
-check("next_session_gate 是硬阻断的唯一实现（缺评估文书 → 返回该形态）",
-      "return None if has_initial else \"initial\"" in RECORD_TEMPLATE_PY
-      and "assessment_span_seq(next_seq) in spans" in RECORD_TEMPLATE_PY)
+# ★ 2026-10-06：复评周期从"每 20 次日常"改成"30 个自然日"
+check("复评周期写死为 30 个自然日（REASSESS_INTERVAL_DAYS = 30）",
+      "REASSESS_INTERVAL_DAYS = 30" in RECORD_TEMPLATE_PY)
+check("复评判定按**日期**：应做日 = 上次评估日 + 30 天（timedelta）",
+      "timedelta(days=REASSESS_INTERVAL_DAYS)" in RECORD_TEMPLATE_PY)
+check("周期不漂移：锚点是**首评日**的固定网格（首评日 + 30 × k）",
+      "due = base + step" in RECORD_TEMPLATE_PY
+      and "due += step" in RECORD_TEMPLATE_PY
+      and "step = timedelta(days=REASSESS_INTERVAL_DAYS)" in RECORD_TEMPLATE_PY)
+check("已复评的格子要跳过、逾期的格子要保留（不能靠一次补做抹平欠账）",
+      "if not any(due <= d < due + step for d in done):" in RECORD_TEMPLATE_PY)
+check("滑动锚点（拿最近一次评估日 + 30）已彻底删除",
+      "arrived_on" not in RECORD_TEMPLATE_PY
+      and "while due <= arrived" not in RECORD_TEMPLATE_PY)
+check("按次数的复评判定已彻底删除（REASSESS_EVERY / kind_for_seq / assessment_span_seq）",
+      "REASSESS_EVERY" not in RECORD_TEMPLATE_PY
+      and "def kind_for_seq(" not in RECORD_TEMPLATE_PY
+      and "def assessment_span_seq(" not in RECORD_TEMPLATE_PY
+      and "def next_session_gate(" not in RECORD_TEMPLATE_PY
+      and "def sessions_until_reassessment(" not in RECORD_TEMPLATE_PY)
+check("reassessment_document_for 是硬阻断的唯一实现（缺评估文书 → 返回该形态）",
+      'if not has_initial:' in RECORD_TEMPLATE_PY
+      and 'return "initial"' in RECORD_TEMPLATE_PY
+      and 'return "reassessment" if on >= due else None' in RECORD_TEMPLATE_PY)
 check("渲染器是「段名 + 冒号 + ；连接」而不是表格",
       'lines.append(section["heading"] + "：" + SEP_INLINE.join' in RECORD_TEMPLATE_PY)
 check("多选值用 / 连接、字段用 ；连接",
@@ -578,7 +651,17 @@ check("设计.md 写明三条硬阻断都不能跳过（含用户原话）",
       "不能跳过" in DESIGN and "1A。2不能。3不能。" in DESIGN)
 check("设计.md 写明评估文书不占用日常训练次数",
       "不占用日常训练的次数" in DESIGN)
-check("设计.md 写明每 20 次日常后复评", "每 20 次" in DESIGN)
+# ★ 2026-10-06：复评从"每 20 次日常"改成"距首评 30 个自然日"。
+#
+# 原来这条断言的是旧规则（`"每 20 次" in DESIGN`）—— 它之所以还能通过，
+# 只是因为设计.md 里留了一句带「已废」标注的历史说明。那是个**假通过**：
+# 一旦把留痕删干净就会误报，而且它守的根本不是现行规则。
+# 现在直接断言现行规则，并要求设计.md 明确写出"锚点是首评日"这个关键选择。
+check("设计.md 写明复评按 30 个自然日、且锚点是首评日",
+      "30 个自然日" in DESIGN and "首评" in DESIGN
+      and ("锚点" in DESIGN or "首评日" in DESIGN))
+check("设计.md 的旧规则（每 20 次）已标注为作废，不再作为现行设计出现",
+      "每 20 次" not in DESIGN or "已废" in DESIGN or "作废" in DESIGN)
 check("设计.md 写明四大类分开记录及其理由",
       "四大类" in DESIGN and "不同的治疗师" in DESIGN)
 check("设计.md 写明 rendered_text 冻结保存",

@@ -382,7 +382,9 @@ function RecordDetailDrawer({
                 ? record.seq_no
                   ? `第 ${record.seq_no} 次日常`
                   : '草稿（未占序次）'
-                : `评估文书（挂靠第 ${record.span_seq ?? '—'} 次日常，不计次数）`}
+                : /* 评估文书不计次数、也没有"挂靠第几次"的概念了
+                     （2026-10-06 复评改成每 30 个自然日一次，span_seq 列已删） */
+                  '评估文书（不计次数）'}
             </Descriptions.Item>
             <Descriptions.Item label="状态">
               {STATUS_LABEL[record.status]?.text ?? record.status}

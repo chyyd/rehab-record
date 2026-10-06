@@ -89,7 +89,7 @@ class TestPatientStatusAndJson(DbTestCase):
         with self.assertRaises(sqlite3.IntegrityError):
             self.conn.execute(
                 "INSERT INTO treatment_record (patient_no, therapist_id, record_date, discipline,"
-                " kind, seq_no, span_seq) VALUES ('ZY001', ?, '2026-10-05', 'PT', 'initial', 1, 1)",
+                " kind, seq_no) VALUES ('ZY001', ?, '2026-10-05', 'PT', 'initial', 1)",
                 (self.t1,),
             )
 

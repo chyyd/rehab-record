@@ -18,7 +18,7 @@ import 'package:rehab_app/features/timeline/patient_summary_page.dart';
 /// 用户原话：「患者详情中的治疗记录部分的内容，现在太过于繁琐，需要点好多次，
 /// 不容易使用，改成类似模板这样」。所以这里**不再有二级选择**：
 /// 四个大类**竖排**直接点，点进去就是一屏 chip 表单。
-/// 每个按钮上直接写出「已记录 N 次」与「距复评还差 M 次」——
+/// 每个按钮上直接写出「已记录 N 次」与「距复评 N 天」——
 /// 治疗师不用进去才知道该记第几次、该不该复评。
 ///
 /// ## 出院按钮
@@ -432,13 +432,23 @@ class _DisciplineButton extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
+    // 复评提示按**天**说（2026-10-06 起周期是 30 个自然日）。
+    // 三种情况分开写，因为治疗师要据此决定"今天要不要先做复评"：
+    //   · 已到点/逾期 → 催他先填复评（门禁会拦，先说清楚比进去被拒好）
+    //   · 还没到点     → 报还剩几天
+    //   · 还没有评估   → 无从计算，不显示这一项（此时会显示"需先填首评"）
+    final days = summary.daysUntilReassessment;
+    final reassessLabel = days == null
+        ? null
+        : days <= 0
+            ? '该复评了'
+            : '距复评 $days 天';
     final subtitle = summary.error != null
         ? summary.error!
         : [
             '已记录 ${summary.totalDaily} 次',
-            summary.sessionsUntilReassessment > 0
-                ? '距复评还差 ${summary.sessionsUntilReassessment} 次'
-                : '已到复评点',
+            // `?reassessLabel` = 空值时整项不出现（`if (x != null) x` 的新写法）
+            ?reassessLabel,
             if (summary.needsDocument) '需先填${summary.pendingDocumentLabel ?? ''}',
           ].join(' · ');
 

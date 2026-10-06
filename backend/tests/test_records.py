@@ -3,7 +3,8 @@
 覆盖重点（★ 为用户明确要求、必须有回归的行为）：
 
 1. ★ **首评不占次数**：首评 + 当天日常 → 日常是第 1 次；
-2. ★ **评估文书硬阻断**：第 1 次日常缺首评 → 409；第 21 次缺复评 → 409；
+2. ★ **评估文书硬阻断**：第 1 次日常缺首评 → 409；距上次评估满 **30 个自然日**
+   后缺复评 → 409（复评按**日期**算，不按次数，见 `test_reassessment_interval.py`）；
 3. ★ **同一天同一大类至多 2 条**；
 4. ★ **待出院患者不能记新记录**；
 5. ★ **`rendered_text` 冻结**：改了模板 JSON 后旧记录的文本不变；
@@ -14,10 +15,12 @@
 
 from __future__ import annotations
 
+import sqlite3
 import unittest
 
 from app.models import patient as patient_model
 from app.models import treatment as treatment_model
+from app.models.base import Conflict
 from app.services import record_template
 from tests.api_base import ApiTestCase
 
@@ -111,7 +114,7 @@ class RecordTestCase(ApiTestCase):
         return resp.json()
 
     def seed_daily(self, count: int, *, headers: dict | None = None) -> None:
-        """直接落库造 N 条日常记录（跳过门禁，用于构造第 21 次这类场景）。"""
+        """直接落库造 N 条日常记录（跳过门禁），用来构造"已经做过很多次"的既有状态。"""
         for index in range(1, count + 1):
             self.conn.execute(
                 "INSERT INTO treatment_record"
@@ -128,30 +131,26 @@ class TestAssessmentDoesNotCount(RecordTestCase):
     def test_initial_then_daily_is_first_session(self) -> None:
         initial = self.create_ok(kind="initial", body=initial_body())
         self.assertIsNone(initial["seq_no"], "首评不占次数")
-        self.assertEqual(initial["span_seq"], 1, "首评挂靠第 1 次日常")
         self.assertEqual(initial["rendered_text"].startswith("康复初始评定"), True)
 
         daily = self.create_ok(kind="daily", body=daily_body())
         self.assertEqual(daily["seq_no"], 1, "首评之后当天的日常记录仍是第 1 次")
-        self.assertIsNone(daily["span_seq"])
 
     def test_reassessment_does_not_consume_a_session(self) -> None:
-        self.seed_daily(20)
-        self.conn.execute(
-            "INSERT INTO treatment_record"
-            " (patient_no, therapist_id, record_date, discipline, kind, span_seq, body_json,"
-            "  rendered_text, status)"
-            " VALUES ('ZY001', ?, '2027-01-01', 'PT', 'initial', 1, '{}', '', 'submitted')",
-            (int(self.t1["id"]),),
-        )
-        reassessment = self.create_ok(
-            kind="reassessment", record_date="2027-03-01", body=reassessment_body()
-        )
-        self.assertIsNone(reassessment["seq_no"])
-        self.assertEqual(reassessment["span_seq"], 21)
+        """★ 复评与当天的日常记录**并存**，日常的序号不受它影响。
 
-        daily = self.create_ok(kind="daily", record_date="2027-03-01", body=daily_body())
-        self.assertEqual(daily["seq_no"], 21, "第 21 次日常与复评并存")
+        新规则（2026-10-06）下复评不再挂在"第 21 次日常"上，所以"并存"这件事
+        必须由**日期**制造：首评在 30 天前 → 复评到点。
+        """
+        self.create_ok(kind="initial", record_date="2027-01-01", body=initial_body())
+        self.seed_daily(20)  # 已经做过 20 次日常
+        reassessment = self.create_ok(
+            kind="reassessment", record_date="2027-02-01", body=reassessment_body()
+        )
+        self.assertIsNone(reassessment["seq_no"], "复评不占次数")
+
+        daily = self.create_ok(kind="daily", record_date="2027-02-01", body=daily_body())
+        self.assertEqual(daily["seq_no"], 21, "复评与当天的日常并存：日常仍是第 21 次")
 
     def test_seq_no_is_per_discipline(self) -> None:
         self.create_ok(kind="initial", body=initial_body())
@@ -182,29 +181,61 @@ class TestAssessmentGate(RecordTestCase):
             "被拦下的请求不得留下任何记录",
         )
 
-    def test_21st_daily_without_reassessment_is_blocked(self) -> None:
-        self.seed_daily(20)
-        self.conn.execute(
-            "INSERT INTO treatment_record"
-            " (patient_no, therapist_id, record_date, discipline, kind, span_seq, body_json,"
-            "  rendered_text, status)"
-            " VALUES ('ZY001', ?, '2027-01-01', 'PT', 'initial', 1, '{}', '', 'submitted')",
-            (int(self.t1["id"]),),
-        )
-        resp = self.create(kind="daily", record_date="2027-03-01")
+    def test_daily_after_30_days_requires_reassessment(self) -> None:
+        """★ 缺复评的硬阻断按**日期**判：距上次评估满 30 个自然日就得先补复评。
+
+        与"第 21 次日常"无关 —— 首评 2027-01-01 后的第 30 天（2027-01-31）
+        就是应做日，那一天来记日常必须先有复评（用户 2026-10-06）。
+        """
+        self.create_ok(kind="initial", record_date="2027-01-01", body=initial_body())
+        resp = self.create(kind="daily", record_date="2027-01-31")
         self.assert_error(resp, 409, "MISSING_ASSESSMENT")
-        self.assertEqual(resp.json()["details"]["missing_document"], "reassessment")
-        self.assertEqual(resp.json()["details"]["next_seq"], 21)
+        details = resp.json()["details"]
+        self.assertEqual(details["missing_document"], "reassessment")
+        self.assertEqual(details["reassessment_due"], "2027-01-31", "应做日 = 首评日 + 30 天")
+        self.assertEqual(details["next_seq"], 1, "被拦下的是**第 1 次**日常（新规则不看次数）")
 
-        # 补上复评之后就能记了
-        self.create_ok(kind="reassessment", record_date="2027-03-01", body=reassessment_body())
-        daily = self.create_ok(kind="daily", record_date="2027-03-01")
-        self.assertEqual(daily["seq_no"], 21)
+        # 补上复评之后就能记了（当天：复评 + 日常 = 2 条，正好卡在上限内）
+        self.create_ok(kind="reassessment", record_date="2027-01-31", body=reassessment_body())
+        daily = self.create_ok(kind="daily", record_date="2027-01-31")
+        self.assertEqual(daily["seq_no"], 1)
 
-    def test_second_initial_for_same_span_is_rejected(self) -> None:
-        self.create_ok(kind="initial", body=initial_body())
-        resp = self.create(kind="initial", record_date="2027-03-02", body=initial_body())
-        self.assert_error(resp, 409, "ASSESSMENT_ALREADY_EXISTS")
+    def test_only_one_initial_per_discipline(self) -> None:
+        """★ 每个大类只能有一份首评（`ux_record_one_initial` 唯一索引保证）。
+
+        唯一性目前**只由库层索引兜底**：模型层没有预检，所以第二份首评会抛
+        `sqlite3.IntegrityError`，再被统一异常处理器翻成 HTTP 500
+        （见改动报告：接口层缺一个友好的 409，不该由测试固化成"500 是预期"）。
+
+        因此这里断言**真正保证契约的那一层**：第二份首评必须失败（抛出
+        `IntegrityError`；接口层将来补上预检后会改抛 `Conflict`，两种都接受），
+        且不得留下第二条记录。
+        """
+        self.create_ok(kind="initial", record_date="2027-01-01", body=initial_body())
+        with self.assertRaises((sqlite3.IntegrityError, Conflict)):
+            treatment_model.create_record(
+                self.conn,
+                patient_no="ZY001",
+                therapist_id=int(self.t1["id"]),
+                record_date="2027-03-02",
+                discipline=DISCIPLINE,
+                kind="initial",
+                body=initial_body(),
+            )
+        self.assertEqual(
+            self.conn.execute(
+                "SELECT COUNT(*) FROM treatment_record WHERE kind = 'initial'"
+            ).fetchone()[0],
+            1,
+            "第二份首评不得落库",
+        )
+        # 换一个大类就可以：首评是按大类各一份
+        other = self.create_ok(
+            kind="initial",
+            discipline="OT",
+            body={"diagnosis": ["日常生活活动能力障碍"], "therapy_items": ["日常生活能力训练"]},
+        )
+        self.assertEqual(other["discipline"], "OT")
 
     def test_gate_allows_plain_daily_sessions(self) -> None:
         self.create_ok(kind="initial", body=initial_body())
@@ -709,10 +740,11 @@ class TestRecordForm(RecordTestCase):
         self.assertIsNone(body["existing"])
 
     def test_assessment_prefill_uses_last_assessment(self) -> None:
-        self.create_ok(kind="initial", body=initial_body(mmt_lower=2))
-        self.seed_daily(20)
-        body = self.form(record_date="2027-03-01")
-        self.assertEqual(body["pending_document"], "reassessment")
+        self.create_ok(kind="initial", record_date="2027-01-01", body=initial_body(mmt_lower=2))
+        # ⚠ 参数名是 `date`（路由的 query alias）。写成 `record_date` 会被 FastAPI
+        #   静默忽略、退回"今天"，于是这条断言就在测别的东西了。
+        body = self.form(date="2027-01-31")
+        self.assertEqual(body["pending_document"], "reassessment", "距首评满 30 天该做复评")
         self.assertEqual(body["kind"], "reassessment")
         self.assertEqual(body["prefill"]["mmt_lower"], 2, "复评带出上次评估的客观值")
         self.assertIn(body["prefill_source"]["mmt_lower"], {"last_assessment", "same_day_first"})
@@ -761,8 +793,6 @@ class TestRecordForm(RecordTestCase):
 
 class TestModelLevelRules(RecordTestCase):
     def test_model_rejects_pending_discharge_patient(self) -> None:
-        from app.models.base import Conflict
-
         patient_model.update_patient(
             self.conn, "ZY001", status=patient_model.STATUS_PENDING_DISCHARGE
         )

@@ -173,7 +173,11 @@ def main() -> int:
     fifth = form(date="2026-10-05")
     print(json.dumps(_trim_form(fifth), ensure_ascii=False, indent=2)[-2200:])
 
-    # 造到"第 21 次日常"之前的场景：直接落库 18 条，让下一次是第 21 次
+    # 再落库 18 条日常（第 3–20 次），让记录多一些、表单里的 next_seq 走到 21。
+    #
+    # ★ 复评的触发点与"第几次"无关（2026-10-06 起按**日期**算）：
+    #   首评在 2026-10-05 → 应做日 = 首评 + 30 天 = 2026-11-04，
+    #   所以下面取表单用的是 11-04（原来按"满 20 次"用的是 11-01）。
     for index in range(3, 21):
         conn.execute(
             "INSERT INTO treatment_record"
@@ -189,13 +193,13 @@ def main() -> int:
                 "主观资料：精神状态：良好\n\n客观资料：本次训练项目：偏瘫肢体综合训练",
             ),
         )
-    hr("① 已满 20 次日常 —— GET /records/form 先弹「阶段性复评」")
-    third = form(date="2026-11-01")
+    hr("① 距首评满 30 个自然日 —— GET /records/form 先弹「阶段性复评」")
+    third = form(date="2026-11-04")
     print(json.dumps(_trim_form(third), ensure_ascii=False, indent=2))
 
     post_record(
         "reassessment",
-        "2026-11-01",
+        "2026-11-04",
         {
             "complaint": ["肢体无力"],
             "mmt_upper": 3,
@@ -209,12 +213,12 @@ def main() -> int:
         },
     )
     hr("① 显式要「出院小结」表单（kind=discharge）：含服务端自动生成的汇总")
-    fourth = form(kind="discharge", date="2026-11-02")
+    fourth = form(kind="discharge", date="2026-11-05")
     print(json.dumps(_trim_form(fourth), ensure_ascii=False, indent=2))
 
     discharge = post_record(
         "discharge",
-        "2026-11-02",
+        "2026-11-05",
         {
             **{k: v for k, v in fourth["prefill"].items()},
             "subjective_change": ["肢体力量明显恢复", "站立行走稳定性改善"],
@@ -290,7 +294,7 @@ def _trim_form(data: dict) -> dict:
     if data.get("existing"):
         out["existing"] = {
             k: data["existing"][k]
-            for k in ("id", "kind", "seq_no", "span_seq", "status", "record_date", "body")
+            for k in ("id", "kind", "seq_no", "status", "record_date", "body")
         }
     return out
 

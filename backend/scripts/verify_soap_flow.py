@@ -172,7 +172,10 @@ def main() -> int:
                                  "body": diagnose("initial"), "status": "submitted"}, h)
         check("建首评成功", code == 201, f"HTTP {code} {str(initial)[:150]}")
         check("首评 seq_no 为 None（不计次）", initial["seq_no"] is None, str(initial.get("seq_no")))
-        check("首评 span_seq=1", initial["span_seq"] == 1, str(initial.get("span_seq")))
+        check("首评文书不显示「第 N 次」，但仍带治疗日期（评估文书不计次）",
+              "第 1 次" not in initial["rendered_text"]
+              and "治疗日期：2026-10-05" in initial["rendered_text"],
+              initial["rendered_text"][:120])
         check("rendered_text 是 SOAP 文本、含『主观资料：』",
               "主观资料：" in initial["rendered_text"], initial["rendered_text"][:120])
 
@@ -192,25 +195,66 @@ def main() -> int:
         check("同一天第 3 条 → 409", code == 409, f"HTTP {code}")
 
         # ---------------------------------------------------------------- #
-        # 6) 复评触发点：第 21 次日常前必须先复评
+        # 6) 复评触发点：距首评满 30 个自然日后，下一次日常前必须先复评
+        #
+        # ★ 2026-10-06：复评从「每 20 次日常」改成「30 个自然日」，
+        #   所以触发点是**日期**：首评 2026-10-05 → 应做日 2026-11-04。
         # ---------------------------------------------------------------- #
+        DUE, BEFORE_DUE = "2026-11-04", "2026-11-03"
         for i in range(2, 21):
             request("/api/v1/records", "POST",
                     {"patient_no": PN, "record_date": f"2026-10-{i + 4:02d}",
                      "discipline": "PT", "kind": "daily", "body": diagnose("daily"),
                      "status": "submitted"}, h)
+
+        code, form_before = request(
+            f"/api/v1/records/form?patient_no={PN}&discipline=PT&date={BEFORE_DUE}", token=h)
+        check("未满 30 天时表单仍是日常，并给出距应做日还剩几天",
+              code == 200 and form_before["kind"] == "daily"
+              and form_before["days_until_reassessment"] == 1
+              and form_before["reassessment_due"] == DUE
+              and form_before["reassessment_interval_days"] == 30,
+              f"{form_before.get('kind')} / {form_before.get('days_until_reassessment')} / "
+              f"{form_before.get('reassessment_due')}")
+
+        code, daily21 = request("/api/v1/records", "POST",
+                                {"patient_no": PN, "record_date": BEFORE_DUE,
+                                 "discipline": "PT", "kind": "daily",
+                                 "body": diagnose("daily"), "status": "submitted"}, h)
+        check("差一天没到点时日常照常放行（第 21 次）",
+              code == 201 and daily21["seq_no"] == 21,
+              f"HTTP {code} {str(daily21)[:150]}")
+
         code, form21 = request(f"/api/v1/records/form?patient_no={PN}&discipline=PT"
-                               f"&date=2026-10-25", token=h)
-        check("满 20 次后表单要求复评", form21["kind"] == "reassessment", str(form21["kind"]))
+                               f"&date={DUE}", token=h)
+        check("满 30 天后表单要求复评（倒计时归零，不再返回次数）",
+              form21["kind"] == "reassessment" and form21["pending_document"] == "reassessment"
+              and form21["days_until_reassessment"] == 0
+              and "sessions_until_reassessment" not in form21,
+              f"{form21.get('kind')} / {form21.get('days_until_reassessment')}")
         check("复评 prefill 来自上次评估",
               "mmt_upper" in (form21.get("prefill") or {}), str(list((form21.get("prefill") or {}).keys()))[:120])
 
         code, err = request("/api/v1/records", "POST",
-                            {"patient_no": PN, "record_date": "2026-10-25", "discipline": "PT",
+                            {"patient_no": PN, "record_date": DUE, "discipline": "PT",
                              "kind": "daily", "body": diagnose("daily")}, h)
-        check("缺复评时记第 21 次 → 409", code == 409, f"HTTP {code}")
+        check("满 30 天后缺复评记日常 → 409", code == 409, f"HTTP {code}")
         check("409 指出缺 reassessment",
               (err or {}).get("details", {}).get("missing_document") == "reassessment", str(err)[:150])
+
+        code, reassess = request("/api/v1/records", "POST",
+                                 {"patient_no": PN, "record_date": DUE, "discipline": "PT",
+                                  "kind": "reassessment", "body": diagnose("reassessment"),
+                                  "status": "submitted"}, h)
+        check("在应做日补复评成功（不占日常序号）",
+              code == 201 and reassess["seq_no"] is None,
+              f"HTTP {code} {str(reassess)[:150]}")
+        code, daily22 = request("/api/v1/records", "POST",
+                                {"patient_no": PN, "record_date": DUE, "discipline": "PT",
+                                 "kind": "daily", "body": diagnose("daily"),
+                                 "status": "submitted"}, h)
+        check("复评补齐后当天的日常放行（第 22 次）",
+              code == 201 and daily22["seq_no"] == 22, f"HTTP {code} {str(daily22)[:150]}")
 
         # ---------------------------------------------------------------- #
         # 7) 评估文书之间互不干扰：四大类各有各的首评

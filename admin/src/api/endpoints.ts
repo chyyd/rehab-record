@@ -209,8 +209,8 @@ export interface RecordListItemOut {
   kind_label?: string | null
   /** 第几次日常；只有 `daily` 有（评估文书为 null）。 */
   seq_no?: number | null
-  /** 评估文书挂靠的日常序号。 */
-  span_seq?: number | null
+  // 2026-10-06：`span_seq`（评估文书挂靠的日常序号）已随迁移 014 删除。
+  // 复评改成「距首评或上一次复评 30 个自然日」，不再有"挂靠第几次"这种概念。
   status: RecordStatus | string
   edit_count: number
   /** 生成时**冻结**的 SOAP 纯文本。 */

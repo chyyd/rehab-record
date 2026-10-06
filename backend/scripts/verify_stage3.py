@@ -14,8 +14,9 @@
    预填什么 / 是不是已在填"；缺评估文书时 `kind` 直接就是那份评估文书（先弹它）；
 2. **首评不占日常次数**：建完首评后当天仍要有一条日常记录，且它是**第 1 次**；
 3. **硬阻断**（用户原话「1A。2不能。3不能。」）：
-   缺首评记日常 → 409；满 20 次日常后缺复评 → 409；
-4. **每 20 次日常后复评**：补齐复评（`span_seq=21`）后第 21 次日常才放行；
+   缺首评记日常 → 409；**距上次评估满 30 个自然日**后缺复评 → 409；
+4. **复评按日期触发**（2026-10-06 改，原「每 20 次日常」已废）：
+   应做日 = 上次评估的 `record_date` + 30 天；到点后先补复评，当天的日常才放行；
 5. **同一天同一大类至多 2 条** → 第 3 条 409；
 6. **必填校验**：缺「功能诊断」「本次训练项目」→ 422（`details.missing` 给中文标签）；
 7. **`rendered_text` 冻结落库**，且是 **SOAP 纯文本**（含「主观资料：」，不是表格）；
@@ -68,10 +69,15 @@ DAILY_BODY = {
     "next_step": "继续维持原方案",
 }
 
-# 20 次日常排在这些日期上（同一天同一大类至多 2 条，所以必须一天一条）
+# 前 20 次日常排在这些日期上（同一天同一大类至多 2 条，所以必须一天一条）。
+#
+# ★ 复评按**日期**触发，所以下面这几个日期是算出来的：
+#   首评在 2027-04-01 → 应做日 = 04-01 + 30 天 = 2027-05-01。
+#   04-30（第 29 天）还没到点，日常照常放行；05-01（第 30 天）起必须先补复评。
 DAILY_DATES = [f"2027-04-{day:02d}" for day in range(1, 21)]
-DATE_21 = "2027-04-21"
-DATE_DRAFT = "2027-04-22"
+DATE_BEFORE_DUE = "2027-04-30"      # 应做日前一天（第 29 天）：仍放行
+DATE_DUE = "2027-05-01"             # 应做日（第 30 天）：缺复评 → 409
+DATE_DRAFT = "2027-05-02"           # 复评次日：周期从复评日重新起算
 
 failures: list[str] = []
 
@@ -221,11 +227,14 @@ def main() -> int:
         check("首诊取到的形态就是首评（缺评估文书时先弹它）",
               form["kind"] == "initial" and form["pending_document"] == "initial",
               f"{form.get('kind')} / {form.get('pending_document')}")
-        check("表单给出本次序号与待复评提示",
+        check("表单给出本次序号，且还没评估时不报复评倒计时",
               form["next_seq"] == 1 and form["total_daily"] == 0
-              and form["sessions_until_reassessment"] == 20,
+              and form["days_until_reassessment"] is None
+              and form["reassessment_due"] is None
+              and form["reassessment_interval_days"] == 30
+              and "sessions_until_reassessment" not in form,
               f"{form.get('next_seq')} / {form.get('total_daily')} / "
-              f"{form.get('sessions_until_reassessment')}")
+              f"{form.get('days_until_reassessment')} / {form.get('reassessment_due')}")
         check("表单带出 SOAP 四段字段定义（S/O/A/P）",
               [s["key"] for s in form["soap"]] == ["s", "o", "a", "p"],
               str([s["key"] for s in form["soap"]]))
@@ -280,9 +289,10 @@ def main() -> int:
             h1, "S3A", DAILY_DATES[0], "initial", INITIAL_BODY, status="submitted"
         )
         check("建首评成功", code == 201, f"{code} {str(initial)[:200]}")
-        check("首评没有日常序号、挂靠在第 1 次日常区间",
-              initial["seq_no"] is None and initial["span_seq"] == 1,
-              f"seq_no={initial.get('seq_no')} span_seq={initial.get('span_seq')}")
+        check("首评不占日常序号（评估文书不计次）",
+              initial["seq_no"] is None and initial["kind"] == "initial"
+              and "第 1 次" not in initial["rendered_text"],
+              f"seq_no={initial.get('seq_no')}")
         check("首评的 rendered_text 是 SOAP 纯文本（不是表格）",
               "主观资料：" in initial["rendered_text"]
               and "客观资料：" in initial["rendered_text"]
@@ -317,7 +327,7 @@ def main() -> int:
         conn = storage.connect(settings)
         try:
             row = conn.execute(
-                "SELECT kind, seq_no, span_seq, body_json, rendered_text FROM treatment_record"
+                "SELECT kind, seq_no, body_json, rendered_text FROM treatment_record"
                 " WHERE id = ?",
                 (daily1["id"],),
             ).fetchone()
@@ -341,7 +351,11 @@ def main() -> int:
               f"{code} {str(err)[:160]}")
 
         # ---------------------------------------------------------------- #
-        # 8) 硬阻断 ②：满 20 次日常后缺复评 → 409
+        # 8) 硬阻断 ②：距首评满 30 个自然日后缺复评 → 409
+        #
+        # ★ 2026-10-06 复评从"每 20 次日常"改成"30 个自然日"，所以这一段
+        #   刻意用**日期**制造同一条硬阻断：04-30（第 29 天）放行、
+        #   05-01（第 30 天）拦下，而不是"第 21 次日常"。
         # ---------------------------------------------------------------- #
         seqs = []
         codes = []
@@ -349,46 +363,85 @@ def main() -> int:
             code, created = post_record(h1, "S3A", day, "daily", DAILY_BODY, status="submitted")
             codes.append(code)
             seqs.append(created.get("seq_no") if isinstance(created, dict) else None)
-        check("日常记录第 2–20 次按次递增（一天一条）",
+        check("日常记录第 2–20 次按次递增（一天一条，且都还在 30 天之内）",
               codes == [201] * 19 and seqs == list(range(2, 21)),
               f"{codes[:4]}… {seqs[:4]}…{seqs[-2:]}")
 
-        code, err = post_record(h1, "S3A", DATE_21, "daily", DAILY_BODY, status="submitted")
-        check("第 21 次日常前缺复评 → 409 MISSING_ASSESSMENT",
+        # 应做日**前**一天：差一天没到点，日常照常放行
+        code, daily_before_due = post_record(
+            h1, "S3A", DATE_BEFORE_DUE, "daily", DAILY_BODY, status="submitted"
+        )
+        check(f"距首评 {DATE_BEFORE_DUE}（第 29 天）的日常仍放行（复评没到点）",
+              code == 201 and daily_before_due["seq_no"] == 21,
+              f"{code} {str(daily_before_due)[:160]}")
+
+        code, form_before = request(
+            "/api/v1/records/form"
+            + q(patient_no="S3A", discipline=DISC, date=DATE_BEFORE_DUE),
+            token=h1,
+        )
+        check("表单按**天**报出复评倒计时（未到点：还有 1 天，不再是次数）",
+              code == 200 and form_before["kind"] == "daily"
+              and form_before["days_until_reassessment"] == 1
+              and form_before["reassessment_due"] == DATE_DUE
+              and form_before["reassessment_interval_days"] == 30
+              and "sessions_until_reassessment" not in form_before,
+              f"{code} {form_before.get('kind')} / "
+              f"{form_before.get('days_until_reassessment')} / "
+              f"{form_before.get('reassessment_due')}")
+
+        # 应做日当天：必须先补复评
+        code, err = post_record(h1, "S3A", DATE_DUE, "daily", DAILY_BODY, status="submitted")
+        check(f"距首评满 30 天（{DATE_DUE}）后记日常 → 409 MISSING_ASSESSMENT",
               code == 409 and err["code"] == "MISSING_ASSESSMENT"
               and err["details"]["missing_document"] == "reassessment"
               and err["details"]["missing_document_label"] == "阶段性复评"
-              and err["details"]["next_seq"] == 21,
+              and err["details"]["next_seq"] == 22
+              and err["details"]["reassessment_due"] == DATE_DUE,
               f"{code} {str(err)[:200]}")
 
-        code, form21 = request(
-            "/api/v1/records/form" + q(patient_no="S3A", discipline=DISC), token=h1
+        code, form_due = request(
+            "/api/v1/records/form" + q(patient_no="S3A", discipline=DISC, date=DATE_DUE), token=h1
         )
-        check("满 20 次后表单直接给出复评（先弹评估文书）",
-              form21["kind"] == "reassessment" and form21["pending_document"] == "reassessment"
-              and form21["next_seq"] == 21 and form21["total_daily"] == 20,
-              f"{form21.get('kind')} / {form21.get('next_seq')} / {form21.get('total_daily')}")
+        check("到点后表单直接给出复评（先弹评估文书），倒计时归零",
+              form_due["kind"] == "reassessment" and form_due["pending_document"] == "reassessment"
+              and form_due["next_seq"] == 22 and form_due["total_daily"] == 21
+              and form_due["days_until_reassessment"] == 0,
+              f"{form_due.get('kind')} / {form_due.get('next_seq')} / "
+              f"{form_due.get('total_daily')} / {form_due.get('days_until_reassessment')}")
 
         code, reassess = post_record(
-            h1, "S3A", DATE_21, "reassessment",
+            h1, "S3A", DATE_DUE, "reassessment",
             {"therapy_items": ["偏瘫肢体综合训练"], "mmt_lower": 3, "prev_goal": "坐位平衡达Ⅲ级"},
             status="submitted",
         )
-        check("补齐复评（挂靠第 21 次日常）",
-              code == 201 and reassess["seq_no"] is None and reassess["span_seq"] == 21,
-              f"{code} seq_no={reassess.get('seq_no')} span_seq={reassess.get('span_seq')}")
+        check("在应做日补复评成功，且复评不占日常序号（评估文书不计次）",
+              code == 201 and reassess["seq_no"] is None and reassess["kind"] == "reassessment"
+              and "第 22 次" not in reassess["rendered_text"],
+              f"{code} seq_no={reassess.get('seq_no')}")
 
-        code, daily21 = post_record(
-            h1, "S3A", DATE_21, "daily", DAILY_BODY, status="submitted"
+        code, daily_due = post_record(
+            h1, "S3A", DATE_DUE, "daily", DAILY_BODY, status="submitted"
         )
-        check("复评补齐后第 21 次日常放行",
-              code == 201 and daily21["seq_no"] == 21, f"{code} {str(daily21)[:160]}")
+        check("复评补齐后当天的日常放行（当天两条：复评 + 日常）",
+              code == 201 and daily_due["seq_no"] == 22, f"{code} {str(daily_due)[:160]}")
 
-        # 评估文书不占次数：已提交的**日常**共 21 条，而记录总数是 24（首评 + 复评 + 21 条日常）
+        # 周期从**复评日**重新起算：05-01 + 30 = 05-31，05-02 看还差 29 天
+        code, form_after = request(
+            "/api/v1/records/form" + q(patient_no="S3A", discipline=DISC, date=DATE_DRAFT), token=h1
+        )
+        check("复评后周期从复评日重新起算（下次应做日 = 复评日 + 30 天）",
+              code == 200 and form_after["kind"] == "daily"
+              and form_after["days_until_reassessment"] == 29
+              and form_after["reassessment_due"] == "2027-05-31",
+              f"{form_after.get('days_until_reassessment')} / "
+              f"{form_after.get('reassessment_due')}")
+
+        # 评估文书不占次数：已提交的**日常**共 22 条，加上首评与复评共 24 条文书
         code, listed = request("/api/v1/records" + q(patient_no="S3A", page_size=200), token=h1)
         kinds = [i["kind"] for i in listed["items"]]
-        check("该患者共 23 条文书：21 条日常 + 首评 + 复评（评估文书不占次数）",
-              listed["total"] == 23 and kinds.count("daily") == 21 and kinds.count("initial") == 1
+        check("该患者共 24 条文书：22 条日常 + 首评 + 复评（评估文书不占次数）",
+              listed["total"] == 24 and kinds.count("daily") == 22 and kinds.count("initial") == 1
               and kinds.count("reassessment") == 1,
               f"total={listed.get('total')} daily={kinds.count('daily')}")
 
@@ -396,7 +449,7 @@ def main() -> int:
         # 9) 状态机与留痕：草稿不留痕、提交后累加 edit_count、锁定后不可改
         # ---------------------------------------------------------------- #
         code, draft = post_record(h1, "S3A", DATE_DRAFT, "daily", DAILY_BODY, status="draft")
-        check("建日常草稿（第 22 次）", code == 201 and draft["seq_no"] == 22, f"{code}")
+        check("建日常草稿（第 23 次）", code == 201 and draft["seq_no"] == 23, f"{code}")
         code, _ = request(
             f"/api/v1/records/{draft['id']}", "PUT", {"body": {**DAILY_BODY, "vas": 3}}, h1
         )
@@ -463,10 +516,10 @@ def main() -> int:
         # ---------------------------------------------------------------- #
         # 11) 出院流程：任何治疗师可发起 → 待出院 → 管理员确认或取消
         # ---------------------------------------------------------------- #
-        code, summary = post_record(h1, "S3B", DATE_21, "discharge", {}, status="submitted")
+        code, summary = post_record(h1, "S3B", DATE_DUE, "discharge", {}, status="submitted")
         check("治疗师可建出院小结并提交",
               code == 201 and summary["kind"] == "discharge"
-              and summary["seq_no"] is None and summary["span_seq"] is None,
+              and summary["seq_no"] is None,
               f"{code} {str(summary)[:160]}")
 
         code, pending = request(

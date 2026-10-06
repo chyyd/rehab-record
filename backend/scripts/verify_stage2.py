@@ -210,13 +210,16 @@ def main() -> int:
         #   所以下面每位患者都是"首评 + 当天日常"两条文书。
         code, init_b = post_record(h1, "S2B", D_OLD, "initial", INITIAL_BODY, status="submitted")
         check("给 S2B 建首评（不占日常次数）",
-              code == 201 and init_b["seq_no"] is None and init_b["span_seq"] == 1,
+              code == 201 and init_b["seq_no"] is None
+              and "第 1 次" not in init_b["rendered_text"],
               f"{code} {str(init_b)[:160]}")
         code, _ = post_record(h1, "S2B", D_OLD, "daily", DAILY_BODY, status="submitted")
         check("给 S2B 建已提交日常（第 1 次）", code == 201, f"HTTP {code}")
 
         code, init_a = post_record(h1, "S2A", D_MID, "initial", INITIAL_BODY, status="submitted")
-        check("给 S2A 建首评", code == 201 and init_a["span_seq"] == 1, f"HTTP {code}")
+        check("给 S2A 建首评（不占日常序号，文书里也不显示「第 N 次」）",
+              code == 201 and init_a["seq_no"] is None
+              and "第 1 次" not in init_a["rendered_text"], f"HTTP {code}")
         code, daily_a = post_record(h1, "S2A", D_MID, "daily", DAILY_BODY, status="submitted")
         check("给 S2A 建已提交日常（第 1 次）", code == 201 and daily_a["seq_no"] == 1,
               f"{code} {str(daily_a)[:160]}")
@@ -265,7 +268,8 @@ def main() -> int:
             status="submitted",
         )
         check("给 S2B 建复评（评估文书，不占日常次数）",
-              code == 201 and reassess_b["seq_no"] is None and reassess_b["span_seq"] is not None,
+              code == 201 and reassess_b["seq_no"] is None
+              and reassess_b["kind"] == "reassessment",
               f"{code} {str(reassess_b)[:160]}")
 
         code, dept2b = request(f"/api/v1/patients{q(scope='dept', page_size=200)}", token=h1)

@@ -40,7 +40,10 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from dataclasses import dataclass, field
+from datetime import date as _date
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -57,8 +60,17 @@ KIND_LABELS = {
     "discharge": "出院小结",
 }
 
-# 复评触发周期（用户 2026-10-05 定：每 20 次治疗后复评）
-REASSESS_EVERY = 20
+# 复评周期：**30 个自然日**（用户 2026-10-06 改）。
+#
+# 历史：2026-10-05 原本是「每 20 次日常治疗后复评」，按**次数**算。
+# 用户 2026-10-06 改为按**日期**算：
+#   「复评的间隔逻辑需要改一下，设定为距离首评或上一次复评 30 个自然日。
+#     如果当日没有治疗，顺延到下一次治疗时评估，也就是 1 个月评一次。」
+#
+# 于是"一次复评"不再是"挂在第 N 次日常序号上"，而是一个**日期周期**：
+# 应做日 = 上次评估的 `record_date` + 30 天。`seq_no` 因此完全不参与复评判定
+#（它只回答"这是第几次日常治疗"，治疗师要看的是这个）。
+REASSESS_INTERVAL_DAYS = 30
 
 SEP_INLINE = "；"
 SEP_MULTI = "/"
@@ -209,121 +221,167 @@ def counts_as_session(kind: str) -> bool:
     return kind == "daily"
 
 
-def kind_for_seq(seq_no: int) -> str:
-    """按「该大类已有多少次**日常记录**」决定今天该填哪种形态。
+def _as_date(value: str | _date | None) -> _date | None:
+    """把 `'YYYY-MM-DD'`（或带时间的 ISO 串）转成 `date`；转不了返回 `None`。"""
+    if value is None:
+        return None
+    if isinstance(value, _date):
+        return value
+    try:
+        return _date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return None
 
-    注意 `seq_no` 是**日常记录**的序号（不含首评/复评/出院小结）。
 
-    - 第 1 次日常 → 同时需要首评（首评是独立文书，不占次数）
-    - 每满 20 次日常后（即第 21、41、61… 次日常）→ 同时需要复评
+def next_reassessment_due(
+    anchor_date: str | _date | None,
+    *,
+    done_dates: Iterable[str | _date] | None = None,
+    on_date: str | _date | None = None,
+) -> _date | None:
+    """下一个复评**应做日**：`首评日 + 30 × k`（第一个还没复评的）。
 
-    >>> [kind_for_seq(n) for n in (1, 2, 20, 21, 40, 41, 61)]
-    ['initial', 'daily', 'daily', 'reassessment', 'daily', 'reassessment', 'reassessment']
+    用户 2026-10-06：「设定为距离首评或上一次复评 30 个自然日。
+    如果当日没有治疗，顺延到下一次治疗时评估，也就是 1 个月评一次。」
+    并且明确选了周期**从计划应做日起算**（不是实际完成日）。
 
-    ⚠ 返回值表示「除了日常记录之外，还需要哪份文书」；`daily` 表示不需要额外文书。
-    日常记录本身**每次都填**。
+    ## 为什么锚点是**首评日**而不是"最近一次评估"
+
+    这是本题唯一的坑，我第一版就踩了。两个概念长得像、但不等价：
+
+    - 锚 = 最近一次复评的**实际完成日** → 拖到第 35 天才补做，下一次就变成第 65 天
+      （周期漂成 35 天一次），**越拖越漂**，与"1 个月评一次"直接矛盾。
+    - 锚 = **首评日**（唯一不动的时间原点）→ 应做日永远是首评后第 30、60、90… 天；
+      第 35 天补做也好、第 50 天补做也好，下一个应做日仍是第 60 天。
+
+    用户要的是后者。所以这里把锚换成首评日，再按 30 天逐格推进，
+    跳过**已经做过复评**的那些格子 —— "哪一格该做"因此不需要任何额外落库状态。
+
+    [done_dates] 是已存在的复评各自的 `record_date`。某一格只要**任意一份**复评
+    落在 `[该格, 下一格)` 区间内，就算做过。
+    [on_date] 给出"今天"：函数返回第一个**尚未完成**的格子；
+    不传则等价于 `on_date = 首评日`。
     """
-    if seq_no <= 1:
+    base = _as_date(anchor_date)
+    if base is None:
+        return None
+    done = [d for d in (_as_date(x) for x in (done_dates or ())) if d is not None]
+    today = _as_date(on_date) if on_date is not None else base
+
+    step = timedelta(days=REASSESS_INTERVAL_DAYS)
+    due = base + step
+    # 逐格推进。循环上限只是防御异常数据的死循环（正常几轮就返回）。
+    for _ in range(1000):
+        if due > today:
+            return due  # 这一格还没到 —— 它就是下一个应做日
+        # 这一格已经到过：做过复评就跳过；没做说明**逾期未做** → 应做日就是它
+        if not any(due <= d < due + step for d in done):
+            return due
+        due += step
+    return due
+
+
+def days_until_reassessment(
+    anchor_date: str | _date | None,
+    on_date: str | _date,
+    *,
+    done_dates: Iterable[str | _date] | None = None,
+) -> int | None:
+    """距复评应做日还有几天（`<= 0` 表示已到点）。没有首评时返回 `None`。
+
+    界面用它替换原来的「距复评还差 N **次**」—— 现在单位是**天**。
+    """
+    due = next_reassessment_due(anchor_date, done_dates=done_dates, on_date=on_date)
+    if due is None:
+        return None
+    on = _as_date(on_date)
+    if on is None:
+        return None
+    return (due - on).days
+
+
+def reassessment_document_for(
+    *,
+    has_initial: bool,
+    initial_date: str | _date | None,
+    done_dates: Iterable[str | _date] | None = None,
+    on_date: str | _date,
+) -> str | None:
+    """在 [on_date] 记这条日常之前，**先**必须完成哪份评估文书（None = 可以记）。
+
+    判定完全按日期：
+
+    - 该大类**还没有首评** → `'initial'`（第 1 次日常前的硬阻断，没变）；
+    - 首评之后，`首评日 + 30 × k` 的**第一个未复评的格子**已到点 → `'reassessment'`；
+    - 否则 → `None`。
+
+    「如果当日没有治疗，顺延到下一次治疗时评估」在这里自然成立：
+    判定拿**本次记录的日期**去比应做日，所以应做日那天没治疗也没关系，
+    下一次来治疗时照样会被拦下要求复评 —— 不需要任何"补记"或定时任务。
+
+    >>> reassessment_document_for(has_initial=False, initial_date=None, on_date='2026-11-01')
+    'initial'
+    >>> reassessment_document_for(has_initial=True, initial_date='2026-11-01', on_date='2026-11-20') is None
+    True
+    >>> reassessment_document_for(has_initial=True, initial_date='2026-11-01', on_date='2026-12-01')
+    'reassessment'
+    """
+    if not has_initial:
         return "initial"
-    if (seq_no - 1) % REASSESS_EVERY == 0:
+    due = next_reassessment_due(initial_date, done_dates=done_dates, on_date=on_date)
+    if due is None:
+        # 有首评却拿不到它的日期（数据异常）—— 保守要求复评，而不是放行。
+        return "reassessment"
+    on = _as_date(on_date)
+    if on is None:
+        return "reassessment"
+    return "reassessment" if on >= due else None
+
+
+def kind_for_date(
+    *,
+    has_initial: bool,
+    initial_date: str | _date | None,
+    done_dates: Iterable[str | _date] | None = None,
+    on_date: str | _date,
+    has_daily_today: bool = False,
+) -> str:
+    """今天该填哪种形态（`initial` / `reassessment` / `daily`）。
+
+    与老的 `kind_for_seq` 的区别：**复评看日期，不看次数**。
+
+    [has_daily_today] 只用于一条**边界**判断：复评到点那天如果当天已经记过日常，
+    就不该把表单再折成日常（`daily`），否则治疗师会以为"复评不用做了"。
+    ⚠ 它**不**影响"是否要求复评"——那只看日期。
+    """
+    needed = reassessment_document_for(
+        has_initial=has_initial,
+        initial_date=initial_date,
+        done_dates=done_dates,
+        on_date=on_date,
+    )
+    if needed == "initial":
+        return "initial"
+    if needed == "reassessment":
         return "reassessment"
     return "daily"
 
 
-def pending_documents(seq_no: int) -> list[str]:
-    """今天需要补的**评估文书**列表（不含日常记录本身）。
-
-    >>> pending_documents(1)
-    ['initial']
-    >>> pending_documents(2)
-    []
-    >>> pending_documents(21)
-    ['reassessment']
-    """
-    kind = kind_for_seq(seq_no)
-    return [] if kind == "daily" else [kind]
-
-
-def required_document_for_next(seq_no: int) -> str | None:
-    """要记「第 `seq_no` 次日常记录」，**先**必须完成哪份评估文书。
-
-    用户 2026-10-05（三条都选「不能跳过」）：
-      「1A。2不能。3不能。」
-    即点击大类后**先弹评估文书**，填完再填当天的日常记录；三者都是硬阻断。
-
-    评估文书与它对应的日常记录**绑定在同一个序号**上，所以「是否已完成」的判定是
-    「存在区间标识 = 本序号的该形态记录吗」，由调用方查库后把集合传进来。
-
-    - 第 1 次日常 → 必须先有 `initial`（区间标识 1）
-    - 第 21、41、61… 次日常 → 必须先有 `reassessment`（区间标识 21/41/61…）
-    - 其余 → None（直接记日常）
-
-    >>> required_document_for_next(1)
-    'initial'
-    >>> required_document_for_next(2) is None
-    True
-    >>> required_document_for_next(21)
-    'reassessment'
-    """
-    if seq_no <= 1:
-        return "initial"
-    if (seq_no - 1) % REASSESS_EVERY == 0:
-        return "reassessment"
-    return None
-
-
-def assessment_span_seq(seq_no: int) -> int:
-    """评估文书要挂在哪个日常序号上（= 它对应的那一次日常）。
-
-    - 首评 → 1
-    - 复评 → 21 / 41 / 61…（就是触发它的那个日常序号）
-
-    这样「该序号下有没有这份文书」就是一个简单查询，不需要额外状态。
-    """
-    if seq_no <= 1:
-        return 1
-    if (seq_no - 1) % REASSESS_EVERY == 0:
-        return seq_no
-    # 落在两次复评之间：归属到最近一次复评点（唯一的复评点为 21、41、61…）
-    return ((seq_no - 1) // REASSESS_EVERY) * REASSESS_EVERY + 1
-
-
-def next_session_gate(
-    next_seq: int,
+def pending_documents_for_date(
     *,
     has_initial: bool,
-    reassessment_spans: set[int] | None = None,
-) -> str | None:
-    """记「第 `next_seq` 次日常」之前还缺哪份文书（None = 可以记）。
-
-    `reassessment_spans` 是**已存在的复评**所挂的序号集合
-    （即 `[r.span_seq for r in 该大类的复评记录]`）。
-
-    >>> next_session_gate(1, has_initial=False)
-    'initial'
-    >>> next_session_gate(1, has_initial=True) is None
-    True
-    >>> next_session_gate(21, has_initial=True, reassessment_spans=set())
-    'reassessment'
-    >>> next_session_gate(21, has_initial=True, reassessment_spans={21}) is None
-    True
-    """
-    missing = required_document_for_next(next_seq)
-    if missing is None:
-        return None
-    if missing == "initial":
-        return None if has_initial else "initial"
-    spans = reassessment_spans or set()
-    return None if assessment_span_seq(next_seq) in spans else "reassessment"
-
-
-def sessions_until_reassessment(seq_no: int) -> int:
-    """还差几次**日常记录**到下一次复评（已到点则为 0）。界面用来显示「12/20」。"""
-    if seq_no < 1:
-        return REASSESS_EVERY
-    done = seq_no - 1
-    remainder = done % REASSESS_EVERY
-    return 0 if remainder == 0 and seq_no > 1 else REASSESS_EVERY - remainder
+    initial_date: str | _date | None,
+    done_dates: Iterable[str | _date] | None = None,
+    on_date: str | _date,
+) -> list[str]:
+    """今天需要补的**评估文书**列表（不含日常记录本身）。"""
+    kind = kind_for_date(
+        has_initial=has_initial,
+        initial_date=initial_date,
+        done_dates=done_dates,
+        on_date=on_date,
+    )
+    return [] if kind == "daily" else [kind]
 
 
 # --------------------------------------------------------------------------- #

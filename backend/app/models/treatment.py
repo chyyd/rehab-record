@@ -12,11 +12,16 @@
 
 评估文书（首评/复评/出院小结）与日常记录是**并存的独立文书**：
 
-| 形态 | `seq_no` | `span_seq` | 计入治疗次数 |
+| 形态 | `seq_no` | 计入治疗次数 | 触发方式 |
 |---|---|---|---|
-| `daily` | 第几次**日常**（必填） | NULL | **是** |
-| `initial` / `reassessment` | NULL | 挂靠的日常序号（1 / 21 / 41…） | 否 |
-| `discharge` | NULL | NULL | 否 |
+| `daily` | 第几次**日常**（必填） | **是** | 每次都填 |
+| `initial` | NULL | 否 | 该大类还没有任何评估时，先填它 |
+| `reassessment` | NULL | 否 | 距上次评估满 **30 个自然日**（见下） |
+| `discharge` | NULL | 否 | 治疗师点「出院」 |
+
+> 2026-10-06：`span_seq`（把评估挂到"第几次日常"上）**已随迁移 014 删除**。
+> 复评不再按次数算，而是按**日期**：应做日 = 上次评估的 `record_date` + 30 天，
+> 到了之后的第一次治疗先补复评（用户：「也就是 1 个月评一次」）。
 
 次数与门禁规则全部来自 `app/services/record_template.py`（**唯一实现**，
 App 与后端共用同一份判定），本模块只负责把它接到数据库上。
@@ -24,7 +29,7 @@ App 与后端共用同一份判定），本模块只负责把它接到数据库�
 ## 三条硬阻断（用户 2026-10-05：「1A。2不能。3不能。」）
 
 1. 记第 1 次日常前必须有首评；
-2. 记第 21、41、61… 次日常前必须有对应区间的复评；
+2. 距上次评估（首评或复评）满 **30 个自然日**后，下一次治疗前必须有复评；
 3. 待出院（`pending_discharge`）的患者不能再记新记录。
 
 前两条抛 `Conflict`（409，`details.missing_document`），第三条也抛 `Conflict`。
@@ -70,7 +75,6 @@ COLUMN_NAMES = (
     "discipline",
     "kind",
     "seq_no",
-    "span_seq",
     "body_json",
     "rendered_text",
     "note",
@@ -196,22 +200,69 @@ def has_initial(conn: sqlite3.Connection, patient_no: str, discipline: str) -> b
     return row is not None
 
 
-def reassessment_spans(conn: sqlite3.Connection, patient_no: str, discipline: str) -> set[int]:
-    """该大类已存在的复评所挂靠的日常序号集合。"""
+def initial_date(conn: sqlite3.Connection, patient_no: str, discipline: str) -> str | None:
+    """该大类**首评**的 `record_date`。
+
+    ★ 这是复评周期的**锚点**，而且必须是它 —— 不能用"最近一次评估日"。
+    用户 2026-10-06 明确选了「从这次复评的**计划应做日**起算 30 天」，
+    而"最近一次评估日"本身会随补做时间滑动，拿它当锚会让周期漂移
+    （拖到第 35 天补做 → 下一次变成第 65 天，越拖越漂）。
+    首评日是唯一不动的时间原点：应做日永远是首评后第 30、60、90… 天。
+    """
+    row = conn.execute(
+        "SELECT record_date FROM treatment_record"
+        " WHERE patient_no = ? AND discipline = ? AND kind = 'initial'"
+        " ORDER BY record_date ASC, id ASC LIMIT 1",
+        (patient_no, discipline),
+    ).fetchone()
+    return None if row is None else str(row["record_date"])
+
+
+def reassessment_dates(
+    conn: sqlite3.Connection, patient_no: str, discipline: str
+) -> list[str]:
+    """该大类**已存在的复评**各自的 `record_date`（判断"哪一格做过了"用）。"""
     rows = conn.execute(
-        "SELECT span_seq FROM treatment_record"
-        " WHERE patient_no = ? AND discipline = ? AND kind = 'reassessment' AND span_seq IS NOT NULL",
+        "SELECT record_date FROM treatment_record"
+        " WHERE patient_no = ? AND discipline = ? AND kind = 'reassessment'",
         (patient_no, discipline),
     ).fetchall()
-    return {int(r["span_seq"]) for r in rows}
+    return [str(r["record_date"]) for r in rows]
 
 
-def pending_document(conn: sqlite3.Connection, patient_no: str, discipline: str, next_seq: int) -> str | None:
-    """记第 `next_seq` 次日常之前还缺哪份评估文书（None = 可以记）。"""
-    return record_template.next_session_gate(
-        next_seq,
+def last_assessment_date(
+    conn: sqlite3.Connection, patient_no: str, discipline: str
+) -> str | None:
+    """该大类**最后一次评估**（首评或复评）的 `record_date`。
+
+    ⚠ 只用于"最近做过评估是什么时候"这类展示/预填场景，
+    **不要**拿它当复评周期的锚 —— 那会漂移（见 `initial_date` 的说明）。
+    """
+    row = conn.execute(
+        "SELECT record_date FROM treatment_record"
+        " WHERE patient_no = ? AND discipline = ? AND kind IN ('initial', 'reassessment')"
+        " ORDER BY record_date DESC, id DESC LIMIT 1",
+        (patient_no, discipline),
+    ).fetchone()
+    return None if row is None else str(row["record_date"])
+
+
+def pending_document(
+    conn: sqlite3.Connection,
+    patient_no: str,
+    discipline: str,
+    on_date: str,
+) -> str | None:
+    """在 [on_date] 记日常之前还缺哪份评估文书（None = 可以记）。
+
+    ⚠ 参数从 `next_seq`（第几次日常）换成了 `on_date`（本次记录的日期）——
+    复评判定按**自然日**算，与"第几次"无关。
+    """
+    return record_template.reassessment_document_for(
         has_initial=has_initial(conn, patient_no, discipline),
-        reassessment_spans=reassessment_spans(conn, patient_no, discipline),
+        initial_date=initial_date(conn, patient_no, discipline),
+        done_dates=reassessment_dates(conn, patient_no, discipline),
+        on_date=on_date,
     )
 
 
@@ -227,12 +278,18 @@ def count_sessions(conn: sqlite3.Connection, patient_no: str, discipline: str) -
 
 
 def record_for_span(
-    conn: sqlite3.Connection, patient_no: str, discipline: str, kind: str, span_seq: int
+    conn: sqlite3.Connection, patient_no: str, discipline: str, kind: str
 ) -> dict[str, Any] | None:
+    """该大类**最近一份**该形态的文书（首评只有一份；复评取最近那份）。
+
+    原来按 `span_seq` 定位（21/41/61…），现在按日期取最近 —— 复评是按月产生的，
+    "最近一份"就是治疗师要继续编辑的那份（草稿要能接着写）。
+    """
     row = conn.execute(
         f"SELECT {record_columns()} FROM treatment_record"
-        " WHERE patient_no = ? AND discipline = ? AND kind = ? AND span_seq = ? LIMIT 1",
-        (patient_no, discipline, kind, span_seq),
+        " WHERE patient_no = ? AND discipline = ? AND kind = ?"
+        " ORDER BY record_date DESC, id DESC LIMIT 1",
+        (patient_no, discipline, kind),
     ).fetchone()
     return _with_body(row_to_dict(row))
 
@@ -261,7 +318,7 @@ def same_day_records(
     conn: sqlite3.Connection, patient_no: str, discipline: str, record_date: str
 ) -> list[dict[str, Any]]:
     rows = conn.execute(
-        "SELECT id, kind, status, seq_no, span_seq FROM treatment_record"
+        "SELECT id, kind, status, seq_no FROM treatment_record"
         " WHERE patient_no = ? AND discipline = ? AND record_date = ? ORDER BY id",
         (patient_no, discipline, record_date),
     ).fetchall()
@@ -286,7 +343,7 @@ def last_assessment_body(conn: sqlite3.Connection, patient_no: str, discipline: 
     row = conn.execute(
         "SELECT body_json FROM treatment_record"
         " WHERE patient_no = ? AND discipline = ? AND kind IN ('initial', 'reassessment')"
-        " ORDER BY COALESCE(span_seq, 0) DESC, record_date DESC, id DESC LIMIT 1",
+        " ORDER BY record_date DESC, id DESC LIMIT 1",
         (patient_no, discipline),
     ).fetchone()
     if row is None:
@@ -462,52 +519,79 @@ def _assert_same_day_limit(
 
 def _resolve_placement(
     conn: sqlite3.Connection, *, patient_no: str, discipline: str, kind: str, record_date: str
-) -> tuple[int | None, int | None]:
-    """算出该记录应有的 `(seq_no, span_seq)`，并在需要时执行**硬阻断门禁**。
+) -> int | None:
+    """算出该记录应有的 `seq_no`，并在需要时执行**硬阻断门禁**。
 
-    - `daily`：序号 = 已有日常数 + 1；记之前必须先有首评/对应复评（缺 → 409）
-    - `initial` / `reassessment`：挂到"下一个日常序号"对应的评估区间上
-    - `discharge`：两者都为 NULL（出院小结不占次数、不挂区间）
+    - `daily`：序号 = 已有日常数 + 1；记之前必须先有首评、且上次评估未满 30 天
+      （缺 → 409，见用户「1A。2不能。3不能。」）
+    - `initial` / `reassessment` / `discharge`：`seq_no` 为 NULL（评估文书不计次数）
+
+    ★ 2026-10-06：不再返回 `span_seq`。复评判定改成按**自然日**（30 天），
+    它只取决于 `record_date` 与上次评估日期，与"第几次日常"无关。
     """
     if kind == "discharge":
-        return None, None
-
-    next_seq = next_daily_seq(conn, patient_no, discipline)
+        return None
 
     if kind == "daily":
-        missing = pending_document(conn, patient_no, discipline, next_seq)
+        next_seq = next_daily_seq(conn, patient_no, discipline)
+        missing = pending_document(conn, patient_no, discipline, record_date)
         if missing is not None:
             # ★ 硬阻断：评估文书不能跳过（用户：「1A。2不能。3不能。」）
+            #
+            # 锚点是**首评日**（`initial_date`），不是"最近一次评估日" ——
+            # 后者会随补做时间滑动，让 30 天的月度节奏漂掉。
+            due = record_template.next_reassessment_due(
+                initial_date(conn, patient_no, discipline),
+                done_dates=reassessment_dates(conn, patient_no, discipline),
+                on_date=record_date,
+            )
             raise Conflict(
-                f"第 {next_seq} 次日常记录前必须先完成{record_template.KIND_LABELS.get(missing, missing)}",
+                f"该记{record_template.KIND_LABELS.get(missing, missing)}了"
+                "（距上次评估已满 30 天），填完才能记当天的日常治疗",
                 code="MISSING_ASSESSMENT",
                 details={
                     "missing_document": missing,
                     "missing_document_label": pending_document_label(missing),
                     "next_seq": next_seq,
                     "discipline": discipline,
+                    # 应做日一并给出：界面可以显示"复评应做日 2026-12-01（已逾期 4 天）"，
+                    # 比只给一个布尔值有用得多。
+                    "reassessment_due": None if due is None else str(due),
+                    "record_date": record_date,
                 },
             )
-        return next_seq, None
+        return next_seq
 
-    span_seq = record_template.assessment_span_seq(next_seq)
-    taken = conn.execute(
-        "SELECT id FROM treatment_record"
-        " WHERE patient_no = ? AND discipline = ? AND kind = ? AND span_seq = ? LIMIT 1",
-        (patient_no, discipline, kind, span_seq),
-    ).fetchone()
-    if taken is not None:
-        raise Conflict(
-            f"该区间（第 {span_seq} 次日常）已有{record_template.KIND_LABELS.get(kind, kind)}",
-            code="ASSESSMENT_ALREADY_EXISTS",
-            details={
-                "kind": kind,
-                "span_seq": span_seq,
-                "record_id": int(taken["id"]),
-                "discipline": discipline,
-            },
-        )
-    return None, span_seq
+    # 评估文书：不占次数。
+    #
+    # ★ 首评必须是**业务层**的 409，不能只靠库层唯一索引兜底 ——
+    #   `sqlite3.IntegrityError` 不是 `AppError`，会被统一处理器翻成 **500**，
+    #   而且 `/sync/push` 只把 `Conflict` 降级成逐条 conflict，所以离线推第二份首评
+    #   会让**整批** 500（客户端连是哪一条出的问题都不知道）。
+    #   这是重构时丢掉的老行为（原来有 `ASSESSMENT_ALREADY_EXISTS`），补回来。
+    if kind == "initial":
+        existing = conn.execute(
+            "SELECT id FROM treatment_record"
+            " WHERE patient_no = ? AND discipline = ? AND kind = 'initial' LIMIT 1",
+            (patient_no, discipline),
+        ).fetchone()
+        if existing is not None:
+            raise Conflict(
+                "该大类已有首评，不能重复填写",
+                code="ASSESSMENT_ALREADY_EXISTS",
+                details={
+                    "kind": "initial",
+                    "record_id": int(existing["id"]),
+                    "discipline": discipline,
+                },
+            )
+
+    # 复评天然可以有多份（30/60/90 天各一份），所以不做"该区间已有"的检查 ——
+    # 那个概念随 `span_seq` 一起删掉了。
+    #
+    # ⚠ 库层 `ux_record_one_initial` 仍然保留：并发下两个请求可能同时通过上面
+    #   这个预检，唯一索引是最后一道防线（那时会 IntegrityError，属可接受的极端情况）。
+    return None
 
 
 def _render(
@@ -581,7 +665,7 @@ def create_record(
     _assert_same_day_limit(
         conn, patient_no=patient_no, discipline=discipline, record_date=record_date
     )
-    seq_no, span_seq = _resolve_placement(
+    seq_no = _resolve_placement(
         conn, patient_no=patient_no, discipline=discipline, kind=kind, record_date=record_date
     )
 
@@ -599,9 +683,9 @@ def create_record(
 
     cur = conn.execute(
         "INSERT INTO treatment_record"
-        " (patient_no, therapist_id, record_date, discipline, kind, seq_no, span_seq,"
+        " (patient_no, therapist_id, record_date, discipline, kind, seq_no,"
         "  body_json, rendered_text, note, status, locked_at, submitted_at, client_uuid)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             patient_no,
             therapist_id,
@@ -609,7 +693,6 @@ def create_record(
             discipline,
             kind,
             seq_no,
-            span_seq,
             jsonutil.dumps(answers),
             rendered,
             note,
@@ -806,7 +889,10 @@ __all__ = [
     "get_record",
     "get_record_or_raise",
     "has_initial",
+    "initial_date",
     "last_assessment_body",
+    "last_assessment_date",
+    "reassessment_dates",
     "last_daily_body",
     "list_records",
     "load_template",
@@ -814,7 +900,6 @@ __all__ = [
     "next_daily_seq",
     "pending_document",
     "pending_document_label",
-    "reassessment_spans",
     "record_columns",
     "record_for_span",
     "rendered_excerpt",

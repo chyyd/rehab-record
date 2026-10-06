@@ -14,7 +14,10 @@
   > `templates/*.json` 文件（**不进数据库**，用户要求「使用json格式保存模板，不进数据库，
   > 以便以后我手动修改」）；**四大类分开记录**（`PT` 运动 / `OT` 生活技能 / `ST_SW` 吞咽 /
   > `ST_SP` 言语，理由「考虑到可能是不同的治疗师操作」）；评估文书（首评 / 复评 / 出院小结）
-  > **不占用日常训练次数**且**不能跳过**（用户原话「1A。2不能。3不能。」）；每 20 次日常后复评；
+  > **不占用日常训练次数**且**不能跳过**（用户原话「1A。2不能。3不能。」）；
+  > **复评按自然日算**（2026-10-06 改，原「每 20 次日常后复评」已废）—— 锚点是**首评日**，
+  > 应做日 = `首评日 + 30 × k`（`REASSESS_INTERVAL_DAYS = 30`），应做日那天没治疗就顺延，
+  > 下次来治疗时照样拦（用户：「也就是 1 个月评一次」）；
   > 出院走 `pending_discharge`（**任何治疗师可发起**，管理员确认或满 7 天由
   > `app.cli auto-discharge --days 7` 自动出院）。记录内容存 `body_json` + **冻结的
   > `rendered_text`（SOAP 纯文本）**。**已删除**：字典 / 选项集 / 患者反应定义 / 科室模板
@@ -66,14 +69,14 @@
 | 阶段 0 | SQLite 初始化与迁移、作息定义、健康检查、CLI、**FastAPI 骨架 + 统一错误体** | **已完成** |
 | 阶段 1 | **认证（argon2 + JWT 轮换）、用户管理、患者与归属、可见归属解析** | **已完成** |
 | 阶段 2 | ~~排期（半日格子）、冲突规则、可排性查询、休息块、请假~~ | **已取消**（2026-10-05：排班不是本系统的职责；患者列表排序改按实际治疗，验收脚本已重写为 31 项） |
-| 阶段 3 | **SOAP 模板记录**（`GET /records/form` 表单、四大类 × 四形态、评估文书不占次数且不可跳过、每 20 次日常复评、`rendered_text` 冻结、出院流程） | **已完成** |
+| 阶段 3 | **SOAP 模板记录**（`GET /records/form` 表单、四大类 × 四形态、评估文书不占次数且不可跳过、**距首评 30 个自然日复评**、`rendered_text` 冻结、出院流程） | **已完成** |
 | 阶段 4 | **离线幂等推送（client_uuid）、游标增量拉取、冲突分层（草稿客户端优先）、离线推送也走同一套门禁** | **已完成** |
 | 阶段 5 | **三套中文 PDF 汇总打印（SOAP 纯文本、多日按时间顺序连排）、审计日志查询** | **已完成** |
 | 记录模板 | **`templates/` 16 份 JSON 模板**（4 大类 × 4 形态）+ `schema.json` / `disciplines.json`；疗法清单运动 58 / 生活技能 5 / 吞咽 4 / 言语 13 | **已完成**（D04 / T3.2 闭环，改后不需迁移） |
-| 文档 | `设计.md` 修订至 **V1.4**、`开发计划.md` **V0.8**；跨文档校验 371 项 0 失败 | **已完成** |
+| 文档 | `设计.md` 修订至 **V1.4**、`开发计划.md` **V0.8**；跨文档校验 379 项 0 失败 | **已完成** |
 | 种子数据 | `app.cli seed` 与字典/选项集/反应定义/模板四类种子**已废弃**（承载它们六张表已由迁移 012 删除） | **已废弃** |
 | 中文 PDF | **reportlab + 内置 CID 字体 `STSong-Light`**，三套模板经 pypdf 反向文本校验 | **已完成**（D03 修订，Q10 版式 + SOAP 正文） |
-| 测试 | **341 个测试全部通过、0 skip**；端到端 268 项 + **浏览器 UI 验收 60 项** | **已完成** |
+| 测试 | **355 个测试全部通过、0 skip**；端到端 275 项 + **浏览器 UI 验收 60 项** | **已完成** |
 | 接口 | **45 个接口**（37 个路径：认证、用户、患者与出院、SOAP 记录表单、同步、汇总、打印、审计） | **已完成**（字典/选项集/反应定义/模板四组接口已删除） |
 | 管理后台 Web | **React 19 + Vite 8 + Ant Design 6 + TS**，**6 个模块**（总览 / 患者 / 治疗记录 / 汇总打印 / 用户 / 审计）；排期页、请假页、字典/选项集/反应定义/模板四个页面**已删除**；记录与汇总改为 SOAP 纯文本；患者页含**出院确认 / 取消待出院** | **已完成**（删除四个页面后重新构建 exit 0） |
 | 安卓 App | Flutter：**3 个页签**（患者 / 时间轴 / 我的）、汇总与 PDF 打印（三种去向）、同步与冲突处理；**Drift schemaVersion 6**（记录表按 SOAP 重建、删除 `record_items` 表）。**记录页已适配 SOAP 改造**（`GET /records/form` 一屏 chip + `body` 契约），**130 个本地测试全部通过** | **已完成** |
@@ -96,7 +99,7 @@
 .\start.ps1 -NoBrowser   # 只启动，不打开浏览器
 ```
 
-首次运行会自动完成：建库 → 应用迁移 001–013 → 创建管理员 → 安装前端依赖。
+首次运行会自动完成：建库 → 应用迁移 001–014 → 创建管理员 → 安装前端依赖。
 （曾经还会"导入种子"——`app.cli seed` 现在是**已废弃的空操作**：字典 / 选项集 / 反应定义 /
 模板四类种子随迁移 011/012 下线，记录模板改由 `templates/*.json` 承载。）
 **管理员密码是随机生成的**，会打印在窗口里并保存到 `.dev-admin-password.txt`
@@ -122,8 +125,8 @@
 │   │   ├── models/          数据访问
 │   │   ├── schemas/         请求/响应模型
 │   │   ├── core/            配置、安全、错误、依赖
-│   │   └── db/migrations/   **13 个 SQL 迁移**（带 checksum 校验；011 SOAP 记录重建、
-│   │                        012 删除字典六表、013 患者待出院）
+│   │   └── db/migrations/   **14 个 SQL 迁移**（带 checksum 校验；011 SOAP 记录重建、
+│   │                        012 删除字典六表、013 患者待出院、014 删除 span_seq）
 │   ├── seed/                种子数据（**已废弃**：字典/选项集/反应定义/模板四类随迁移 012 下线）
 │   ├── scripts/             端到端验收脚本（_ 前缀的是共用工具）
 │   ├── tests/               单元与集成测试
@@ -151,7 +154,7 @@ cd backend
 # 必须用系统 Python 3.13（见下方"用哪个 Python"）
 $py = "C:\Users\youda\AppData\Local\Programs\Python\Python313\python.exe"
 
-& $py -m app.cli init      # 建库 + 应用迁移 001–013 + 健康检查
+& $py -m app.cli init      # 建库 + 应用迁移 001–014 + 健康检查
 & $py -m app.cli seed      # 已废弃：字典/选项集/反应定义/模板四类种子随迁移 012 下线，现无种子可导
 $env:KB_ADMIN_PASSWORD = 'Admin#2026pass'
 & $py -m app.cli create-admin A001 --name 科室管理员   # 初始管理员
@@ -160,18 +163,19 @@ $env:KB_ADMIN_PASSWORD = 'Admin#2026pass'
 & $py -m app.cli auto-discharge --days 7   # 待出院满 7 天自动出院（管理员也可确认/取消）
 
 & $py -m app.main --reload # 启动服务端：http://127.0.0.1:8000/docs
-& $py -m unittest discover -s tests -t . -v      # 341 个测试
+& $py -m unittest discover -s tests -t . -v      # 355 个测试
 & $py scripts\verify_http.py                     # 阶段 0 HTTP 端到端（14 项）
 & $py scripts\verify_stage1.py                   # 阶段 1 认证与患者（25 项）
 & $py scripts\verify_stage2.py                   # 患者列表排序（原阶段 2 排期已取消）（31 项）
-& $py scripts\verify_stage3.py                   # 阶段 3 SOAP 模板记录（56 项）
-& $py scripts\verify_stage4.py                   # 阶段 4 离线与同步（35 项）
+& $py scripts\verify_stage3.py                   # 阶段 3 SOAP 模板记录（59 项）
+& $py scripts\verify_stage4.py                   # 阶段 4 离线与同步（36 项）
 & $py scripts\verify_stage5.py                   # 阶段 5 汇总打印、后台与 SOAP 文本（67 项）
-& $py scripts\count_verify_checks.py             # 复核上面 7 个脚本的验收项数（268 项）
-& $py scripts\check_docs_consistency.py          # 跨文档一致性（371 项）
+& $py scripts\verify_soap_flow.py                # SOAP 记录全链路：表单 / 门禁 / 出院 / 输出（43 项）
+& $py scripts\count_verify_checks.py             # 复核上面 7 个脚本的验收项数（275 项）
+& $py scripts\check_docs_consistency.py          # 跨文档一致性（376 项）
 ```
 
-> **验收脚本可在同一个库上重复运行**（端到端 268 项检查；项数用 `scripts/count_verify_checks.py`
+> **验收脚本可在同一个库上重复运行**（端到端 275 项检查；项数用 `scripts/count_verify_checks.py`
 > 复核，它会按"循环展开"数出运行时会执行的 `check()` 次数，并已用运行时输出逐项对齐）。
 > 清理统一走 `scripts/_e2e.py` 的 `purge_*`，按外键顺序删除，不要在脚本里手写 `DELETE` ——
 > 早先就是因为在一次性干净库上验收，掩盖了"重跑必失败"的外键顺序问题。
@@ -213,13 +217,14 @@ Playwright）。这一步不是可选项 —— 类型检查与构建**测不出
 │                 + PT/OT/ST_SW/ST_SP 各 4 份 = **16 份**（4 大类 × 4 形态）
 ├─ backend/
 │  ├─ app/        core（配置/作息/健康）· db（存储/迁移）· cli.py · main.py
-│  │  └─ db/migrations/   **001–013（13 个）**：表结构、触发器、可见归属视图、同步、模板 code、
+│  │  └─ db/migrations/   **001–014（14 个）**：表结构、触发器、可见归属视图、同步、模板 code、
 │  │                      放开半日互斥、排序视图、**删除排期**、**删除临时指派**、
 │  │                      **删除 visibility_state**、**SOAP 记录重建（011）**、
-│  │                      **删除字典六表（012）**、**患者待出院（013）**
+│  │                      **删除字典六表（012）**、**患者待出院（013）**、
+│  │                      **删除 span_seq（014，复评改按 30 个自然日）**
 │  ├─ seed/       **已废弃**（字典 4/29/89、反应 27、选项集 47/208、模板 4/29 随迁移 011/012 下线）
-│  ├─ scripts/    6 个验收脚本（http + 阶段 1–5）· count_verify_checks.py · check_docs_consistency.py · verify_admin_ui.py（CDP）
-│  └─ tests/      **341 个测试**（标准库 unittest）
+│  ├─ scripts/    7 个验收脚本（http + 阶段 1–5 + verify_soap_flow）· count_verify_checks.py · check_docs_consistency.py · verify_admin_ui.py（CDP）
+│  └─ tests/      **355 个测试**（标准库 unittest）
 ├─ app/           Flutter 客户端（3 个页签，Drift schemaVersion 6；**记录页已适配 SOAP**，见 `app/README.md`）
 ├─ admin/         管理后台 React 19 + Vite 8 + Ant Design 6（字典/选项集/反应定义/模板四个页面已删除）
 └─ deploy/        Docker Compose + Nginx（待建）

@@ -233,8 +233,14 @@ flutter run                     # 跑到已连接设备/模拟器（已有 AVD r
    - `patient_no`、`discipline`（`PT`/`OT`/`ST_SW`/`ST_SP`）**必填**；`date` 可选；
    - `kind` 可选，**出院小结必须显式传 `kind=discharge`**（门禁永远推不出"该出院了"）；
    - 返回值里有 `kind` / `kind_label` / `title` / `next_seq` / `total_daily` /
-     `sessions_until_reassessment` / `pending_document`（**非空时 `kind` 就是那份待补的评估文书**）/
+     `days_until_reassessment`（`int?`，**负数 = 逾期**，`null` = 还没有首评）/
+     `reassessment_due`（`String?`，应做日）/
+     `reassessment_interval_days`（= **30**，复评周期，天）/
+     `pending_document`（**非空时 `kind` 就是那份待补的评估文书**）/
      `soap`（四段字段定义，直接渲染）/ `prefill` / `prefill_source` / `existing`。
+     > ★ 2026-10-06：原 `sessions_until_reassessment`（"还差 N **次**"）**已删除** ——
+     > 复评改成「距**首评** 30 个自然日」（锚点是首评日，不是最近一次评估日），
+     > 单位是**天**不是次数。
 2. **渲染**：按 `soap[].fields` 渲染四段表单 —— **段名 + 冒号，段内字段是 chip**：
    `single` 点一下选中、再点取消；`multi` 可多选；选项超过 10 项自动出现**搜索框**，
    并把**最近用过的排最前**（`ref_cache` 的 `recent_options:<field_key>`）；
@@ -245,7 +251,7 @@ flutter run                     # 跑到已连接设备/模拟器（已有 AVD r
 3. **提交**：`POST /api/v1/records`，请求体
    `{patient_no, record_date, discipline, kind, body: {field_key: value}, status, note, client_uuid}`。
    **不要**再发 `items` / `session_period` / `patient_response`（三者均已删除），也**不要**自己填
-   `seq_no` / `span_seq` / `rendered_text`（服务端算并冻结）。
+   `seq_no` / `rendered_text`（服务端算并冻结）。
 4. **展示**：列表用 `rendered_excerpt` 一行摘要，详情/打印用完整的 `rendered_text`。
 5. **本地库**：`TreatmentRecords` 是 `discipline` / `kind` / `seq_no` / `body_json` /
    `rendered_text`；**`RecordItems` 表已删除**（没有"明细"了）；`ref_cache` 存表单缓存与
@@ -264,7 +270,7 @@ flutter run                     # 跑到已连接设备/模拟器（已有 AVD r
 | Drift 本地库 | 5 张表；`change_queue` 是离线队列，`sync_state` 存游标；**schemaVersion 6** |
 | 认证 | 工号+密码登录、refresh token 进安全存储、冷启动自动恢复、401 静默刷新 |
 | 患者列表 | 全科白板 + 我的/未分配筛选 + 本地搜索；**响应式**（落库即刷新） |
-| 患者详情 | 注意事项醒目、诊断/状态/归属、**竖排四大类按钮**（带"已记录 N 次 / 距复评还差 M 次"）、**出院按钮**、历史记录列表、汇总与打印入口 |
+| 患者详情 | 注意事项醒目、诊断/状态/归属、**竖排四大类按钮**（带"已记录 N 次 / 距复评 N 天"，到点后显示"该复评了"）、**出院按钮**、历史记录列表、汇总与打印入口 |
 | 记录 | **SOAP 一屏 chip 表单**（点一下就是选中）、离线草稿、必填校验只在提交时做、422/409 分别提示、退出前拦截未保存 |
 | 时间轴 | 全科记录流、分页自动加载、全科/我写的、日期 + 大类 + 形态筛选、条目显示 SOAP 文本 |
 | 汇总/打印 | 当日汇总（按治疗师↔按患者）、患者每日汇总、三份 PDF 下载并以**三种去向**输出（发送给微信 / 系统打印 / 打开） |

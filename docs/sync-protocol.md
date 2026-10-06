@@ -180,8 +180,10 @@ MAX_PULL_LIMIT    = 500                               # 单次最多 500 条
 - `discipline` ∈ `PT` / `OT` / `ST_SW` / `ST_SP`（运动 / 生活技能 / 吞咽 / 言语，**四大类分开记录**）；
   `kind` ∈ `initial` / `daily` / `reassessment` / `discharge`；不传 `kind` 时按 `daily` 处理。
 - `therapist_id` 省略时默认取当前登录人；**传别人 → 403 `RECORD_OTHER_THERAPIST`**。
-- **序号与渲染文本都由服务端算**：客户端**不要**自己填 `seq_no` / `span_seq` / `rendered_text`，
+- **序号与渲染文本都由服务端算**：客户端**不要**自己填 `seq_no` / `rendered_text`，
   也不要自己渲染后覆盖 —— 拉回来的 `rendered_text` 是服务端**冻结**的权威文本。
+  （原 `span_seq`（评估文书挂靠的日常序号）**已随迁移 014 删除**，客户端从来没有本地列，
+  复评现在按**日期**判定：`首评日 + 30 × k`，见 §4.3.1。）
 - 更新时 `update_record` **只改传入的字段**；`status` 可以随 push 带上（草稿 → 已提交），
   但锁定仍走 `POST /records/{id}/lock`（见 §4.5）。
 - 旧模型那批字段**已随迁移 011 删除**，离线端不要再发这些键：
@@ -200,10 +202,19 @@ MAX_PULL_LIMIT    = 500                               # 单次最多 500 条
 | 推送内容 | 服务端结果 |
 |---|---|
 | 某大类第 1 次日常，但服务端还没有该大类的**首评** | **409** `code="MISSING_ASSESSMENT"`，`details.missing_document="initial"` |
-| 第 21 / 41 / 61… 次日常，但服务端缺对应区间的**复评** | **409** `code="MISSING_ASSESSMENT"`，`details.missing_document="reassessment"` |
+| 距该大类**首评**已满 30 个自然日的**第一个未复评周期**，但服务端缺那次**复评** | **409** `code="MISSING_ASSESSMENT"`，`details.missing_document="reassessment"` |
 | 同一天同一大类第 3 条 | **409**（`details.limit=2`） |
 | 患者处于 `pending_discharge`（已提交出院小结） | **409** `code="PATIENT_PENDING_DISCHARGE"` |
 | 模板里的必填字段没填 | **422**，`details.missing` 给中文标签 |
+
+> **复评怎么算**（2026-10-06 起，原「每 20 次日常」已废）：锚点是该大类的**首评日**，
+> 应做日 = `首评日 + 30 × k`（`REASSESS_INTERVAL_DAYS = 30`）；判定拿**本次记录日期**
+> 去比应做日 —— 应做日那天没治疗就顺延，下一次来治疗时照样拦（用户：「如果当日没有治疗，
+> 顺延到下一次治疗时评估，也就是 1 个月评一次」）。某一格只要**任意一份**复评落在
+> `[该格, 该格 + 30 天)` 内就算做过；复评**不占**治疗次数。
+> 离线端**不需要**自己算这个：服务端把 `reassessment_document_for()` 的结论放进
+> `GET /records/form` 的 `pending_document`，并给出 `days_until_reassessment`
+> （负数 = 逾期）与 `reassessment_due` 供界面显示。
 
 > ⚠ **门禁失败会让整个请求返回 409，而不是一条 `conflict`。**
 > `conflict` 是"乐观锁版本不一致"的正常结果（逐条回报、不影响同批其它条）；
@@ -304,7 +315,7 @@ MAX_PULL_LIMIT    = 500                               # 单次最多 500 条
 ### 5.4 payload 是完整快照（不是增量）
 
 - `treatment_record` 的 payload 带 `discipline` / `kind` / `body` / `rendered_text` / `seq_no` /
-  `span_seq` / `status` / `revision`：
+  `status` / `revision`：
   - `body`（`{field_key: value}`）是**结构化答案**，用于回显、预填、复查；
   - `rendered_text` 是**服务端生成那一刻冻结的 SOAP 纯文本**，用于打印与归档。
     **客户端不得自己重算后覆盖它** —— 病历是法律文书，措辞不该因客户端模板版本不同而变。
@@ -376,15 +387,17 @@ treatment_record(id PK, patient_no, therapist_id, record_date, discipline, kind,
                  -- ✅ 2026-10-05：**已落地**（Drift schemaVersion 4 → 5：重建
                  --   `treatment_records`、删掉 `record_items` 表），payload 换成 `body`；
                  --   **130 个本地测试全部通过**。
-                 -- ★ 与本地表有**三处刻意的差异**，不是笔误：
-                 --   · 本地**没有** `span_seq` —— 它只服务服务端的评估文书挂靠，
-                 --     客户端从 `/records/form` 拿 `pending_document` 就够，无需本地判断；
+                 -- ★ 与本地表有**两处刻意的差异**，不是笔误：
                  --   · 本地**多留** `is_temporary` / `original_therapist_id` 两列 ——
                  --     旧列的列位，服务端已于迁移 011 删除（`is_temporary` 改为查询时推导）。
                  --     本地现不再写入有意义的值（恒 false / NULL），保留是为了不动已发出去的
                  --     表结构；`app/lib/data/local/tables.dart` 的注释里写明了这一点。
                  --   · 纯服务端的 `created_at` / `submitted_at` / `updated_at` / `locked_at`
                  --     不在本地镜像。
+                 -- ★ 2026-10-06：服务端的 `span_seq`（评估文书挂靠的日常序号）**已随迁移 014
+                 --   删除**，本地本来就没有这一列 —— 现在两边都没有，不再是"差异"。
+                 --   复评改按**日期**判定（`首评日 + 30 × k`），客户端从 `/records/form` 拿
+                 --   `pending_document` / `days_until_reassessment` 就够，无需本地推理。
 
 change_queue(client_uuid PK, entity, op, base_revision, payload_json,
              sync_status, retry_count, last_error, created_at)
@@ -404,6 +417,8 @@ sync_state(key PK, value)     -- last_cursor / last_patient_sync_at / last_full_
    （删除 `patients.visibility_state` 列 —— 临时指派删除后该列已退化）。
    **本轮（SOAP 改造）已升到 5**：`treatment_records` 换成上面的新列、
    删掉 `record_items` 表 —— 这一步**已落地**（**130 个本地测试全部通过**）。
+   2026-10-05 稍后再升到 **6**：`patients` 加 `assigned_therapist_name`
+   （归属治疗师姓名，服务端解析后下发；详情页不再显示「治疗师 #2」这种原始 id）。
 6. `scope=temp` **已删除**（2026-10-05）：服务端患者列表的 `Scope` 只剩
    `mine` / `unassigned` / `all` / `visible` / `dept`，记录与时间轴只剩 `mine` / `visible`；
    App 的时间轴枚举也只有 `visible` / `mine` 两个。
@@ -453,6 +468,29 @@ access token 只放内存。自签 CA 用 Dart 层 `SecurityContext` 注入，**
 
 ## 10. 与历史变更的关系（给后来者）
 
+### 2026-10-06：复评从「每 20 次日常」改成「距首评 30 个自然日」（`span_seq` 删除）
+
+**与同步协议本身无关**（推送实体、游标、冲突策略、批量上限一行未动），但**动了 payload 的列**：
+
+1. **`treatment_record.span_seq` 已删除**（迁移 `014_drop_span_seq.sql`，重建表 **19 列 → 18 列**）——
+   它原来负责"把评估文书挂到第几次日常上"。复评改按**自然日**判定后，
+   "某一格复评做没做"是 `首评日 + 30 × k` 与 `record_date` 的纯计算，
+   **不需要任何额外的落库状态**。`GET /sync/pull` 的 `treatment_record` payload
+   因此**不再有 `span_seq`**（§5.4）；客户端本地表本来就没有这一列，**无需改本地 schema**。
+2. **门禁改按日期**（§4.3.1）：距该大类**首评**满 30 个自然日的**第一个未复评周期**
+   缺复评 → 409 `MISSING_ASSESSMENT`。应做日那天没治疗就顺延到下一次来治疗时拦，
+   离线端**不需要**定时任务、也不需要"补记"。
+3. **`GET /records/form` 的响应换了一个字段**：删掉 `sessions_until_reassessment`
+   （"还差 N **次**"），新增 `days_until_reassessment`（`int | None`，**负数 = 逾期**）、
+   `reassessment_due`、`reassessment_interval_days`（= 30）。
+4. **唯一索引**：`ux_record_assessment_span` 换成 `ux_record_one_initial`
+   （`(patient_no, discipline) WHERE kind = 'initial'` —— 每个大类只能有一份首评）。
+   复评之间本来就可能有多份（30 天、60 天、90 天…各一份），
+   所以**不能**对 `kind='reassessment'` 做同样的唯一约束。
+
+**未变**：幂等（`client_uuid`）、游标（`change_log.id`）、冲突分层、批量上限、
+`base_revision` 语义、`is_temporary` 记录级标记、以及**复评不占治疗次数**这一条。
+
 ### 2026-10-05：排期下线
 
 科室确认**排班不是本系统的职责**（只记录"每天做了哪些治疗、每次治疗干了什么"）。
@@ -491,7 +529,8 @@ access token 只放内存。自签 CA 用 Dart 层 `SecurityContext` 注入，**
    `session_period`（半日，已删除）、`duration_min`（时长，已删除）、
    `patient_response`（患者反应，已删除）—— 这四个旧字段**全部删除**（迁移 011）——
    改为 `discipline` / `kind` / `body`（`{field_key: value}`）；
-   `rendered_text`、`seq_no`、`span_seq` 由服务端算（§4.3）。
+   `rendered_text`、`seq_no`、`span_seq` 由服务端算（§4.3；
+   `span_seq` 后来又随迁移 014 删除，见下一条）。
 2. **★ 硬阻断在离线推送时同样生效**（§4.3.1）：`_push_treatment_record` 直接调用
    `treatment_model.create_record()`，缺首评 / 缺复评 / 同日至多 2 条 / 待出院
    **都会被 409 拦下**，而且这个 409 会让**整个请求**失败。离线不是绕过门禁的后门。
@@ -529,5 +568,5 @@ access token 只放内存。自签 CA 用 Dart 层 `SecurityContext` 注入，**
 | 3 | `docs/api.md` / `docs/data-model.md` | 仍未创建；接口契约可直接用 `/openapi.json` 导出 |
 | 4 | 冲突解决 UI 形态 | **已落地**（App 冲突列表 +「保留我的 / 采用服务端」两向裁决，见 `CHANGELOG.md`）；文案与交互仍以现场反馈为准 |
 | 5 | 患者离线认领 | 当前推送 `patient` 会 422；床旁现场认领是否要离线支持待定 |
-| 6 | **安卓端（`app/`）已适配 SOAP 契约 —— 已完成** | 本地 Drift 表升到 **schemaVersion 5**（`treatment_records` 换成 §7.2 的新列、`record_items` 表**删掉**）、同步 payload 换成 `body`、记录页改为一屏 chip；**130 个本地测试全部通过**（`flutter analyze` 无问题、`flutter build apk --debug` 成功） |
+| 6 | **安卓端（`app/`）已适配 SOAP 契约 —— 已完成** | 本地 Drift 表升到 **schemaVersion 6**（5：`treatment_records` 换成 §7.2 的新列、`record_items` 表**删掉**；6：`patients` 加 `assigned_therapist_name`）、同步 payload 换成 `body`、记录页改为一屏 chip；**130 个本地测试全部通过**（`flutter analyze` 无问题、`flutter build apk --debug` 成功） |
 | 7 | `conflict_policy` 里的 `"dictionary"` 残留键 | 见 §10 的 2026-10-05（第三步）说明；需改 `app/schemas/sync.py` |

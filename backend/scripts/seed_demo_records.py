@@ -1,16 +1,20 @@
-"""给每位在院患者生成 10 天的治疗记录（含首评），供用户手工测试。
+"""给每位在院患者生成 31 天的治疗记录（含首评），供用户手工测试。
 
     cd backend
-    python scripts/seed_demo_records.py            # 从今天往前 10 天
+    python scripts/seed_demo_records.py            # 从今天往前 31 天
     python scripts/seed_demo_records.py --days 5   # 少几天
+    python scripts/seed_demo_records.py --days 11 --initial-days-ago 31
+                                                   # 短窗口也想看到复评：首评往前挪 31 天
     python scripts/seed_demo_records.py --wipe     # 先清掉这些患者的记录
 
 ## 生成规则（与真实业务一致，不是随便插数据）
 
 - 每名患者选 2 个**大类**（不同治疗师常各管一类）；每天每类 2 条 → 一天 4 条
-- **第 1 天先写首评**（硬门禁要求），再写当天的日常记录
-- 日常记录**计入次数**；首评不计次（用户 2026-10-05 纠正过的语义）
-- 满 20 次日常后自动补一份**复评**，之后继续日常
+- **首评放在日期范围之前**（默认前一天，`--initial-days-ago` 可调；硬门禁要求），
+  首评不占次数，当天仍记日常
+- 日常记录**计入次数**；首评/复评不计次（用户 2026-10-05 纠正过的语义）
+- 距上次评估满 **30 个自然日**后自动补一份**复评**，之后继续日常
+  （2026-10-06 起复评按日期算，不再是"每 20 次日常"）
 - 内容用**真实模板字段**（`templates/*.json`），所以打印出来的 SOAP 文本是真的
 """
 
@@ -206,9 +210,15 @@ def make_body(rng: random.Random, discipline: str, kind: str) -> dict:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument(
-        "--days", type=int, default=11,
-        help="天数（默认 11：只有 ≥11 天才能让某一类攒到 20 次日常、"
-             "从而在这批数据里看到一份**复评** —— 复评门槛是「满 20 次后的下一次」）",
+        "--days", type=int, default=31,
+        help="天数（默认 31：复评周期是 **30 个自然日**，只有日期范围覆盖到 30 天以上，"
+             "这批数据里才会出现一份**复评** —— 门槛是「距上次评估满 30 天后的下一次治疗」）",
+    )
+    ap.add_argument(
+        "--initial-days-ago", type=int, default=1,
+        help="首评放在日期范围开始前多少天（默认 1 = 只提前一天）。"
+             "复评周期是 **30 个自然日**，想用较短的天数窗口就看到复评时把它调大"
+             "（例如 `--days 11 --initial-days-ago 31`）。",
     )
     ap.add_argument("--wipe", action="store_true", help="先清掉这些患者的记录")
     ap.add_argument(
@@ -287,14 +297,19 @@ def main() -> int:
 
                 # 还没有任何记录 → 先写首评（门禁要求；首评不占次数）
                 #
-                # ★ 首评放在区间**前一天**，不是第一天：同一天同一大类至多 2 条，
-                # 把首评挤在第一天会占掉一个额度，10 天只剩 19 次日常 ——
-                # **差 1 次触发不了复评**（复评门槛是满 20 次）。
-                # 挪到前一天也更贴近现实：入院当天评估，次日起每天治疗。
+                # ★ 首评放在日期范围**前一天**，不是第一天：同一天同一大类至多 2 条，
+                # 把首评挤在第一天会占掉一个额度（每天就少一条日常）。
+                # 挪到前一天也更贴近现实：入院当天评估、次日起每天治疗。
+                #
+                # ★★ 2026-10-06：复评改成「距首评 30 个自然日」之后，
+                #   首评只提前一天就意味着**应做日在 30 天之后** ——
+                #   想在这十来天的窗口里看到一次复评，首评必须放到更早。
+                #   用 `--initial-days-ago` 控制（默认 1 = 只提前一天）。
                 if cnt == 0:
                     treatment_model.create_record(
                         conn, patient_no=pno, therapist_id=tid,
-                        record_date=str(start - timedelta(days=1)), discipline=d,
+                        record_date=str(start - timedelta(days=args.initial_days_ago)),
+                        discipline=d,
                         kind="initial", body=make_body(rng, d, "initial"),
                         status="submitted",
                     )
@@ -303,26 +318,23 @@ def main() -> int:
                 for day_off in range(args.days):
                     day = str(start + timedelta(days=day_off))
 
-                    # 今天要不要先补复评？（满 20 次日常后的一次）
+                    # 今天要不要先补复评？——**直接问服务端用的那个门禁**
+                    # （`treatment_model.pending_document`，它内部就是
+                    #  「首评日 + 30 天 × k 的第一个未复评格子」那套判定）。
+                    # 不要在脚本里把规则重算一遍：复评锚点从"上次评估日"改成"首评日"
+                    # 时就吃过一次亏，重算的那份会悄悄漂。
                     #
                     # ⚠ 必须**在当天日常之前**创建：同一天同一大类至多 2 条，
                     # 先把日常写了，复评就没额度了 —— 这是脚本第一版踩到的坑
                     #（10 天跑完一条复评都没有）。
-                    next_seq_today = cnt + 1
-                    if next_seq_today > 1 and (next_seq_today - 1) % rt.REASSESS_EVERY == 0:
-                        spans = [r[0] for r in conn.execute(
-                            "SELECT span_seq FROM treatment_record"
-                            " WHERE patient_no = ? AND discipline = ?"
-                            "   AND kind = 'reassessment' AND span_seq IS NOT NULL",
-                            (pno, d))]
-                        if rt.assessment_span_seq(next_seq_today) not in spans:
-                            treatment_model.create_record(
-                                conn, patient_no=pno, therapist_id=tid,
-                                record_date=day, discipline=d, kind="reassessment",
-                                body=make_body(rng, d, "reassessment"),
-                                status="submitted",
-                            )
-                            made += 1
+                    if treatment_model.pending_document(conn, pno, d, day) == "reassessment":
+                        treatment_model.create_record(
+                            conn, patient_no=pno, therapist_id=tid,
+                            record_date=day, discipline=d, kind="reassessment",
+                            body=make_body(rng, d, "reassessment"),
+                            status="submitted",
+                        )
+                        made += 1
 
                     # 每类每天 2 条；今天可选**只给 1 条**，把当日额度留一条给人手动测试。
                     #

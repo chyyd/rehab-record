@@ -39,7 +39,7 @@ EXPECTED_VIEWS = {
 # 迁移 011 之后 `treatment_record` 的列（新契约的"落地形态"）
 EXPECTED_RECORD_COLUMNS = {
     "id", "patient_no", "therapist_id", "record_date", "discipline", "kind", "seq_no",
-    "span_seq", "body_json", "rendered_text", "note", "status", "edit_count", "locked_at",
+    "body_json", "rendered_text", "note", "status", "edit_count", "locked_at",
     "created_at", "submitted_at", "updated_at", "revision", "client_uuid",
 }
 
@@ -167,16 +167,16 @@ class TestTreatmentRecordModel(DbTestCase):
         """CHECK ((kind = 'daily') = (seq_no IS NOT NULL))：日常必须有次数。"""
         with self.assertRaises(sqlite3.IntegrityError):
             self.insert(seq_no=None)
+        # 评估文书反过来不能有次数
         with self.assertRaises(sqlite3.IntegrityError):
-            self.insert(kind="initial", seq_no=1, span_seq=1)
+            self.insert(kind="initial", seq_no=1)
 
     def test_assessment_kinds_have_no_seq_no(self) -> None:
-        record_id = self.insert(kind="initial", seq_no=None, span_seq=1)
+        record_id = self.insert(kind="initial", seq_no=None)
         row = self.conn.execute(
-            "SELECT seq_no, span_seq FROM treatment_record WHERE id = ?", (record_id,)
+            "SELECT seq_no FROM treatment_record WHERE id = ?", (record_id,)
         ).fetchone()
         self.assertIsNone(row["seq_no"])
-        self.assertEqual(row["span_seq"], 1)
 
     def test_discipline_and_kind_enums_are_enforced(self) -> None:
         with self.assertRaises(sqlite3.IntegrityError):
@@ -195,10 +195,29 @@ class TestTreatmentRecordModel(DbTestCase):
         # 换一个大类就可以（不同大类分开计数）
         self.insert(seq_no=1, discipline="OT")
 
-    def test_assessment_span_is_unique(self) -> None:
-        self.insert(kind="initial", seq_no=None, span_seq=1)
+    def test_only_one_initial_per_patient_and_discipline(self) -> None:
+        """`ux_record_one_initial`：每个大类只能有一份首评。
+
+        这条索引顶替了被删掉的 `ux_record_assessment_span` 里"不能补填第二份首评"
+        那半职责 —— 复评之间**本来就可能有多份**（30 天、60 天、90 天各一份），
+        所以不能对 `kind='reassessment'` 做同样的唯一约束；
+        复评的唯一性由**日期门禁**保证（未到应做日就折不成复评形态）。
+        """
+        self.insert(kind="initial", seq_no=None, record_date="2026-10-05")
         with self.assertRaises(sqlite3.IntegrityError):
-            self.insert(kind="initial", seq_no=None, span_seq=1)
+            self.insert(kind="initial", seq_no=None, record_date="2026-11-05")
+        # 换大类就可以（首评是按大类各一份）
+        self.insert(kind="initial", seq_no=None, discipline="OT")
+
+    def test_reassessment_can_repeat_over_months(self) -> None:
+        """复评按月产生 → 同一大类可以有多份，不能被唯一索引挡住。"""
+        self.insert(kind="initial", seq_no=None, record_date="2026-10-05")
+        self.insert(kind="reassessment", seq_no=None, record_date="2026-11-05")
+        self.insert(kind="reassessment", seq_no=None, record_date="2026-12-05")
+        count = self.conn.execute(
+            "SELECT COUNT(*) FROM treatment_record WHERE kind = 'reassessment'"
+        ).fetchone()[0]
+        self.assertEqual(count, 2)
 
 
 class TestPatientPendingDischarge(DbTestCase):

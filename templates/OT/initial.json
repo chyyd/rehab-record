@@ -75,7 +75,7 @@
         { "key": "education", "type": "multi", "label": "宣教",
           "options": ["减少家属包办代替", "鼓励患者主动尝试自理动作"] },
         { "key": "next_review", "type": "single", "label": "复评计划",
-          "options": ["2周后复评ADL功能", "每20次治疗后复评"] },
+          "options": ["2周后复评ADL功能", "每30天复评"] },
         { "key": "extra_note", "type": "text", "label": "备注",
           "hint": "选填。留空则记录里不显示这一项。" }
       ]

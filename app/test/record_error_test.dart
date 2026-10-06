@@ -106,7 +106,7 @@ void main() {
         code: 'ASSESSMENT_ALREADY_EXISTS',
         message: '该区间（第 1 次日常）已有首评',
         httpStatus: 409,
-        details: {'kind': 'initial', 'span_seq': 1, 'record_id': 9},
+        details: {'kind': 'initial', 'record_id': 9},
       ));
       expect(failure.reloadForm, isTrue);
       expect(failure.message, contains('无需重复'));

@@ -37,7 +37,19 @@ class RecordFormOut(BaseModel):
     title: str
     next_seq: int = Field(description="这次是第几次日常（评估文书不占次数）")
     total_daily: int
-    sessions_until_reassessment: int
+    # ★ 2026-10-06：复评周期改成 30 个自然日，所以对外报的是**天**而不是次数。
+    #   原来的 `sessions_until_reassessment`（"还差 N 次"）已删除 ——
+    #   次数不再是复评的判据，继续返回它只会让界面显示一个误导人的数字。
+    days_until_reassessment: int | None = Field(
+        default=None,
+        description="距复评应做日还有几天；负数=已逾期；null=该大类还没有评估，无从计算",
+    )
+    reassessment_due: str | None = Field(
+        default=None, description="复评应做日（上次评估日 + 30 天）；null=还没评估过"
+    )
+    reassessment_interval_days: int = Field(
+        default=30, description="复评周期（自然日），随模板/规则版本变化"
+    )
     pending_document: str | None = Field(default=None, description="还缺哪份评估文书（先弹它）")
     pending_document_label: str | None = None
     template_version: int = 1
@@ -69,7 +81,6 @@ class RecordOut(BaseModel):
     kind: str
     kind_label: str | None = None
     seq_no: int | None = Field(default=None, description="第几次日常；只有 daily 有")
-    span_seq: int | None = Field(default=None, description="评估文书挂靠的日常序号")
     body: dict[str, Any] = Field(default_factory=dict, description="{field_key: value}")
     rendered_text: str = Field(default="", description="生成时冻结的 SOAP 纯文本")
     note: str | None = None
@@ -100,7 +111,6 @@ class RecordListItemOut(BaseModel):
     kind: str
     kind_label: str | None = None
     seq_no: int | None = None
-    span_seq: int | None = None
     status: str
     edit_count: int = 0
     rendered_text: str = ""

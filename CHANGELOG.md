@@ -414,6 +414,61 @@
   - **验收**：实测 `start → stop → start` 与连续 `start` 多轮，确认端口能干净释放、进程不堆积；并用 headless Edge 走通"打开登录页 → 用脚本生成的密码登录 → 进入总览页"，无异常、无 console 错误。
 
 ### 决策
+- **【业务决策】2026-10-06：复评周期从「每 20 次日常治疗」改成「距首评 30 个自然日」**
+  - **用户的原始理由（逐字）**：「复评的间隔逻辑需要改一下，设定为**距离首评或上一次复评
+    30 个自然日**。**如果当日没有治疗，顺延到下一次治疗时评估**，也就是 **1 个月评一次**。」
+    并且明确选了**周期从"计划应做日"起算 30 天**这一方案（不是从实际完成日起算）。
+  - **最终落地的语义（与实现一致，不要照抄上面那句字面）**：
+    - **锚点是「首评日」**，不是"最近一次评估日" —— 后者会随补做时间**越拖越漂**
+      （拖到第 35 天才补做，下一次就变成第 65 天），与"1 个月评一次"直接矛盾；
+    - 应做日 = `首评日 + 30 × k`（k = 1, 2, 3…），**固定网格、不漂移**；
+    - 判定 = 找**第一个还没复评的格子**；该格已到点就要求复评；
+    - **「顺延」天然成立**：判定拿**本次记录日期**比应做日 —— 应做日那天没治疗也没关系，
+      下次来治疗照样拦，**不需要**定时任务、也不需要"补记"；
+    - 某一格只要**任意一份**复评落在 `[该格, 该格 + 30 天)` 区间内，就算这格做过；
+    - **复评不占治疗次数**（这条没变）。
+  - **代码改动（本轮只改文档，代码此前已落地）**：`services/record_template.py` 把
+    `REASSESS_EVERY = 20` 换成 **`REASSESS_INTERVAL_DAYS = 30`**，判定整体换成按日期的一组 ——
+    `next_reassessment_due(anchor_date, *, done_dates=…, on_date=…)`（anchor 传**首评日**）、
+    `days_until_reassessment()`、`reassessment_document_for()`、`kind_for_date()`；
+    **删除** `kind_for_seq` / `pending_documents` / `required_document_for_next` /
+    `assessment_span_seq` / `next_session_gate` / `sessions_until_reassessment`。
+    `models/treatment.py` 新增 `initial_date()`（复评锚点）与 `reassessment_dates()`；
+    `pending_document()` 的第 4 个参数从 `next_seq` 换成日期、`record_for_span()` 去掉 span 参数、
+    `reassessment_spans()` 删除；`last_assessment_date()` 仍在，但**只用于展示/预填**，
+    明确**不是**复评锚。
+  - **【破坏性】迁移 `014_drop_span_seq.sql`**：SQLite 不能 DROP COLUMN（有唯一索引引用），
+    只能重建表 —— **先 `RENAME` 把旧表留成 `treatment_record_old`、建新表、
+    `INSERT ... SELECT` 搬数据、再 `DROP` 旧表**（011 是**有意清空**旧数据，
+    014 只去掉一列，**没有任何理由丢数据**）。`treatment_record` **19 列 → 18 列**（删 `span_seq`）；
+    唯一索引 `ux_record_assessment_span`（`(patient_no, discipline, kind, span_seq)`）换成
+    **`ux_record_one_initial`**（`(patient_no, discipline) WHERE kind='initial'` ——
+    每个大类只能有一份首评；复评之间本来就可能有多份，所以不对它设唯一约束）。
+    迁移总数 **001–013 → 001–014（14 个）**。
+  - **接口变更（破坏兼容）**：`GET /api/v1/records/form` **删除** `sessions_until_reassessment`
+    （"还差 N **次**"），**新增** `days_until_reassessment`（`int | None`，**负数 = 逾期**，
+    `null` = 该大类还没有首评）、`reassessment_due`（`str | None`，应做日）、
+    `reassessment_interval_days`（= 30）。记录响应**删除** `span_seq`。
+  - **安卓端**：本地表**本来就没有** `span_seq`，**不受迁移影响**（schemaVersion 仍是 **6**）；
+    `DisciplineSummary` / `RecordFormData` 改用 `daysUntilReassessment` / `reassessmentDue` /
+    `reassessmentIntervalDays`；UI 文案由「距复评还差 N **次**」改成「**距复评 N 天**」，
+    到点（`days <= 0`）显示「**该复评了**」。
+  - **文档同步**：`README.md`、`docs/setup.md`、`docs/sync-protocol.md`（§4.3 / §4.3.1 / §5.4 /
+    §7.2 / §10 新增 2026-10-06 留痕 / §11）、`设计.md`（**版本号不变**，仍是 V1.4：
+    3.6.2 / 3.6.3 / 3.7 / 4.1 / 4.1.3 / 8 节）、`开发计划.md`（**版本号不变**，仍是 V0.8：
+    M10 / 2.2 表清单 / 4.5 / 4.6 / T3.5 / T3.6 / 阶段 3 DoD / 第 6 章 / 第 9 章）、
+    `app/README.md`、`templates/README.md`、`templates/schema.json`
+    （`trigger.every_n` 标注**已失效**：周期由代码里的 `REASSESS_INTERVAL_DAYS` 决定，没人读它）。
+  - **代价（实测）**：后端测试 **355 个全部通过、0 skip**（本文件早先条目里的 334 / 341
+    是各轮当时快照）；端到端验收 **268 → 275 项**（`verify_stage3.py` 56 → 59、
+    `verify_soap_flow.py` 39 → 43）；跨文档一致性 **371 → 376 项**；
+    迁移 **13 → 14 个**；`treatment_record` **19 → 18 列**；安卓端 **130 个本地测试通过**
+    （本轮**未改安卓代码**，只是文案与字段名对齐）。
+  - **留痕口径（重要）**：本文件与 `开发计划.md` 里**历史条目中的「每 20 次」与当时的数字
+    一律不动**（它们是当时的真实记录）—— 例如本文件的 2026-10-05 SOAP 决策条目、
+    `开发计划.md` 的 V0.8 修订行都原样保留。`templates/*/reassessment.json` 里的
+    `"trigger": {"every_n": 20}` 是**无害残留**（无任何代码读取，正文本轮不改）。
+
 - **【业务决策】2026-10-05：治疗记录改为 SOAP 模板驱动（参数表格整体下线）**
   - **用户的原始理由（逐字）**：「当前app端功能过剩…太过于繁琐，需要点多次，不容易使用」、
     「改成类似模板这样，输出时也用类似格式，**避免现有的表格方式**」、

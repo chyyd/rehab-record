@@ -292,11 +292,12 @@ class _HeaderCard extends StatelessWidget {
                 // ★ 评估文书**不显示序号**（评定不占日常次数）。
                 if (form.showsSeqNo)
                   _Tag(text: '第 ${form.nextSeq} 次'),
-                if (form.showsSeqNo)
+                // 复评提示按**天**说（2026-10-06 起周期是 30 个自然日）。
+                if (form.showsSeqNo && form.daysUntilReassessment != null)
                   _Tag(
-                    text: form.sessionsUntilReassessment > 0
-                        ? '距复评还差 ${form.sessionsUntilReassessment} 次'
-                        : '已到复评点',
+                    text: form.daysUntilReassessment! <= 0
+                        ? '该复评了'
+                        : '距复评 ${form.daysUntilReassessment} 天',
                   ),
                 _Tag(text: form.disciplineName),
                 if (form.templateVersion > 1)

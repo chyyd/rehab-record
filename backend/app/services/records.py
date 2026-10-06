@@ -4,10 +4,13 @@
 
 ## 它回答 App 的四个问题
 
-1. **这次该填哪种文书？** —— 按"该大类已有多少次日常"问
-   `record_template.next_session_gate()`：缺首评/复评时 `kind` 直接取那份评估文书
-   （用户：「先弹评估文书」），并把它放进 `pending_document` 让界面能提示。
-2. **序号是几？** —— `next_seq`（第几次日常）、`total_daily`、`sessions_until_reassessment`。
+1. **这次该填哪种文书？** —— 按**日期**问 `record_template.reassessment_document_for()`：
+   该大类还没有评估 → 首评；距上次评估已满 **30 个自然日** → 复评；否则日常。
+   缺文书时 `kind` 直接取那份文书（用户：「先弹评估文书」），
+   并放进 `pending_document` 让界面能提示。
+2. **序号是几？** —— `next_seq`（第几次日常）、`total_daily`，
+   以及 `days_until_reassessment` / `reassessment_due`（距复评应做日还有几天、
+   应做日是哪天）。⚠ 复评周期是**自然日**，所以报的是天、不是次数。
 3. **要预填什么？** —— 评估文书取**上一次评估**的 body（`last_assessment`），
    日常记录取**上次日常**的 body（`last_daily`），同一天同形态已有 1 条时取那一条
    （`same_day_first`）。`prefill_source` 逐个字段说明"这个值是哪来的"。
@@ -125,7 +128,8 @@ def build_form(
 
     total_daily = treatment_model.daily_count(conn, patient_no, discipline)
     next_seq = total_daily + 1
-    pending = treatment_model.pending_document(conn, patient_no, discipline, next_seq)
+    # ★ 2026-10-06：门禁按**日期**判（原来传 next_seq，按次数算）
+    pending = treatment_model.pending_document(conn, patient_no, discipline, on_date)
 
     # ★ 缺评估文书时，"这次该填的形态"就是那份文书（用户：先弹评估文书）
     if kind is None:
@@ -173,11 +177,24 @@ def build_form(
         for key in filled
     }
 
-    span_seq = None
-    if kind in ("initial", "reassessment"):
-        span_seq = record_template.assessment_span_seq(next_seq)
     existing = _existing_record(
-        conn, patient_no=patient_no, discipline=discipline, kind=kind, on_date=on_date, span_seq=span_seq
+        conn, patient_no=patient_no, discipline=discipline, kind=kind, on_date=on_date
+    )
+
+    # 距复评应做日还有几天（负数 = 已逾期）。界面显示「距复评还差 N 天」。
+    #
+    # 替代了原来的 `sessions_until_reassessment`（"还差 N **次**"）——
+    # 复评周期改成自然日之后，次数不再是判据，显示次数只会误导治疗师。
+    #
+    # ★ 锚点是**首评日**（不是"最近一次评估日"）：用户要的是"从计划应做日起算"，
+    #   拿会滑动的最近评估日当锚会让 30 天节奏越拖越漂。
+    _initial = treatment_model.initial_date(conn, patient_no, discipline)
+    _done = treatment_model.reassessment_dates(conn, patient_no, discipline)
+    due = record_template.next_reassessment_due(
+        _initial, done_dates=_done, on_date=on_date
+    )
+    days_until = record_template.days_until_reassessment(
+        _initial, on_date, done_dates=_done
     )
 
     return {
@@ -193,7 +210,11 @@ def build_form(
         "title": template.title,
         "next_seq": next_seq,
         "total_daily": total_daily,
-        "sessions_until_reassessment": record_template.sessions_until_reassessment(next_seq),
+        # 距复评：按**天**（None = 该大类还没有评估，无从计算）
+        "days_until_reassessment": days_until,
+        # 复评应做日（None = 还没评估过）。界面可显示「应做日 2026-12-01」。
+        "reassessment_due": None if due is None else str(due),
+        "reassessment_interval_days": record_template.REASSESS_INTERVAL_DAYS,
         "pending_document": pending,
         "pending_document_label": treatment_model.pending_document_label(pending),
         "template_version": template.version,
@@ -227,31 +248,23 @@ def _existing_record(
     discipline: str,
     kind: str,
     on_date: str,
-    span_seq: int | None,
 ) -> dict[str, Any] | None:
     """已存在的那条（App 用来继续编辑，而不是重复新建）。
 
-    - 评估文书：按 `span_seq` 找（首评挂 1、复评挂 21/41…，同一区间不可能有第二份）；
     - 日常记录：只在**当天那条还是草稿**时返回 —— 同一天允许两条日常记录
       （用户：「同一天同一大类至多 2 条」），所以已提交的那条不该拦着第 2 条新建，
       它只作为 `same_day_first` 的预填来源；
-    - 出院小结：不挂区间、也不按日期，直接取最近一份（草稿要能接着写）。
+    - 首评 / 复评 / 出院小结：取**最近一份**（草稿要能接着写）。
+
+      ★ 2026-10-06：原来首评/复评是按 `span_seq` 定位"这一个区间的评估"，
+      随迁移 014 删掉了那一列。现在按日期取最近 —— 复评是按月产生的，
+      "最近那份"就是治疗师正在写/要继续写的那份。
     """
     if kind == "daily":
         return treatment_model.find_daily_record(
             conn, patient_no, discipline, on_date, status=treatment_model.STATUS_DRAFT
         )
-    if kind == "discharge":
-        row = conn.execute(
-            "SELECT id FROM treatment_record"
-            " WHERE patient_no = ? AND discipline = ? AND kind = 'discharge'"
-            " ORDER BY id DESC LIMIT 1",
-            (patient_no, discipline),
-        ).fetchone()
-        return None if row is None else treatment_model.get_record_or_raise(conn, int(row["id"]))
-    if span_seq is None:
-        return None
-    return treatment_model.record_for_span(conn, patient_no, discipline, kind, span_seq)
+    return treatment_model.record_for_span(conn, patient_no, discipline, kind)
 
 
 def _prefill_source(

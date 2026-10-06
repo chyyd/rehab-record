@@ -24,7 +24,7 @@ $env:VITE_API_TARGET='http://127.0.0.1:9000'; npm run dev
 
 ```powershell
 $py = 'C:\Users\youda\AppData\Local\Programs\Python\Python313\python.exe'
-& $py -m app.cli init           # 建库 + 迁移 001–013
+& $py -m app.cli init           # 建库 + 迁移 001–014
 # & $py -m app.cli seed         # 已废弃：种子数据随迁移 012 下线，现在没有种子要导
 $env:KB_ADMIN_PASSWORD='Admin#2026pass'; & $py -m app.cli create-admin A001 --name 科室管理员
 & $py -m uvicorn app.main:app --host 127.0.0.1 --port 8000

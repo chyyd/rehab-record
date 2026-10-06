@@ -309,10 +309,9 @@ class TestIdempotentPush(SyncTestCase):
         count = self.conn.execute("SELECT COUNT(*) FROM treatment_record").fetchone()[0]
         self.assertEqual(count, 1)
         # client_uuid 在创建时就写进去了（离线幂等的唯一依据）
-        row = self.conn.execute("SELECT client_uuid, seq_no, span_seq FROM treatment_record").fetchone()
+        row = self.conn.execute("SELECT client_uuid, seq_no FROM treatment_record").fetchone()
         self.assertEqual(row["client_uuid"], "uuid-aaaa-0001")
         self.assertIsNone(row["seq_no"], "首评不占次数")
-        self.assertEqual(row["span_seq"], 1)
 
     def test_push_daily_without_initial_is_reported_per_item(self) -> None:
         """★ 离线推送不是后门：第 1 次日常缺首评同样被拦下。

@@ -1,7 +1,7 @@
 # 环境搭建与运行（setup）
 
-**当前状态**：阶段 0–5 后端、管理后台与安卓 App 均已交付并验证（**341 个测试通过、0 skip**；
-端到端 268 项、跨文档一致性由 `check_docs_consistency.py` 自报（371 项）、浏览器 UI 验收 60 项）。
+**当前状态**：阶段 0–5 后端、管理后台与安卓 App 均已交付并验证（**355 个测试通过、0 skip**；
+端到端 275 项、跨文档一致性由 `check_docs_consistency.py` 自报（379 项）、浏览器 UI 验收 60 项）。
 
 **2026-10-05（第三步）：治疗记录从「参数表格」改成「SOAP 模板驱动」** —— 迁移 011 重建
 `treatment_record`（19 列，含 `body_json` / `rendered_text`），012 删掉字典 / 选项集 / 患者反应定义
@@ -10,6 +10,13 @@
 代价：后端测试 454 → **334**，安卓端（`app/`）**已适配 SOAP 记录页**（Drift schemaVersion 4 → 5 → 6、
 `body` 契约、**130 个本地测试全部通过**、`flutter analyze` 无问题、`flutter build apk --debug` 成功），
 `admin/` 的字典 / 选项集 / 反应定义 / 模板四个页面**已删除**。
+
+**2026-10-06：复评周期从「每 20 次日常治疗」改成「距首评 30 个自然日」**（用户：
+「设定为距离首评或上一次复评 30 个自然日。如果当日没有治疗，顺延到下一次治疗时评估，
+也就是 1 个月评一次」）—— 迁移 **014** 删掉 `treatment_record.span_seq`
+（**19 列 → 18 列**），`ux_record_assessment_span` 换成 `ux_record_one_initial`；
+复评判定的唯一实现是 `services/record_template.py::next_reassessment_due()`
+（锚点 = **首评日**，应做日 = `首评日 + 30 × k`）。迁移总数 **14 个（001–014）**。
 
 **排期、休息块、请假三项功能已于 2026-10-05 整体下线**（科室确认排班不是本系统的职责），
 `appointment`/`rest_block`/`leave_record` 三张表已由迁移 008 删除；
@@ -55,7 +62,7 @@ DSH 自带的 `dsh-primary-runtime` Python 3.12 **不要用** —— 那个环�
 cd backend
 $py = "C:\Users\youda\AppData\Local\Programs\Python\Python313\python.exe"
 
-& $py -m app.cli init           # 建库 + 应用迁移 001–013 到最新 + 健康检查
+& $py -m app.cli init           # 建库 + 应用迁移 001–014 到最新 + 健康检查
 & $py -m app.cli seed           # 已废弃：种子数据（字典/选项集/反应定义/模板）随迁移 012 下线，
                                 # 现在不再有任何需要导入的种子；记录模板是 templates/*.json 文件
 & $py -m app.cli health         # 健康检查（JSON）
@@ -77,15 +84,15 @@ $py = "C:\Users\youda\AppData\Local\Programs\Python\Python313\python.exe"
 
 ```powershell
 cd backend
-& $py -m unittest discover -s tests -t . -v      # 341 个测试
+& $py -m unittest discover -s tests -t . -v      # 355 个测试
 & $py scripts\verify_http.py                     # 阶段 0 HTTP 端到端（14 项）
 & $py scripts\verify_stage1.py                   # 阶段 1 认证与患者（25 项）
 & $py scripts\verify_stage2.py                   # 患者列表排序：我最近一次已提交治疗（31 项）
-& $py scripts\verify_stage3.py                   # 阶段 3 SOAP 模板记录（56 项）
+& $py scripts\verify_stage3.py                   # 阶段 3 SOAP 模板记录（59 项）
 & $py scripts\verify_stage4.py                   # 阶段 4 离线与同步（36 项）
 & $py scripts\verify_stage5.py                   # 阶段 5 汇总打印、后台与 SOAP 文本（67 项）
-& $py scripts\verify_soap_flow.py              # SOAP 记录全链路：表单/门禁/出院/输出（39 项）
-& $py scripts\count_verify_checks.py             # 复核上面 7 个脚本的项数（合计 268 项）
+& $py scripts\verify_soap_flow.py              # SOAP 记录全链路：表单/门禁/出院/输出（43 项）
+& $py scripts\count_verify_checks.py             # 复核上面 7 个脚本的项数（合计 275 项）
 & $py scripts\check_docs_consistency.py          # 跨文档一致性
 ```
 
@@ -93,8 +100,8 @@ cd backend
 > （字面量循环会展开，如 `verify_stage2.py` 里一次核对 6 个已下线的接口路径、
 > `verify_stage5.py` 里一次核对 7 个 PDF 关键词）。
 > `check_docs_consistency.py` 会拿这份结果去核对本节的数字，改了脚本却忘了改文档就会失败。
-> 口径已用**运行时输出**复核：把 6 个脚本各跑一遍、数 `OK` / `FAIL` 行，
-> 得到 14 / 25 / 31 / 56 / 35 / 67，与静态结果逐个吻合。
+> 口径已用**运行时输出**复核：把 7 个脚本各跑一遍、数 `OK` / `FAIL` 行，
+> 得到 14 / 25 / 31 / 59 / 36 / 67 / 43（合计 **275**），与静态结果逐个吻合。
 >
 > **2026-10-05（SOAP 改造）后的主题变化**：`verify_stage3.py` 由「字典 / 记录 / 患者反应」
 > **重写为「SOAP 模板记录」验收**（取表单 → 建首评 → 当天日常、缺首评/缺复评 409、
@@ -102,6 +109,9 @@ cd backend
 > `verify_stage4.py` 改用 `body` payload，并**新增「离线推送同样受硬阻断约束」**一项、后又把该拦截改为逐条 conflict，28 → 36 项；
 > `verify_stage5.py` 断言输出是 **SOAP 文本而不是表格**、多日按时间顺序连排，58 → 67 项；
 > `verify_stage2.py` 31 项（新增"评估文书不参与排序"）。
+>
+> **2026-10-06（复评改按 30 个自然日）**：`verify_stage3.py` 56 → 59 项、
+> `verify_soap_flow.py` 39 → 43 项，端到端合计 268 → **275 项**。
 
 ---
 

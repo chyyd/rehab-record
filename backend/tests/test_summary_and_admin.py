@@ -148,7 +148,7 @@ class SummaryTestCase(ApiTestCase):
         return resp.json()
 
     def seed_daily(self, count: int, *, patient_no: str = "ZY001", day: str = "2027-01-01") -> None:
-        """直接落库造 N 条日常记录（越过门禁，用来构造"第 21 次"这类场景）。"""
+        """直接落库造 N 条日常记录（越过门禁，用来构造"已经做过很多次"的既有状态）。"""
         for index in range(1, count + 1):
             self.conn.execute(
                 "INSERT INTO treatment_record"
@@ -203,9 +203,9 @@ class TestDateSummary(SummaryTestCase):
         self.seed_daily(20)
         self.conn.execute(
             "INSERT INTO treatment_record"
-            " (patient_no, therapist_id, record_date, discipline, kind, span_seq, body_json,"
+            " (patient_no, therapist_id, record_date, discipline, kind, body_json,"
             "  rendered_text, status)"
-            " VALUES ('ZY001', ?, '2027-03-01', 'PT', 'initial', 1, '{}', '', 'submitted')",
+            " VALUES ('ZY001', ?, '2027-03-01', 'PT', 'initial', '{}', '', 'submitted')",
             (int(self.t1["id"]),),
         )
         self.write_record(day="2027-03-02", kind="reassessment", body={"diagnosis": ["偏瘫运动功能障碍"],
