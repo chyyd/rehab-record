@@ -534,6 +534,67 @@ class TestPdfRendering(SummaryTestCase):
         self.assertGreater(len(content), 1500, "PDF 过小，可能没渲染出内容")
         zlib.decompressobj()  # 确认 zlib 可用（PDF 流压缩依赖它）
 
+    def test_pdf_pages_are_filled_not_half_empty(self) -> None:
+        """★ 2026-10-06：页底不能留大片空白。
+
+        用户原话：「pdf 每一页下面有不少的空白，似乎特意保持了单次的记录不被截断，
+        这没有意义，连续往下页写就行」。
+
+        ⚠ **诚实说明这条测试守的是什么**（我第一版把它写夸张了，已更正）：
+        实测（6 位患者、真实数据）**去掉 `KeepTogether` 前后，页数与页底空白完全一致**
+        —— 都是 8 页、最大空白 26–32mm。也就是说 `KeepTogether` 并不是本次
+        页底空白的元凶，真正降下来的是**去掉段间空行**（14→9 页）与
+        **缩小页边距**（9→8 页）；`KeepTogether` 只是原理上危险
+        （文书若接近整页高就会整块跳页），真实数据恰好没触发。
+
+        所以这里是**兜底的上界断言**（正文最低点离页底不超过 45mm），
+        用来抓"某天文书变长 / 版式被改动之后页底开始大片留白"这类回归；
+        它不是"`KeepTogether` 回归检测器"。
+        """
+        import pypdf
+
+        # 每条 18 行，接近真实文书高度（真实记录约半页到整页）。
+        body_line = "客观资料：本次训练项目：偏瘫肢体综合训练；训练中生命体征：平稳；无不适"
+        for index in range(1, 15):
+            record_text = "\n".join(
+                [f"康复治疗记录（PT运动）\n治疗日期：2027-05-{index:02d}   第 {index} 次"]
+                + [body_line for _ in range(16)]
+                + ["治疗师签名：张三"]
+            )
+            self.conn.execute(
+                "INSERT INTO treatment_record"
+                " (patient_no, therapist_id, record_date, discipline, kind, seq_no, body_json,"
+                "  rendered_text, status, submitted_at)"
+                " VALUES ('ZY001', ?, ?, 'PT', 'daily', ?, '{}', ?, 'submitted',"
+                " '2027-05-01T00:00:00.000Z')",
+                (int(self.t1["id"]), f"2027-05-{index:02d}", index, record_text),
+            )
+        daily = summary_service.summarize_patient_daily(self.conn, patient_no="ZY001")
+        content = pdf_service.patient_daily_pdf(daily)
+        reader = pypdf.PdfReader(io.BytesIO(content))
+        self.assertGreater(len(reader.pages), 3, "这些记录应该撑出好几页")
+
+        # 页脚基线在 7mm ≈ 20pt 处，所以 y > 30pt 的都算正文。
+        limit_pt = 45 * 72 / 25.4
+        for number, page in enumerate(reader.pages, start=1):
+            lows: list[float] = []
+
+            def collect(text, _cm, tm, _font, _size, *_args, _sink=lows) -> None:  # noqa: ANN001
+                if text.strip():
+                    _sink.append(tm[5])
+
+            page.extract_text(visitor_text=collect)
+            body = [y for y in lows if y > 30]
+            if not body:
+                continue  # 空页由别的测试负责
+            gap = min(body) - 20
+            self.assertLess(
+                gap,
+                limit_pt,
+                f"第 {number} 页页底空白 {gap * 25.4 / 72:.0f}mm，超过 45mm —— "
+                "页底又出现大片留白了（实测正常值 ≤ 32mm）",
+            )
+
 
 class TestPrintEndpoints(SummaryTestCase):
     def test_print_patient_endpoint(self) -> None:

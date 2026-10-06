@@ -32,7 +32,7 @@ from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import mm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
-from reportlab.platypus import KeepTogether, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from app.services import record_template
 
@@ -141,7 +141,18 @@ def _soap_block(
         content = _fill_signature(content, therapist_name)
     rule = Table([[""]], colWidths=["100%"], rowHeights=[0.5])
     rule.setStyle(TableStyle([("LINEBELOW", (0, 0), (-1, -1), 0.3, colors.HexColor("#cccccc"))]))
-    return [KeepTogether([_soap_paragraph(content, style), Spacer(1, 1 * mm), rule, Spacer(1, 3 * mm)])]
+
+    # ★ 2026-10-06 用户：「pdf 每一页下面有不少的空白，似乎特意保持了单次的记录
+    #   不被截断，这没有意义，连续往下页写就行」。
+    #
+    # 原来这里用 `KeepTogether([段落, 间距, 分隔线, 间距])` 把**整条文书**当成
+    # 一个不可分割的块。一份文书长约一页，当前页剩余空间放不下它就**整块推到
+    # 下一页**，于是页底留一大片空白 —— 就是用户看到的现象，而且多页时很费纸。
+    #
+    # 现在四个元素**各自参与排版**，段落允许跨页断开、从断点继续写。
+    # 代价是分隔线可能落在页首（上一个记录刚结束）或页尾，属可接受：
+    # 分隔线只是视觉区隔，不是内容。
+    return [_soap_paragraph(content, style), Spacer(1, 1 * mm), rule, Spacer(1, 3 * mm)]
 
 
 # 签名占位符：模板 `footer` 里写的是 `治疗师签名：__________`（10 个下划线）。
@@ -165,17 +176,26 @@ def _build(
     paper: tuple[float, float] | None = None,
     dept_name: str = DEFAULT_DEPT_NAME,
 ) -> bytes:
-    """把 story 渲染成 PDF 字节，并统一加上抬头与页脚。"""
+    """把 story 渲染成 PDF 字节，并统一加上抬头与页脚。
+
+    ★ 2026-10-06 用户：「页眉页脚也占地儿比较大，可以缩小」。
+
+    缩小的是**留白**而不是内容：
+      · 左右 14→**11mm**、上 16→**12mm**、下 16→**13mm**（下边距要留出页脚位置，
+        不能压太小，否则正文会和页码叠上）；
+      · 抬头下的间距 5→**3mm**；
+      · 页脚字号 8→**7pt**，基线 10→**7mm**，离底边更近。
+    """
     style = _styles()
     buffer = io.BytesIO()
     size = paper or A4
     doc = SimpleDocTemplate(
         buffer,
         pagesize=size,
-        leftMargin=14 * mm,
-        rightMargin=14 * mm,
-        topMargin=16 * mm,
-        bottomMargin=16 * mm,
+        leftMargin=11 * mm,
+        rightMargin=11 * mm,
+        topMargin=12 * mm,
+        bottomMargin=13 * mm,
         title=title,
         author=dept_name,
     )
@@ -187,16 +207,16 @@ def _build(
     ]
     if subtitle:
         header.append(Paragraph(subtitle, style["subtitle"]))
-    header.append(Spacer(1, 5 * mm))
+    header.append(Spacer(1, 3 * mm))
 
     def on_page(canvas, _doc) -> None:  # noqa: ANN001 - reportlab 回调签名
         canvas.saveState()
         ensure_font()
-        canvas.setFont(FONT_NAME, 8)
-        canvas.setFillColor(colors.HexColor("#666666"))
-        # 页脚：页码 + 打印时间（Q10）；签名栏刻意不做（1.4：不采集患者签字）
-        canvas.drawCentredString(size[0] / 2, 10 * mm, f"第 {canvas.getPageNumber()} 页")
-        canvas.drawRightString(size[0] - 14 * mm, 10 * mm, f"打印时间：{printed_at}")
+        # 页脚缩小：字号 8→7pt，基线 10→7mm（更贴底边），字号小也更不抢眼。
+        canvas.setFont(FONT_NAME, 7)
+        canvas.setFillColor(colors.HexColor("#777777"))
+        canvas.drawCentredString(size[0] / 2, 7 * mm, f"第 {canvas.getPageNumber()} 页")
+        canvas.drawRightString(size[0] - 11 * mm, 7 * mm, f"打印时间：{printed_at}")
         canvas.restoreState()
 
     doc.build(header + story, onFirstPage=on_page, onLaterPages=on_page)
