@@ -1,0 +1,70 @@
+# 康复科治疗过程记录系统 — 后端镜像
+#
+# 设计取舍：
+#  1. **单阶段**而不是多阶段：运行期本来就只需要 Python 与 requirements，
+#     不像前端那样有"构建产物 vs 源码"的分离需求。多阶段只会多一层缓存噪音。
+#  2. `python:3.13-slim` 对齐本机实测的开发版本（`pyproject.toml` 里记着
+#     "必须使用系统 Python 3.13"）。slim 而非 alpine：alpine 用 musl，
+#     `reportlab` / `argon2-cffi` 这类带 C 扩展的包在 musl 下常要现编译。
+#  3. **不装 dev 依赖**（pytest 等）：镜像只跑服务。
+#     `argon2-cffi`（密码哈希）与 `apscheduler`（定时任务）装了 ——
+#     不装会走标准库兜底，能用但更弱（见 pyproject 的注释）。
+#  4. 非 root 运行。
+#
+# 容器内布局（与仓库的本地布局**不同**，所以模板路径要走 KB_TEMPLATES_DIR）：
+#   /app/backend/    ← backend/ 的内容（工作目录）
+#   /app/templates/  ← 仓库根的 templates/
+#   /data/           ← SQLite 数据卷挂载点
+FROM python:3.13-slim
+
+# 时区：后端按 Asia/Shanghai 算"今天"（半日制、跨零点判定都依赖它）。
+# 不加 tzdata 的话 `TZ=Asia/Shanghai` 会被容器当成本地时间却是 UTC。
+ENV TZ=Asia/Shanghai \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends tzdata \
+    && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime \
+    && echo $TZ > /etc/timezone \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app/backend
+
+# 先只拷依赖描述再装 —— 这样改代码不会让依赖层失效（构建缓存的关键）
+COPY backend/pyproject.toml ./
+# 只装运行期依赖 + auth/ops 两组可选依赖。
+# ⚠ 用 `.[auth,ops]` 会连 dev 一起拉吗？不会：dev 在 optional-dependencies 里，
+#   只有显式写 `[dev]` 才装。
+RUN pip install --no-cache-dir ".[auth,ops]"
+
+COPY backend/ ./
+COPY templates/ /app/templates/
+
+# 模板目录：容器里 templates/ 与 backend/ 不再同级，必须显式告诉它
+ENV KB_TEMPLATES_DIR=/app/templates \
+    KB_DB_PATH=/data/kf.db
+
+# 用非 root 跑。
+#
+# ⚠ 顺序有讲究：`chmod` 必须在 `USER appuser` **之前**（以 root 身份改），
+#   否则普通用户没有权限给文件加可执行位，构建会失败。
+#   `COPY backend/` 已经把 entrypoint 脚本带进来了，不必再 COPY 一次。
+RUN useradd --create-home --uid 10001 appuser \
+    && mkdir -p /data \
+    && chmod +x /app/backend/docker-entrypoint.sh \
+    && chown -R appuser:appuser /data /app
+USER appuser
+
+EXPOSE 8000
+
+# 健康检查：后端自己有 /api/v1/health，直接用它（不要只探端口）
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=4).status==200 else 1)"
+
+# 迁移与建管理员**不在这里做**：交给 entrypoint，
+# 因为镜像构建期没有数据库可连（/data 是运行时才挂上来的卷）。
+ENTRYPOINT ["/app/backend/docker-entrypoint.sh"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

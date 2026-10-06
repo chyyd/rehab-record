@@ -1,0 +1,87 @@
+# 康复科治疗过程记录系统 — 一键部署（后端 + 管理后台）
+#
+# 用法（在这台机器上，仓库根目录）：
+#   copy .env.example .env      # 然后编辑 .env：至少设 KB_JWT_SECRET 与 KB_ADMIN_PASSWORD
+#   docker compose up -d
+#   浏览器打开 http://localhost:8080
+#
+# 换一台机器（只带走镜像，不带源码）：
+#   在打包机上：  docker compose build && docker compose push
+#   在目标机上：  只需要 .env + compose.yml，然后 `docker compose up -d` 就会拉镜像
+#   （`image:` 与 `build:` 同时存在时，有镜像就**不**重新构建；
+#     要强制重建用 `docker compose up -d --build`。）
+#
+# ## 端口说明
+#   - 只有**前端**映射到宿主机（`${ADMIN_PORT}`，默认 8080）。
+#     内网其它客户端访问的就是 http://<本机IP>:8080 。
+#   - 后端**不映射**到宿主机：它只活在 compose 网络里，由 Nginx 反代
+#     `/api` → `http://backend:8000`。这样后端不会直接暴露在局域网上。
+#     要用 Swagger 调接口时走 http://localhost:8080/docs（Nginx 已反代）。
+
+name: kf-record
+
+services:
+  backend:
+    image: ${IMAGE_PREFIX:-docker.xuanyuan.run/kf-record}/backend:${IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    restart: unless-stopped
+    environment:
+      # 数据落在卷里；容器重建不会丢
+      KB_DB_PATH: /data/kf.db
+      KB_TEMPLATES_DIR: /app/templates
+      TZ: Asia/Shanghai
+
+      # ★ 必须设置（否则每次重启都会让所有人掉线；默认值是开发用的）
+      KB_JWT_SECRET: ${KB_JWT_SECRET:?请在 .env 里设置 KB_JWT_SECRET（随机长字符串）}
+
+      # 首次启动用来建管理员；账号已存在时**不会**被重置
+      # （只有值变化才会重新执行 —— 见 backend/docker-entrypoint.sh 的说明）
+      KB_ADMIN_PASSWORD: ${KB_ADMIN_PASSWORD:-}
+      KB_ADMIN_EMPLOYEE_NO: ${KB_ADMIN_EMPLOYEE_NO:-A001}
+      KB_ADMIN_NAME: ${KB_ADMIN_NAME:-科室管理员}
+
+      # SQLite 并发（D05）。容器里就一个后端进程，保持默认即可。
+      KB_SQLITE_BUSY_TIMEOUT_MS: ${KB_SQLITE_BUSY_TIMEOUT_MS:-5000}
+      KB_SQLITE_WAL: ${KB_SQLITE_WAL:-true}
+
+      # 同源部署（Nginx 反代），保持 lax + 非 secure。
+      # 若将来上 HTTPS 并分域名，改成 none + true（见 deploy/nginx.conf 的说明）。
+      KB_REFRESH_COOKIE_SAMESITE: ${KB_REFRESH_COOKIE_SAMESITE:-lax}
+      KB_REFRESH_COOKIE_SECURE: ${KB_REFRESH_COOKIE_SECURE:-false}
+    volumes:
+      - kf-data:/data
+    # 后端不映射到宿主机（见文件顶部说明）。真需要直连调试时取消下面两行注释：
+    # ports:
+    #   - "${BACKEND_DEBUG_PORT:-8000}:8000"
+    expose:
+      - "8000"
+    networks: [kf]
+
+  admin:
+    image: ${IMAGE_PREFIX:-docker.xuanyuan.run/kf-record}/admin:${IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.admin
+    restart: unless-stopped
+    depends_on:
+      backend:
+        # 等后端**健康**再起前端，否则第一次打开后台可能撞上"数据库还没迁移完"
+        condition: service_healthy
+    environment:
+      TZ: Asia/Shanghai
+    ports:
+      - "${ADMIN_PORT:-8080}:80"
+    networks: [kf]
+
+volumes:
+  kf-data:
+    # 具名卷。要看/备份数据库文件：
+    #   docker compose exec backend ls -l /data
+    #   docker run --rm -v kf-record_kf-data:/data -v ${PWD}:/backup alpine \
+    #     tar czf /backup/kf-data-$(date +%Y%m%d).tgz -C /data .
+
+networks:
+  kf:
+    driver: bridge

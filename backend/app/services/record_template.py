@@ -40,6 +40,7 @@
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import date as _date
@@ -47,8 +48,17 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
-# 模板根目录：仓库根的 `templates/`
-TEMPLATES_DIR = Path(__file__).resolve().parents[3] / "templates"
+# 模板根目录。
+#
+# 默认是**仓库根的 `templates/`**（本地开发的布局：`backend/app/services/x.py`
+# 上溯三层 = 仓库根）。但这个推导在**容器**里不成立 —— 镜像里通常把
+# `backend/` 放到 `/app`、`templates/` 放到 `/templates`，两者不再同级。
+#
+# 所以留一个 `KB_TEMPLATES_DIR` 覆盖（2026-10-06 加，为 Docker 部署）。
+# 默认值保持不变，本地开发完全不受影响。
+TEMPLATES_DIR = Path(
+    os.environ.get("KB_TEMPLATES_DIR") or (Path(__file__).resolve().parents[3] / "templates")
+)
 
 KINDS = ("initial", "daily", "reassessment", "discharge")
 

@@ -34,6 +34,7 @@
 | [开发计划.md](开发计划.md) | 可执行规格（**V0.8**）：设计评估与问题清单、数据模型修订、接口清单、五阶段计划与验收标准、风险、已确认结论 | 全员 |
 | [CHANGELOG.md](CHANGELOG.md) | 全部变更记录。**每次改动都必须在这里留一条** | 全员 |
 | [docs/setup.md](docs/setup.md) | 环境搭建与运行、依赖安装、已知环境问题 | 开发 |
+| [docs/deploy-docker.md](docs/deploy-docker.md) | **Docker 部署**：镜像构建与推送（轩辕镜像）、目标机器一键起、数据卷迁移、排障 | 部署 |
 | [docs/sync-protocol.md](docs/sync-protocol.md) | **离线同步协议**（游标/幂等/冲突分层、客户端本地库设计、**评估文书硬阻断在离线推送时同样生效**）。App 开工前必读 | 移动端 |
 | [templates/README.md](templates/README.md) | **SOAP 记录模板**（JSON）的字段说明与改法。模板是内容不是数据，改它不需要迁移 | 全员 |
 
@@ -121,6 +122,21 @@
 
 脚本会自动找 Python（优先 `.python-path` 文件 → `KB_PYTHON` 环境变量 → 常见安装位置）。
 各人 Python 路径不同时，在仓库根目录建一个 `.python-path` 文件写上解释器完整路径即可。
+
+### Docker 方式（换机器部署用）
+
+要交付到另一台机器、不想在那台机器上装 Python/Node，就把后端与管理后台打成镜像：
+
+```powershell
+cd admin; npm run build; cd ..     # 前端产物（镜像直接 COPY 它）
+copy .env.example .env             # 填 KB_JWT_SECRET 与 KB_ADMIN_PASSWORD
+docker compose build
+docker compose push                # 推到 docker.xuanyuan.run/kf-record/*
+```
+
+目标机器只要 `compose.yml` + `.env`，`docker compose up -d`，打开 `http://<IP>:8080`。
+完整步骤（含 Windows 装 Docker、数据卷迁移、排障）见
+**[docs/deploy-docker.md](docs/deploy-docker.md)**。
 
 ### 目录结构
 

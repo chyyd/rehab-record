@@ -1,0 +1,33 @@
+# 康复科治疗过程记录系统 — 管理后台镜像（Nginx 托管静态产物 + 反代 /api）
+#
+# ## 为什么用**多阶段**（与后端镜像相反）
+#
+# 前端需要 Node 才能构建，但运行期只需要几个静态文件 + Nginx。
+# 单阶段会把 node_modules（几百 MB）留在镜像里，多阶段让最终镜像只有 Nginx + dist。
+#
+# ## 为什么**不在这个镜像里**做 `npm install`
+#
+# `admin/node_modules` 与 `admin/dist` 在宿主机上**已经装好/构建好**了
+# （见 compose 的说明）。前端依赖安装在这台机器上要经过国内镜像源与代理，
+# 在容器里重来一遍很可能卡住或失败，而它**不影响交付物**：
+# 我们交付的是"能直接跑起来的镜像"，不是"能重现构建的流水线"。
+#
+# 所以：构建阶段直接用宿主机现有的 `admin/dist`。
+#   前提：构建前先在宿主机跑 `cd admin && npm run build`（README 里有）。
+#   好处：镜像构建**不需要联网装 npm 包**，几秒钟就能出来。
+FROM nginx:1.27-alpine
+
+ENV TZ=Asia/Shanghai
+RUN apk add --no-cache tzdata \
+    && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime \
+    && echo $TZ > /etc/timezone
+
+# 静态产物（宿主机已构建好）
+COPY admin/dist/ /usr/share/nginx/html/
+COPY deploy/nginx.conf /etc/nginx/conf.d/default.conf
+
+# 健康检查用 wget（alpine 自带 busybox wget），不额外装 curl
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD wget -q -O /dev/null http://127.0.0.1/ || exit 1
+
+EXPOSE 80

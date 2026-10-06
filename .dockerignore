@@ -1,0 +1,45 @@
+# 构建上下文排除项。
+#
+# ⚠ 这个文件的作用是**减少发送给 Docker 守护进程的数据量**，
+#   不影响镜像内容（镜像里有什么由 Dockerfile 的 COPY 决定）。
+#
+# 最要紧的一条是 `admin/node_modules`：它有几百 MB / 上万个文件，
+# 而两个镜像都**不需要**它 —— 后端只 COPY `backend/`，前端只 COPY `admin/dist/`。
+# 不排除的话每次构建都要白白传几分钟。
+**/node_modules
+admin/dist
+
+# 版本库与本地运行时产物
+.git
+.gitattributes
+.run
+.npm-cache
+.ruff_cache
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+pytest-cache-files-*
+
+# 开发数据库：**绝不能**进镜像（会覆盖目标机器上的数据卷，
+# 也可能把本机的真实病历带出去）
+data
+*.db
+*.db-wal
+*.db-shm
+.dev-admin-password.txt
+
+# 本机密钥与配置（.env 只在运行时用，不进镜像）
+.env
+.env.local
+
+# 文档与开发脚本（镜像里用不到）
+docs
+*.md
+start.ps1
+CHANGELOG.md
+
+# ⚠ 安卓 App 目录：**必须写成 `/app`（带前导斜杠 = 只匹配根目录）**。
+#   写成 `app` 会连 `backend/app/`（后端源码！）一起排除掉 ——
+#   那样后端镜像里就没有应用代码了，而且报错会出现在很后面（启动时 ImportError），
+#   非常难定位。这是 .dockerignore 最容易踩的坑之一。
+/app

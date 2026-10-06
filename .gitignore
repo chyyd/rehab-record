@@ -61,6 +61,8 @@ deploy/nginx/certs/
 *.key
 .env
 .env.*
+# 但**模板**要提交 —— 否则新机器不知道要配哪些变量（先 ignore 再 negate，顺序不能反）
+!.env.example
 
 # ---- start.ps1 的本机运行时产物 ----
 # 注意：gitignore 的注释必须**从行首**用 # 开始；
