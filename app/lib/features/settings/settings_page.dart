@@ -6,6 +6,7 @@ import 'package:rehab_app/features/auth/auth_controller.dart';
 import 'package:rehab_app/features/patients/patients_providers.dart';
 import 'package:rehab_app/features/sync/conflict_providers.dart';
 import 'package:rehab_app/features/sync/conflicts_page.dart';
+import 'package:rehab_app/features/settings/server_settings_sheet.dart';
 
 /// "我的"页签：当前用户、同步状态、退出登录。
 ///
@@ -53,10 +54,15 @@ class SettingsPage extends ConsumerWidget {
           ),
         ),
 
+        // ★ 2026-10-06：这里原来只**显示**地址，现在可点进去改。
+        //   登录页也有同一入口（地址错到登不进去时只能靠它）；
+        //   这里是为了"一个 App 在多套环境间切换"时不用先退出登录。
         ListTile(
           leading: const Icon(Icons.dns_outlined),
           title: const Text('后端地址'),
           subtitle: Text(services?.config.baseUrl ?? '—'),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: services == null ? null : () => _openServerSheet(context, ref),
         ),
         ListTile(
           leading: const Icon(Icons.lock_outline),
@@ -116,6 +122,42 @@ class SettingsPage extends ConsumerWidget {
         ),
         const SizedBox(height: 16),
       ],
+    );
+  }
+
+  /// 打开服务器设置（与登录页共用同一个面板）。
+  ///
+  /// **换了地址就必须重新登录**，两个原因：
+  ///
+  ///  1. 旧令牌属于**旧服务器**，在新服务器上必然无效 —— 留着只见 401；
+  ///  2. 本地库按后端指纹**分文件**（`rehab_app_<host>_<port>.sqlite`），
+  ///     地址一变就该开另一个库：本地记录 id、住院号、同步游标
+  ///     在两台服务器之间**没有可比性**，用同一个库会把两家医院的数据混起来。
+  ///
+  /// 所以顺序是：面板里先探测并保存 → 这里重建服务图（换 baseUrl 与库文件）
+  /// → 主动退出登录（同时吊销旧服务器上的会话）→ 提示重新登录。
+  Future<void> _openServerSheet(BuildContext context, WidgetRef ref) async {
+    final services = ref.read(appServicesProvider).value;
+    if (services == null) return;
+
+    final changed = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => ServerSettingsSheet(
+        repository: services.settings,
+        current: services.config.baseUrl,
+      ),
+    );
+    if (changed != true || !context.mounted) return;
+
+    // 先退出（会用**旧**的 client 去吊销旧服务器的会话），再重建服务图。
+    // 顺序反过来的话，`signOut` 会打到新服务器上，旧会话留在服务端不干净。
+    await ref.read(authControllerProvider.notifier).signOut();
+    ref.invalidate(appServicesProvider);
+
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('服务器地址已更换，请重新登录')),
     );
   }
 

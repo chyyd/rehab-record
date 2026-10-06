@@ -237,18 +237,46 @@ class PatientSyncController extends Notifier<PatientSyncState> {
   /// 调用方拿到的结果始终是"一次真实的同步结果"。
   Future<void>? _inFlight;
 
+  /// 连续离线/故障次数（成功一次即归零）。
+  ///
+  /// ★ 2026-10-06 用户：「连续多次离线后安静下来、不再提示」。
+  ///
+  /// 治疗师回家后 App 仍在跑定时同步，每 30 秒失败一次 ——
+  /// 如果每次都把「离线中，显示本地数据」推上顶部横幅，会一直闪，
+  /// 而这条信息他早就知道了（离线优先本来就是设计目标）。
+  ///
+  /// 所以连续失败到一定次数后**不再更新提示**（同步照跑，只是不吵），
+  /// 直到成功或用户主动同步为止。
+  int _consecutiveFailures = 0;
+
+  /// 连续失败多少次后不再提示。
+  static const int quietAfterFailures = 3;
+
   /// **顺序很重要：先 push 再 pull。**
   ///
   /// 反过来的话，刚在本地录的记录会立刻被服务端返回的旧快照覆盖
   /// （拉回来的 payload 版本更低），表现为"我录的东西没了"。
-  Future<void> refresh({bool pushFirst = true}) {
+  ///
+  /// [announce]：这次同步要不要把**成功结果**写进顶部提示。
+  ///
+  /// - **手动**（下拉刷新、同步按钮、返回页面）：`true` —— 用户正等着反馈；
+  /// - **定时**：`false` —— 每 30 秒顶一条「已更新 N 名患者」会一直闪，
+  ///   而"上次同步时间"在「我的」页随时看得到。
+  ///
+  /// **冲突不受 [announce] 影响，永远提示** —— 那需要人做决定，
+  /// 不能被"安静"策略吞掉。
+  Future<void> refresh({bool pushFirst = true, bool announce = true}) {
     // 已有同步在跑 → 共用它（并发调用拿到的是同一个结果）
-    return _inFlight ??= _runRefresh(pushFirst: pushFirst).whenComplete(() {
+    return _inFlight ??=
+        _runRefresh(pushFirst: pushFirst, announce: announce).whenComplete(() {
       _inFlight = null;
     });
   }
 
-  Future<void> _runRefresh({required bool pushFirst}) async {
+  Future<void> _runRefresh({
+    required bool pushFirst,
+    required bool announce,
+  }) async {
     final services = ref.read(appServicesProvider).requireValue;
     state = const PatientSyncState(syncing: true);
     try {
@@ -264,18 +292,27 @@ class PatientSyncController extends Notifier<PatientSyncState> {
       // 不需要手动 invalidate：patientListProvider 是 Drift 流，落库即自动重建。
       ref.invalidate(pendingCountProvider);
       ref.invalidate(lastPatientSyncProvider);
+
+      _consecutiveFailures = 0;
       state = PatientSyncState(
         syncing: false,
-        message: conflictNote ?? '已更新 $count 名患者',
+        // 冲突永远报；成功只在"用户主动要反馈"时报。
+        message: conflictNote ?? (announce ? '已更新 $count 名患者' : null),
         isError: conflictNote != null,
       );
     } on AppError catch (e) {
+      final offline = e.code == 'NETWORK_ERROR';
+      _consecutiveFailures += 1;
+
+      // 连续失败够多就**不再提示**（同步照跑）。用 `null` 而不是空串：
+      // 空串会让横幅渲染成一条空白条，比不显示更难看。
+      final quiet = offline && _consecutiveFailures > quietAfterFailures;
       state = PatientSyncState(
         syncing: false,
-        isError: e.code != 'NETWORK_ERROR',
+        isError: !offline,
         lastFailed: true,
         // 离线不是错误状态，文案要中性（离线优先）。
-        message: e.code == 'NETWORK_ERROR' ? '离线中，显示本地数据' : e.message,
+        message: quiet ? null : (offline ? '离线中，显示本地数据' : e.message),
       );
     }
   }
@@ -285,8 +322,10 @@ class PatientSyncController extends Notifier<PatientSyncState> {
   /// 不能让 `refresh()` 本身抛：它的调用方（`initState` 的 post-frame、
   /// `didPopNext`、按钮 `onPressed`）都**没有 catch** —— 抛出会变成未处理异常，
   /// 在 Flutter 里是一条刺眼的红屏日志，而不是一次安静的失败重试。
+  ///
+  /// `announce: false`：定时同步不报成功（只报失败与冲突）。
   Future<bool> refreshQuietly() async {
-    await refresh();
+    await refresh(announce: false);
     return !state.lastFailed;
   }
 
