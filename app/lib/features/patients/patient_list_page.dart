@@ -5,6 +5,7 @@ import 'package:rehab_app/core/route_observer.dart';
 import 'package:rehab_app/data/repo/patient_repository.dart';
 import 'package:rehab_app/features/auth/auth_controller.dart';
 import 'package:rehab_app/features/patients/patient_detail_page.dart';
+import 'package:rehab_app/features/patients/patient_form_sheet.dart';
 import 'package:rehab_app/features/patients/patients_providers.dart';
 
 /// 患者列表（全科白板，离线优先）。
@@ -59,49 +60,80 @@ class _PatientListPageState extends ConsumerState<PatientListPage> with RouteAwa
     final filter = ref.watch(patientFilterProvider);
     final user = ref.watch(currentUserProvider);
 
-    return Column(
-      children: [
-        _FilterBar(
-          current: filter,
-          onChanged: (f) => ref.read(patientFilterProvider.notifier).set(f),
-        ),
-        _SearchField(
-          onChanged: (v) => ref.read(patientKeywordProvider.notifier).set(v),
-        ),
-        Expanded(
-          child: patients.when(
-            loading: () => const Center(child: CircularProgressIndicator()),
-            error: (e, _) => _ErrorView(
-              message: '$e',
-              onRetry: () =>
-                  ref.read(patientSyncControllerProvider.notifier).refresh(),
-            ),
-            data: (rows) {
-              if (rows.isEmpty) {
-                return _EmptyView(
-                  filter: filter,
+    return Scaffold(
+      // 悬浮「+」新建患者（用户 2026-10-06：「在 app 的患者页，右侧偏下悬浮一个
+      // + 号的圆形按钮，用来新建患者」）。
+      //
+      // ★ 2026-10-06 起**所有治疗师**都能建档（后端 `POST /patients` 原来
+      //   只有管理员能调）—— 治疗师才是第一个见到患者的人（入院当天就要记录），
+      //   当时只能干等管理员在后台建档。所以这里**不按角色隐藏**。
+      //
+      // FAB 自己就在右下角，且这个 Scaffold 嵌在外层 Scaffold 的 body 里
+      //（底下是底部导航栏），因此位置天然是"右侧偏下"。
+      floatingActionButton: FloatingActionButton(
+        tooltip: '新建患者',
+        onPressed: _openCreateSheet,
+        child: const Icon(Icons.add),
+      ),
+      body: Column(
+        children: [
+          _FilterBar(
+            current: filter,
+            onChanged: (f) => ref.read(patientFilterProvider.notifier).set(f),
+          ),
+          _SearchField(
+            onChanged: (v) => ref.read(patientKeywordProvider.notifier).set(v),
+          ),
+          Expanded(
+            child: patients.when(
+              loading: () => const Center(child: CircularProgressIndicator()),
+              error: (e, _) => _ErrorView(
+                message: '$e',
+                onRetry: () =>
+                    ref.read(patientSyncControllerProvider.notifier).refresh(),
+              ),
+              data: (rows) {
+                if (rows.isEmpty) {
+                  return _EmptyView(
+                    filter: filter,
+                    onRefresh: () =>
+                        ref.read(patientSyncControllerProvider.notifier).refresh(),
+                  );
+                }
+                return RefreshIndicator(
                   onRefresh: () =>
                       ref.read(patientSyncControllerProvider.notifier).refresh(),
-                );
-              }
-              return RefreshIndicator(
-                onRefresh: () =>
-                    ref.read(patientSyncControllerProvider.notifier).refresh(),
-                child: ListView.separated(
-                  // 离线时也要保证下拉刷新可用（列表短于一屏时）。
-                  physics: const AlwaysScrollableScrollPhysics(),
-                  itemCount: rows.length,
-                  separatorBuilder: (_, _) => const Divider(height: 1),
-                  itemBuilder: (context, i) => _PatientTile(
-                    patient: rows[i],
-                    currentTherapistId: user?.id,
+                  child: ListView.separated(
+                    // 离线时也要保证下拉刷新可用（列表短于一屏时）。
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    // FAB 会盖住最后一条，底部留出它的高度。
+                    padding: const EdgeInsets.only(bottom: 80),
+                    itemCount: rows.length,
+                    separatorBuilder: (_, _) => const Divider(height: 1),
+                    itemBuilder: (context, i) => _PatientTile(
+                      patient: rows[i],
+                      currentTherapistId: user?.id,
+                    ),
                   ),
-                ),
-              );
-            },
+                );
+              },
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
+    );
+  }
+
+  /// 打开「新建患者」表单。
+  ///
+  /// 保存成功后**不**立刻强行同步：新建的患者已经写回本地库
+  ///（见 `PatientRepository.create`），列表会自己更新；
+  /// 再拉一次反而可能因为并发而短暂看不到。
+  Future<void> _openCreateSheet() async {
+    final saved = await PatientFormSheet.show(context);
+    if (!mounted || !saved) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('患者已建档')),
     );
   }
 }

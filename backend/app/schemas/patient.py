@@ -43,12 +43,15 @@ class PatientCreateRequest(BaseModel):
     inpatient_no: str = Field(min_length=1, max_length=64, description="住院编号")
     name: str = Field(min_length=1, max_length=64)
     diagnosis: str | None = None
-    admin_note: str | None = Field(default=None, description="注意事项，仅管理员可写")
+    # ★ 2026-10-06：原说明是"仅管理员可写"，权限放开给所有治疗师（见 api/v1/patients.py）。
+    admin_note: str | None = Field(default=None, description="注意事项，任何治疗师可写")
     assigned_therapist_id: int | None = None
     status: str = Field(default="in_hospital", description=" / ".join(PATIENT_STATUSES))
 
 
 class PatientUpdateRequest(BaseModel):
+    """修改患者。**字段级语义**：`None` = 不改（而不是"清空"）。"""
+
     name: str | None = Field(default=None, min_length=1, max_length=64)
     diagnosis: str | None = None
     admin_note: str | None = None

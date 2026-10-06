@@ -90,8 +90,11 @@ def main() -> int:
                 user_model.create_user(conn, employee_no=employee_no, name=name, role=role, password=pw)
         t1_id = int(user_model.get_by_employee_no(conn, "T001")["id"])
         t2_id = int(user_model.get_by_employee_no(conn, "T002")["id"])
-        # 清理上次运行的示例患者，保证可重复执行
-        for no in ("E2E001", "E2E002", "E2E003"):
+        # 清理上次运行的示例患者，保证可重复执行。
+        # `ZZSTAGE1` 是下面「治疗师可以建患者」那条用的**固定编号**探针 ——
+        # 不在这里清掉的话第二次运行会撞主键（住院编号已存在），
+        # 而且它末尾被置成了"已出院"，治疗师再改就会 403 PATIENT_NOT_VISIBLE。
+        for no in ("E2E001", "E2E002", "E2E003", "ZZSTAGE1"):
             purge_patients(conn, [no])
     finally:
         conn.close()
@@ -194,9 +197,37 @@ def main() -> int:
         code, err = request("/api/v1/users", token=t1_tok)
         check("治疗师不能查用户列表", code == 403 and err["code"] == "ADMIN_REQUIRED")
 
-        # 11) 治疗师不能建患者
-        code, err = request("/api/v1/patients", "POST", {"inpatient_no": "X", "name": "X"}, token=t1_tok)
-        check("治疗师不能建患者", code == 403 and err["code"] == "ADMIN_REQUIRED")
+        # 11) ★ 2026-10-06 权限变更：治疗师**可以**建患者（原来是管理员专属）
+        #
+        #     起因是 App 端要加「新建患者」按钮（治疗师才是第一个见到患者的人）。
+        #     这条原来断言 `403 ADMIN_REQUIRED`，现按新口径重写。
+        #     用**固定编号**，末尾置为已出院，避免重复执行撞主键、也不影响后续计数。
+        probe_no = "ZZSTAGE1"
+        code, created = request(
+            "/api/v1/patients", "POST",
+            {"inpatient_no": probe_no, "name": "阶段1建档探针"}, token=t1_tok,
+        )
+        check("治疗师可以建患者", code == 201 and created.get("inpatient_no") == probe_no,
+              str(created)[:140])
+
+        # 审计必须记**实际操作者** —— 权限放开后若仍假定"写入一定是管理员"，审计会说谎
+        _, logs = request("/api/v1/audit-logs?target_type=patient&page=1&page_size=20",
+                          token=admin_tok)
+        hit = [x for x in (logs or {}).get("items", [])
+               if x.get("target_id") == probe_no and x.get("action") == "create"]
+        check("治疗师建档如实记入审计", bool(hit) and hit[0].get("user_id") == t1_id,
+              str(hit[:1])[:160])
+
+        # 治疗师也能改注意事项（用户要求取消只读）
+        code, edited = request(
+            f"/api/v1/patients/{probe_no}", "PUT",
+            {"admin_note": "治疗师写的注意事项"}, token=t1_tok,
+        )
+        check("治疗师可改注意事项（取消只读）",
+              code == 200 and edited.get("admin_note") == "治疗师写的注意事项", str(edited)[:140])
+
+        # 收尾：置为已出院 —— 既不占白板，也不打扰后面的归属/计数断言
+        request(f"/api/v1/patients/{probe_no}", "PUT", {"status": "discharged"}, token=admin_tok)
 
         # 12) 认领未分配患者
         code, claimed = request("/api/v1/patients/claim?inpatient_no=E2E003", "POST", {}, token=t1_tok)

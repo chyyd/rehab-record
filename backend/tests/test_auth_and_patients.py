@@ -545,12 +545,38 @@ class TestPatientWritePermissions(ApiTestCase):
         self.t2 = self.make_user("T002", "李四")
         self.make_admin("A001")
 
-    def test_only_admin_creates_patients(self) -> None:
+    def test_therapist_creates_patient(self) -> None:
+        """★ 2026-10-06 权限变更：**任何治疗师都能建档**（原来只有管理员）。
+
+        用户要求给 App 的患者页加「+ 新建患者」按钮 —— 治疗师才是第一个见到患者的人
+        （入院当天就要记录），当时只有管理员能在后台建档，治疗师只能干等。
+        这条原来叫 `test_only_admin_creates_patients` 并断言 403，现按新口径重写。
+        """
         headers = self.login_headers("T001")
         resp = self.client.post(
             "/api/v1/patients", json={"inpatient_no": "ZY100", "name": "新患者"}, headers=headers
         )
-        self.assert_error(resp, 403, "ADMIN_REQUIRED")
+        self.assertEqual(resp.status_code, 201, resp.text)
+        body = resp.json()
+        self.assertEqual(body["inpatient_no"], "ZY100")
+        self.assertEqual(body["status"], "in_hospital")
+        # 审计要记录**实际操作者**（不再假定是管理员），否则权限放开后审计会说谎。
+        row = self.conn.execute(
+            "SELECT user_id, action FROM audit_log"
+            " WHERE target_type='patient' AND target_id='ZY100' AND action='create'"
+        ).fetchone()
+        self.assertIsNotNone(row, "建档必须留审计")
+        self.assertEqual(int(row["user_id"]), int(self.t1["id"]))
+
+    def test_therapist_cannot_create_discharged_patient(self) -> None:
+        """放开的是**角色**限制，业务规则照旧：不能凭空建一个已出院的患者。"""
+        headers = self.login_headers("T001")
+        resp = self.client.post(
+            "/api/v1/patients",
+            json={"inpatient_no": "ZY101", "name": "患者", "status": "discharged"},
+            headers=headers,
+        )
+        self.assert_error(resp, 403, "PATIENT_DISCHARGED_IMMUTABLE")
 
     def test_admin_creates_patient_with_assignment_recorded(self) -> None:
         headers = self.login_headers("A001")
@@ -573,15 +599,48 @@ class TestPatientWritePermissions(ApiTestCase):
         ).fetchall()
         self.assertEqual([r["change_type"] for r in history], ["admin_assign"])
 
-    def test_therapist_cannot_edit_patient(self) -> None:
+    def test_therapist_edits_admin_note(self) -> None:
+        """★ 2026-10-06 权限变更：**取消「注意事项」的治疗师只读属性**（用户要求）。
+
+        原来这条叫 `test_therapist_cannot_edit_patient` 并断言 403，现按新口径重写。
+        """
         patient_model.create_patient(
             self.conn, inpatient_no="ZY001", name="患者", assigned_therapist_id=int(self.t1["id"])
         )
         headers = self.login_headers("T001")
         resp = self.client.put(
-            "/api/v1/patients/ZY001", json={"admin_note": "偷偷改注意事项"}, headers=headers
+            "/api/v1/patients/ZY001",
+            json={"admin_note": "治疗师补充：右侧肢体注意保护"},
+            headers=headers,
         )
-        self.assert_error(resp, 403, "ADMIN_REQUIRED")
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertEqual(resp.json()["admin_note"], "治疗师补充：右侧肢体注意保护")
+        # 只传了 admin_note → 其它字段必须原样保留（`None` = 不改，不是"清空"）
+        row = self.conn.execute("SELECT name FROM patient WHERE inpatient_no='ZY001'").fetchone()
+        self.assertEqual(row["name"], "患者")
+        # 审计记实际操作者
+        audit = self.conn.execute(
+            "SELECT user_id FROM audit_log WHERE target_type='patient'"
+            " AND target_id='ZY001' AND action='update'"
+        ).fetchone()
+        self.assertIsNotNone(audit, "改注意事项也要留审计")
+        self.assertEqual(int(audit["user_id"]), int(self.t1["id"]))
+
+    def test_therapist_cannot_edit_invisible_patient(self) -> None:
+        """权限由**角色**降级为**可见性**，而不是完全放开。
+
+        治疗师改不了他看不见的患者（已出院患者不在他的白板上）——
+        否则靠猜住院编号就能改别人已归档的病历。
+        """
+        patient_model.create_patient(
+            self.conn, inpatient_no="ZY900", name="已出院患者",
+            status=patient_model.STATUS_DISCHARGED,
+        )
+        headers = self.login_headers("T001")
+        resp = self.client.put(
+            "/api/v1/patients/ZY900", json={"admin_note": "改看不见的患者"}, headers=headers
+        )
+        self.assert_error(resp, 403, "PATIENT_NOT_VISIBLE")
 
     def test_admin_can_edit_admin_note(self) -> None:
         patient_model.create_patient(self.conn, inpatient_no="ZY001", name="患者")
@@ -592,26 +651,60 @@ class TestPatientWritePermissions(ApiTestCase):
         self.assertEqual(resp.status_code, 200, resp.text)
         self.assertEqual(resp.json()["admin_note"], "注意跌倒")
 
-    def test_therapist_cannot_restore_discharged_patient(self) -> None:
-        """Q9 的真正含义：**治疗师**不能自行恢复出院的患者，恢复留给管理员。
+    def test_therapist_may_change_status_and_restore_is_audited(self) -> None:
+        """★ 2026-10-06：治疗师**可以**改状态（用户确认"含状态"），但恢复要单独留痕。
 
-        这条替代了原先的 `test_discharge_is_irreversible` —— 那条断言的是"管理员也不能改回"，
-        与 `设计.md` 3.1「出院不可逆（**需管理员手动改回**）」和实际需求相矛盾，
-        等于把管理员自己的权限也挡死了（提示"请联系系统管理员"，而调用者就是管理员）。
+        原来这条叫 `test_therapist_cannot_restore_discharged_patient` 并断言 403。
+
+        ⚠ 注意一个**只有写测试才会暴露**的事实：治疗师**改不了已出院患者**，
+        因为 `_require_view` 会先把他挡掉（已出院不在白板上）。
+        所以"治疗师恢复出院患者"这条路径实际走不通 —— 真实恢复流程仍是
+        管理员从 `scope=all` 列表里操作。这里分两段如实验证：
+        治疗师可改**可见**患者的状态；`discharged → 其它` 记成 `restore`。
         """
+        # ① 治疗师改可见患者的状态（暂停 → 在院）
         patient_model.create_patient(
-            self.conn, inpatient_no="ZY001", name="患者",
+            self.conn, inpatient_no="ZY002", name="患者乙",
             assigned_therapist_id=int(self.t1["id"]),
-            status=patient_model.STATUS_DISCHARGED,
+            status=patient_model.STATUS_PAUSED,
         )
         headers = self.login_headers("T001")
         resp = self.client.put(
-            "/api/v1/patients/ZY001", json={"status": "in_hospital"}, headers=headers
+            "/api/v1/patients/ZY002", json={"status": "in_hospital"}, headers=headers
         )
-        self.assert_error(resp, 403, "ADMIN_REQUIRED")
-        # 确认状态确实没被改动
-        row = self.conn.execute("SELECT status FROM patient WHERE inpatient_no = 'ZY001'").fetchone()
-        self.assertEqual(row["status"], "discharged")
+        self.assertEqual(resp.status_code, 200, resp.text)
+        self.assertEqual(resp.json()["status"], "in_hospital")
+        audit = self.conn.execute(
+            "SELECT action FROM audit_log WHERE target_type='patient'"
+            " AND target_id='ZY002' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        self.assertEqual(audit["action"], "update", "暂停→在院是普通 update，不该记成 restore")
+
+        # ② 治疗师被可见性挡住：改不了已出院患者（哪怕只是想看）
+        patient_model.create_patient(
+            self.conn, inpatient_no="ZY003", name="患者丙",
+            status=patient_model.STATUS_DISCHARGED,
+        )
+        blocked = self.client.put(
+            "/api/v1/patients/ZY003", json={"status": "in_hospital"}, headers=headers
+        )
+        self.assert_error(blocked, 403, "PATIENT_NOT_VISIBLE")
+        still = self.conn.execute(
+            "SELECT status FROM patient WHERE inpatient_no='ZY003'"
+        ).fetchone()
+        self.assertEqual(still["status"], "discharged", "被挡住就不能有副作用")
+
+        # ③ 管理员恢复，且单独记 restore
+        admin_headers = self.login_headers("A001")
+        restored = self.client.put(
+            "/api/v1/patients/ZY003", json={"status": "in_hospital"}, headers=admin_headers
+        )
+        self.assertEqual(restored.status_code, 200, restored.text)
+        audit2 = self.conn.execute(
+            "SELECT action FROM audit_log WHERE target_type='patient'"
+            " AND target_id='ZY003' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        self.assertEqual(audit2["action"], "restore")
 
     def test_admin_can_restore_discharged_patient(self) -> None:
         """管理员可以把已出院改回在院（Q9：需管理员手动改回）。"""

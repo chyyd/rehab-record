@@ -1,7 +1,7 @@
 # 环境搭建与运行（setup）
 
 **当前状态**：阶段 0–5 后端、管理后台与安卓 App 均已交付并验证（**355 个测试通过、0 skip**；
-端到端 275 项、跨文档一致性由 `check_docs_consistency.py` 自报（384 项）、浏览器 UI 验收 60 项）。
+端到端 277 项、跨文档一致性由 `check_docs_consistency.py` 自报（384 项）、浏览器 UI 验收 60 项）。
 
 **2026-10-05（第三步）：治疗记录从「参数表格」改成「SOAP 模板驱动」** —— 迁移 011 重建
 `treatment_record`（19 列，含 `body_json` / `rendered_text`），012 删掉字典 / 选项集 / 患者反应定义
@@ -86,13 +86,13 @@ $py = "C:\Users\youda\AppData\Local\Programs\Python\Python313\python.exe"
 cd backend
 & $py -m unittest discover -s tests -t . -v      # 355 个测试
 & $py scripts\verify_http.py                     # 阶段 0 HTTP 端到端（14 项）
-& $py scripts\verify_stage1.py                   # 阶段 1 认证与患者（25 项）
+& $py scripts\verify_stage1.py                   # 阶段 1 认证与患者（27 项）
 & $py scripts\verify_stage2.py                   # 患者列表排序：我最近一次已提交治疗（31 项）
 & $py scripts\verify_stage3.py                   # 阶段 3 SOAP 模板记录（59 项）
 & $py scripts\verify_stage4.py                   # 阶段 4 离线与同步（36 项）
 & $py scripts\verify_stage5.py                   # 阶段 5 汇总打印、后台与 SOAP 文本（67 项）
 & $py scripts\verify_soap_flow.py              # SOAP 记录全链路：表单/门禁/出院/输出（43 项）
-& $py scripts\count_verify_checks.py             # 复核上面 7 个脚本的项数（合计 275 项）
+& $py scripts\count_verify_checks.py             # 复核上面 7 个脚本的项数（合计 277 项）
 & $py scripts\check_docs_consistency.py          # 跨文档一致性
 ```
 

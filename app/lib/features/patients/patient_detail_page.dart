@@ -6,6 +6,7 @@ import 'package:rehab_app/core/disciplines.dart';
 import 'package:rehab_app/core/route_observer.dart';
 import 'package:rehab_app/data/local/app_database.dart' as local;
 import 'package:rehab_app/data/repo/record_repository.dart';
+import 'package:rehab_app/features/patients/patient_form_sheet.dart';
 import 'package:rehab_app/features/patients/patients_providers.dart';
 import 'package:rehab_app/features/records/record_page.dart';
 import 'package:rehab_app/features/records/record_providers.dart';
@@ -104,43 +105,66 @@ class _PatientDetailPageState extends ConsumerState<PatientDetailPage>
           return ListView(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
             children: [
-              if (note.isNotEmpty)
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.errorContainer,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Icon(Icons.warning_amber_rounded,
-                          color: theme.colorScheme.onErrorContainer),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              '注意事项',
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                color: theme.colorScheme.onErrorContainer,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              note,
-                              style: TextStyle(color: theme.colorScheme.onErrorContainer),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
+              // 注意事项：治疗师**可以改**（2026-10-06 起不再是只读），
+              // 所以有内容时给一个编辑入口，没内容时给一个"添加"入口。
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: note.isEmpty
+                      ? theme.colorScheme.surfaceContainerHighest
+                      : theme.colorScheme.errorContainer,
+                  borderRadius: BorderRadius.circular(10),
                 ),
-              if (note.isNotEmpty) const SizedBox(height: 16),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(
+                      note.isEmpty
+                          ? Icons.info_outline
+                          : Icons.warning_amber_rounded,
+                      color: note.isEmpty
+                          ? theme.colorScheme.outline
+                          : theme.colorScheme.onErrorContainer,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '注意事项',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: note.isEmpty
+                                  ? theme.colorScheme.outline
+                                  : theme.colorScheme.onErrorContainer,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            note.isEmpty ? '暂无（点右侧按钮添加）' : note,
+                            style: TextStyle(
+                              color: note.isEmpty
+                                  ? theme.colorScheme.outline
+                                  : theme.colorScheme.onErrorContainer,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: note.isEmpty ? '添加注意事项' : '修改注意事项',
+                      onPressed: () => PatientFormSheet.show(context, existing: p),
+                      icon: const Icon(Icons.edit_outlined, size: 20),
+                      color: note.isEmpty
+                          ? theme.colorScheme.outline
+                          : theme.colorScheme.onErrorContainer,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
 
               Text(p.name, style: theme.textTheme.headlineSmall),
               const SizedBox(height: 4),

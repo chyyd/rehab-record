@@ -6,11 +6,15 @@
 
 - 治疗师可读：科室当前**在院 / 暂停**的全部患者（不再按归属隔离）；
   已出院默认不可见（管理员可用 `scope=all` 查看全表）。
-- 治疗师可写：只能**认领未分配**、**放弃自己的**的患者。
-  **患者主数据（诊断、注意事项、出院/恢复）仍只有管理员能改**（写入仍走 `AdminUser`）。
-  > 唯一的例外是**发起出院**：用户 2026-10-05 明确要求「所有治疗师都能发起出院」
-  > （见本文件末尾的 `request_discharge`），它只把状态推到 `pending_discharge`，
-  > 真正出院仍需管理员确认或满 7 天自动完成。
+- 治疗师可写：**建档、改诊断/注意事项/状态**、认领未分配、放弃自己的患者。
+  > ★ 2026-10-06 **患者主数据也放开了**（用户明确要求）：原来是
+  > 「只有管理员能改」，改动起因是 App 端要加「新建患者」按钮 ——
+  > 治疗师才是第一个见到患者的人（入院当天就要记录），
+  > 而当时只有管理员能在后台建档，治疗师只能干等。
+  > 权限由**角色**降级为**可见性**（`_require_view`）：治疗师只能改他看得见的患者，
+  > 管理员不受限。这一类改变必须有留痕 —— 审计日志现在记录**实际操作者**。
+  > 另一处例外是**发起出院**（2026-10-05 起任何治疗师可做），
+  > 它只把状态推到 `pending_discharge`，真正出院仍需管理员确认或满 7 天自动完成。
 - 归属（`assigned_therapist_id`）语义由"可见性闸门"降级为**优先级与文书署名**。
 
 注意：`visible_therapist_id`（可见归属）仍是**归属语义**的判据
@@ -112,9 +116,20 @@ def list_patients(
 @router.post("", response_model=PatientOut, status_code=status.HTTP_201_CREATED, summary="新建患者")
 def create_patient(
     payload: PatientCreateRequest,
-    admin: AdminUser,
+    user: CurrentUser,
     conn: Annotated[sqlite3.Connection, Depends(get_db)],
 ) -> dict[str, Any]:
+    """新建患者。
+
+    ★ 2026-10-06 权限变更（用户明确要求）：**任何治疗师**都能建档，
+    原来是 `AdminUser`（管理员专属）。
+
+    触发本次变更的是 App 端需求：「在 app 的患者页，右侧偏下悬浮一个 + 号的
+    圆形按钮，用来新建患者」—— 治疗师才是第一个见到患者的人（入院当天就要记录），
+    而当时只有管理员能在后台建档，治疗师只能干等。
+
+    同一次变更还把「注意事项」的写权限一并放开（见 `update_patient`）。
+    """
     if payload.assigned_therapist_id is not None:
         try:
             user_model.get_by_id_or_raise(conn, payload.assigned_therapist_id)
@@ -128,7 +143,6 @@ def create_patient(
     if payload.status == patient_model.STATUS_DISCHARGED:
         # 不允许直接建一个"已出院"的患者：那等于凭空造出一条没有在院经历的病历。
         # 正常的出院动作是"先建在院患者，再改状态为 discharged"。
-        # 这与"出院能否改回"无关 —— 改回由 update_patient 负责（仅管理员可做）。
         raise ForbiddenError("PATIENT_DISCHARGED_IMMUTABLE", "不能新建已出院的患者")
     patient = patient_model.create_patient(
         conn,
@@ -139,7 +153,9 @@ def create_patient(
         assigned_therapist_id=payload.assigned_therapist_id,
         status=payload.status,
     )
-    write_audit(conn, user_id=int(admin["id"]), action="create", target_type="patient",
+    # 审计记录**实际操作者**（不再假定是管理员）—— 权限放开之后
+    # "谁建的档"必须如实留痕，否则审计日志会开始说谎。
+    write_audit(conn, user_id=int(user["id"]), action="create", target_type="patient",
                 target_id=patient["inpatient_no"], after=patient)
     return patient
 
@@ -161,25 +177,35 @@ def get_patient(
 def update_patient(
     inpatient_no: str,
     payload: PatientUpdateRequest,
-    admin: AdminUser,
+    user: CurrentUser,
     conn: Annotated[sqlite3.Connection, Depends(get_db)],
 ) -> dict[str, Any]:
-    """修改患者（**仅管理员**，数据级权限靠 `AdminUser` 强制）。
+    """修改患者。
+
+    ★ 2026-10-06 权限变更（用户明确要求）：**任何治疗师**都能改，
+    原来是 `AdminUser`（管理员专属）。用户的原话是
+    「取消注意事项的治疗师只读属性」，并确认「治疗师可改患者全部字段（含状态）」。
+
+    ## 数据级门禁
+
+    权限从"角色"降级为"**可见性**"：治疗师只能改他看得见的患者
+    （`_require_view`，管理员不受限）。否则治疗师能靠猜住院编号去改
+    已出院患者的信息 —— 而那些患者本就不该出现在他的白板上。
 
     ## 出院可逆性（Q9）
 
     `设计.md` 3.1 的原文是「**出院不可逆**（需管理员手动改回），暂停治疗可逆」——
-    也就是说"不可逆"指的是**治疗师不能自行恢复**，恢复动作本身就是留给管理员的。
-    本接口已经是 `AdminUser`，因此这里**不再额外拦截**：
+    也就是说"不可逆"指的是**治疗师不能自行恢复**。2026-10-06 起治疗师
+    **可以**恢复（用户要求放开全部字段），所以这条限制现在只剩
+    "必须有留痕"：`discharged → 其它状态` 单独记为 `restore` 动作，
+    这样审计日志里能一眼看出谁做过恢复，而不是淹没在普通的 `update` 里。
 
     > 早先这里写了一条"已出院不能再改状态"的判断，结果把管理员自己的权限也挡了，
     > 提示"如需恢复请联系系统管理员"——而**调用者就是系统管理员**，形成死锁：
     > 没有任何路径能把患者改回在院。已删除该判断。
-
-    为便于事后追溯，把"已出院 → 其它状态"单独记为 `restore` 动作，
-    这样审计日志里能一眼看出谁做过恢复，而不是淹没在普通的 `update` 里。
     """
     before = patient_model.get_patient_or_raise(conn, inpatient_no)
+    _require_view(user, before)
 
     is_restore = (
         before["status"] == patient_model.STATUS_DISCHARGED
@@ -195,7 +221,8 @@ def update_patient(
         admin_note=payload.admin_note,
         status=payload.status,
     )
-    write_audit(conn, user_id=int(admin["id"]), action="restore" if is_restore else "update",
+    # 如实记录**实际操作者**（权限放开后不能再假定是管理员）。
+    write_audit(conn, user_id=int(user["id"]), action="restore" if is_restore else "update",
                 target_type="patient", target_id=inpatient_no, before=before, after=after)
     return after
 

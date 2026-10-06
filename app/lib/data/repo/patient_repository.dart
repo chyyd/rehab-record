@@ -34,7 +34,10 @@ class PatientView {
   final String status;
   final String? diagnosis;
 
-  /// 注意事项（治疗师**只读**，仅管理员能改）。
+  /// 注意事项。
+  ///
+  /// ★ 2026-10-06：**不再是治疗师只读**（用户要求取消该限制）——
+  /// 任何治疗师都能改，服务端写入走可见性门禁。
   final String? adminNote;
   final int? assignedTherapistId;
 
@@ -302,8 +305,76 @@ class PatientRepository {
     return seen.length;
   }
 
-  Future<void> _upsert(Map<String, dynamic> json) async {
-    await _db.into(_db.patients).insertOnConflictUpdate(
+  /// 新建患者（`POST /patients`）。
+  ///
+  /// ★ 2026-10-06：后端权限已放开给**所有治疗师**（原来是管理员专属），
+  /// App 的患者页因此多了「+」悬浮按钮。
+  ///
+  /// **只走在线**：本地没有"待新建患者"的离线队列（那要处理编号冲突与去重），
+  /// 断网时直接把 `NETWORK_ERROR` 抛给调用方提示重试即可 ——
+  /// 建档是一次性的动作，不像治疗记录那样必须离线可用。
+  ///
+  /// 成功后**顺手写回本地**：否则新建完列表里看不到它，还得等一次同步。
+  Future<PatientView> create({
+    required String inpatientNo,
+    required String name,
+    String? diagnosis,
+    String? adminNote,
+    String? status,
+  }) async {
+    final data = await _client.request(
+      kPatients,
+      method: 'POST',
+      body: {
+        'inpatient_no': inpatientNo,
+        'name': name,
+        if (diagnosis != null && diagnosis.isNotEmpty) 'diagnosis': diagnosis,
+        if (adminNote != null && adminNote.isNotEmpty) 'admin_note': adminNote,
+        'status': ?status,
+      },
+    ) as Map<String, dynamic>;
+    await _upsert(data);
+    final saved = await findByNo(inpatientNo);
+    if (saved == null) {
+      // 理论上 write 之后一定读得到；真读不到也不要假装成功。
+      throw StateError('患者已创建但本地写入失败：$inpatientNo');
+    }
+    return saved;
+  }
+
+  /// 修改患者（`PUT /patients/{inpatient_no}`）。
+  ///
+  /// **字段级语义**：只传要改的字段，`null` 表示"不改"（不是"清空"）——
+  /// 与服务端 `PatientUpdateRequest` 一致。清空某字段请传 `''`。
+  ///
+  /// ★ 2026-10-06：后端权限放开给**所有治疗师**（原来是管理员专属），
+  /// 「注意事项」不再是治疗师只读。
+  Future<PatientView> update(
+    String inpatientNo, {
+    String? name,
+    String? diagnosis,
+    String? adminNote,
+    String? status,
+  }) async {
+    final data = await _client.request(
+      kPatient(inpatientNo),
+      method: 'PUT',
+      body: {
+        'name': ?name,
+        'diagnosis': ?diagnosis,
+        'admin_note': ?adminNote,
+        'status': ?status,
+      },
+    ) as Map<String, dynamic>;
+    await _upsert(data);
+    final saved = await findByNo(inpatientNo);
+    if (saved == null) {
+      throw StateError('患者已更新但本地写入失败：$inpatientNo');
+    }
+    return saved;
+  }
+
+  Future<void> _upsert(Map<String, dynamic> json) async {    await _db.into(_db.patients).insertOnConflictUpdate(
           PatientsCompanion.insert(
             inpatientNo: json['inpatient_no'] as String,
             name: json['name'] as String,
