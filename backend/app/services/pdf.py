@@ -66,10 +66,15 @@ def _styles() -> dict[str, ParagraphStyle]:
         "subtitle": ParagraphStyle("subtitle", fontName=font, fontSize=11, leading=16, alignment=1),
         "heading": ParagraphStyle("heading", fontName=font, fontSize=12, leading=18, spaceBefore=6),
         "body": ParagraphStyle("body", fontName=font, fontSize=9, leading=13),
-        # SOAP 正文：段与段之间靠空行区分，行距留足便于阅读与批注
+        # SOAP 正文：段与段之间**不再用空行**撑（2026-10-06 用户要求去掉多余空行），
+        # 改由这里的 `spaceAfter` 分段；行距仍留足，便于阅读与批注。
         "soap": ParagraphStyle("soap", fontName=font, fontSize=9.5, leading=15, spaceAfter=6),
         "cell": ParagraphStyle("cell", fontName=font, fontSize=8, leading=11),
         "meta": ParagraphStyle("meta", fontName=font, fontSize=9, leading=14),
+        # 每日汇总的**日期小线**：只是"换了一天"的落点，不是标题，
+        # 所以比 `heading` 小、且只用极少的上间距（用户嫌空白多）。
+        "day": ParagraphStyle("day", fontName=font, fontSize=9.5, leading=13,
+                              spaceBefore=4, spaceAfter=3, textColor=colors.HexColor("#444444")),
     }
 
 
@@ -87,8 +92,28 @@ def _escape(text: str) -> str:
 
 
 def _soap_paragraph(text: str, style: dict[str, ParagraphStyle]) -> Paragraph:
-    """把一条记录的 `rendered_text` 变成段落（**保留原样换行**，不重排、不加表格）。"""
-    return Paragraph(_escape(text.strip()), style["soap"])
+    """把一条记录的 `rendered_text` 变成段落（**保留换行结构**，不重排、不加表格）。
+
+    ★ 2026-10-06 用户：「空行有些多，比如客观资料、主观资料等之间存在空行，
+    占用大量空间，去掉」。
+
+    模板渲染出来的文本各段之间**本来就有一个空行**；再叠上 `soap` 样式的
+    `spaceAfter=6`，视觉上就空得过多（打印时尤其费纸）。
+
+    所以这里把空行**全部去掉**，段落之间改由 `spaceAfter` 分隔。
+    段落内部的换行保留（那是同一段里的折行，不是分段），不会把内容挤成一坨。
+    """
+    return Paragraph(_escape(_drop_blank_lines(text).strip()), style["soap"])
+
+
+def _drop_blank_lines(text: str) -> str:
+    """去掉所有空行（只保留非空行，行序不变）。
+
+    例：
+        '主观资料：…\\n\\n客观资料：…'  →  '主观资料：…\\n客观资料：…'
+    段间视觉间隔由 `soap` 样式的 `spaceAfter` 负责，不再靠空行撑。
+    """
+    return "\n".join(line for line in text.split("\n") if line.strip())
 
 
 def _soap_block(
@@ -405,13 +430,19 @@ def patient_daily_pdf(daily: dict[str, Any], *, dept_name: str = DEFAULT_DEPT_NA
     if not days:
         story.append(Paragraph("（区间内无已提交记录）", style["body"]))
     for day in days:
-        therapists = "、".join(day.get("therapists") or [])
-        if any(rec.get("is_temporary") for rec in day.get("records") or []):
-            therapists += "（临时）"
-        head = f"{day['record_date']}"
-        if therapists:
-            head += f"　{therapists}"
-        story.append(Paragraph(f"<b>{_escape(head)}</b>", style["heading"]))
+        # ★ 2026-10-06 用户：「将类似『2026-09-26 张三、李四（临时）』
+        #   『2026-09-27 张三、李四（临时）』这样的行去掉，我不知道这是什么，
+        #   但是多余」。
+        #
+        # 那一行原来是把每天的**日期 + 当天所有治疗师**拼成 `heading` 当大标题。
+        # 治疗师名字是多余的：**每条文书的抬头上已经有治疗师**（`_record_meta`
+        # 里那行），再来一份汇总只会让人以为是别的东西 —— 用户的原话正是
+        # "我不知道这是什么"。
+        #
+        # 所以这里只留**日期**这一条很轻的小线，作用只是"换了一天"的落点：
+        # 下面紧接着就是当天的第一条文书，它的 `治疗日期：YYYY-MM-DD` 与其一致。
+        # 不再加粗、不再放大、不再列治疗师。
+        story.append(Paragraph(_escape(str(day["record_date"])), style["day"]))
         records = day.get("records") or []
         if not records:
             story.append(Paragraph("（当天无已提交记录）", style["body"]))

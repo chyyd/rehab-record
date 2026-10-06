@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import io
+import re
 import unittest
 import zlib
 
@@ -458,6 +459,29 @@ class TestPdfRendering(SummaryTestCase):
         # 多日记录仍按时间升序往下排
         positions = [text.index(day) for day in ("2027-03-01", "2027-03-03")]
         self.assertEqual(positions, sorted(positions), "多日记录按时间升序往下排")
+
+        # ⑦ 2026-10-06：去掉「日期 + 当天所有治疗师」那种大标题行。
+        #    用户原话：「将类似『2026-09-26 张三、李四（临时）』这样的行去掉，
+        #    我不知道这是什么，但是多余」—— 治疗师名字每条文书的抬头上已经有了。
+        #    现在只留一条很轻的**日期小线**（单独一行、只有日期、不加粗）。
+        self.assertNotIn("（临时）", text, "日期行里不该再拼治疗师（含「临时」标记）")
+        for day in ("2027-03-01", "2027-03-03"):
+            self.assertTrue(
+                re.search(rf"^{re.escape(day)}$", text, re.M),
+                f"{day} 应作为**单独一行**的日期小线出现（不跟治疗师名）",
+            )
+
+        # ⑧ 2026-10-06：去掉段间多余空行（用户：「空行有些多…占用大量空间，去掉」）。
+        #    `rendered_text` 里各段之间本来就有一个空行，再叠上 spaceAfter 就太空；
+        #    现在空行全部去掉，分段交给 spaceAfter。
+        lines = text.split("\n")
+        self.assertFalse(
+            any(a.strip() == "" and b.strip() == "" for a, b in zip(lines, lines[1:], strict=False)),
+            "不应出现连续空行",
+        )
+        # 四段连续出现且顺序不变（没有被挤成一行、也没丢内容）
+        idx = [text.index(seg) for seg in ("主观资料：", "客观资料：", "评估分析：", "康复计划：")]
+        self.assertEqual(idx, sorted(idx), "四段顺序不变")
 
     def test_empty_pdf_does_not_crash(self) -> None:
         overview = summary_service.patient_overview(self.conn, patient_no="ZY001")
