@@ -103,6 +103,60 @@ void main() {
       final rows = await db.select(db.syncState).get();
       expect(rows.length, 1, reason: 'sync_state 是键值对，不该堆多行');
     });
+
+    /// ★ 2026-10-06：服务端变更日志被重建时，本地游标会"领先"服务端。
+    ///
+    /// 原来的行为是**静默空转**：`id > 931` 查不到行 → 服务端永远回
+    /// `changes: []` + `hasMore: false` → App 以为同步完了，从此再也拉不到新数据，
+    /// 而且没有任何报错可查。（我本人造数后就是这么撞上的：服务端 288 条记录、
+    /// 本地只剩 3 条却坚称已同步。）
+    ///
+    /// 现在服务端会回 `stale_cursor: true`，客户端据此丢掉游标、改走全量。
+    test('★ 服务端回 stale_cursor 时丢掉本地游标（不再静默空转）', () async {
+      await engine.writeCursor(931);
+
+      // 第一次 pull：服务端说游标作废；随后 pullInitial 会再拉一次，给空快照。
+      final adapter = ScriptedAdapter({});
+      adapter.sequences[kSyncPull] = [
+        (
+          200,
+          {
+            'cursor': 931,
+            'latest_cursor': 5,
+            'changes': <Object?>[],
+            'has_more': false,
+            'stale_cursor': true,
+          }
+        ),
+        (
+          200,
+          {
+            'cursor': 5,
+            'latest_cursor': 5,
+            'changes': <Object?>[],
+            'has_more': false,
+            'stale_cursor': false,
+          }
+        ),
+      ];
+      final stale = SyncEngine(
+        client: buildScriptedClient({}, adapter: adapter),
+        db: db,
+      );
+
+      await stale.pullIncremental();
+
+      expect(
+        adapter.seen.length,
+        greaterThanOrEqualTo(2),
+        reason: 'stale_cursor 之后应该**再全量拉一次**，而不是就此收工',
+      );
+      expect(
+        await stale.readCursor(),
+        5,
+        reason: '旧的 931 指向不存在的历史，必须被换成服务端的真实游标',
+      );
+    });
   });
 
   group('应用服务端变更（payload 是完整快照 → 幂等 upsert）', () {

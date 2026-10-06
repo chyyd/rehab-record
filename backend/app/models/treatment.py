@@ -628,6 +628,7 @@ def create_record(
     status: str = STATUS_DRAFT,
     client_uuid: str | None = None,
     note: str | None = None,
+    log_change: bool = False,
 ) -> dict[str, Any]:
     """新建记录（草稿或直接提交）。
 
@@ -702,7 +703,32 @@ def create_record(
             client_uuid,
         ),
     )
-    return get_record_or_raise(conn, int(cur.lastrowid))
+    record = get_record_or_raise(conn, int(cur.lastrowid))
+
+    # ★ 2026-10-06：可选地写一条变更日志。
+    #
+    # 默认 **False**：正常写入路径（API 与 `/sync/push`）都在**外层**写日志
+    #（那里才有 actor 与 payload 形状的完整上下文），模型层不应擅自重复写。
+    #
+    # 需要它的场景是**造数/导入**：`scripts/seed_demo_records.py` 直接调本函数
+    # 批量建记录，如果只写 `treatment_record` 而不写 `change_log`，客户端游标会
+    # "领先"服务端（见 `pull_changes` 里的 stale_cursor），App 从此**静默地
+    # 永远拉不到新数据** —— 我就踩过这个坑（服务端 288 条、change_log 空）。
+    if log_change:
+        from app.services import sync as sync_service
+
+        sync_service.record_change(
+            conn,
+            entity="treatment_record",
+            entity_id=record["id"],
+            op="insert",
+            revision=int(record["revision"]),
+            actor_user_id=therapist_id,
+            payload={"patient_no": patient_no, "record_date": record_date,
+                     "discipline": discipline, "kind": kind, "body": answers,
+                     "status": status},
+        )
+    return record
 
 
 def update_record(

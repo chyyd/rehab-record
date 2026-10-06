@@ -129,11 +129,28 @@ def pull_changes(
     # 既包括本次因 limit 截断，也包括调用方过滤了实体而留下的其它变更。
     # 只按"是否截断"判断会让按实体订阅的客户端永远拿不到提示。
     pending = conn.execute("SELECT 1 FROM change_log WHERE id > ? LIMIT 1", (next_cursor,)).fetchone()
+
+    # ★ 2026-10-06：**客户端游标领先服务端** → 明确告诉它"你的游标作废了"。
+    #
+    # 什么时候会发生：服务端的 `change_log` 被重建/清空过（灾备恢复、开发时重置、
+    # 造数脚本清表），而客户端还记着清空**之前**的游标。
+    #
+    # 原来的行为是**静默空转**：`id > 931` 查不到任何行，于是永远返回
+    # `changes: []` + `has_more: false`，客户端以为"已经同步完了"，
+    # 从此再也拉不到新数据 —— 而且没有任何报错可查。
+    # 我本人在造数后就撞上过：服务端 288 条记录、`change_log` 却是空的，
+    # App 本地只剩 3 条还坚称已同步。
+    #
+    # 这里只**报告**事实，不替客户端做决定：`stale_cursor=true` 时客户端应丢掉
+    # 本地游标、走一次 `pullInitial`（全量重建）。服务端不自动重置，
+    # 因为它不知道客户端本地有多少"未推送的离线改动"。
+    stale_cursor = cursor > latest
     return {
         "cursor": next_cursor,
         "latest_cursor": latest,
         "changes": changes,
         "has_more": bool(has_more_batch or pending is not None),
+        "stale_cursor": stale_cursor,
     }
 
 

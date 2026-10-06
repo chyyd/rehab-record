@@ -479,6 +479,20 @@ class SyncEngine {
         );
   }
 
+  /// 丢掉本地游标（归零）。
+  ///
+  /// 只在服务端明确回了 `stale_cursor` 时用 —— 那说明服务端的变更日志被重建过，
+  /// 本地这个数字已经指向不存在的历史。归零后由 `pullInitial` 重新建立。
+  ///
+  /// **不删本地记录**：`pullInitial` 是幂等 upsert（按服务端 id），
+  /// 本地已有的行会被同一份快照覆盖而不是插重复；本地未推送的离线改动
+  /// 也仍然在 `change_queue` 里、不受影响。
+  Future<void> clearCursor() async {
+    await (_db.delete(_db.syncState)
+          ..where((t) => t.key.equals('last_cursor')))
+        .go();
+  }
+
   /// **增量**拉取：不带 `entities` 过滤，循环拉到没有更多为止。
   ///
   /// ★ 不要在这里传 `entities` —— 被过滤掉的变更不返回但游标仍前进，
@@ -490,6 +504,23 @@ class SyncEngine {
         kSyncPull,
         query: {'cursor': cursor, 'limit': maxPullLimit},
       ) as Map<String, dynamic>;
+
+      // ★ 2026-10-06：服务端说"你的游标已作废" → 丢掉本地游标、走一次全量重建。
+      //
+      // 触发条件：本地游标**大于**服务端 `change_log` 的最大 id，即服务端的
+      // 变更日志被重建/清空过（灾备恢复、开发时重置、造数脚本清表）。
+      //
+      // 不处理的话会**静默空转**：`id > 931` 查不到任何行，服务端永远返回
+      // `changes: []` + `hasMore: false`，App 以为已经同步完，从此再也拉不到
+      // 新数据 —— 没有任何报错可查。我本人在造数后就这么撞上过
+      //（服务端 288 条记录、本地只剩 3 条却坚称已同步）。
+      //
+      // 这里重新全量：`pullInitial` 会把服务端当前所有记录按快照拉下来，
+      // 结束后把游标落在服务端的 `latest_cursor` 上，之后增量又正常了。
+      if (data['stale_cursor'] == true) {
+        await clearCursor();
+        return pullInitial();
+      }
 
       final changes = (data['changes'] as List?) ?? const [];
       for (final raw in changes.whereType<Map>()) {

@@ -165,9 +165,9 @@ class _PatientTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    // `isMine` 只剩一个用途：给"我的患者"的头像上色（归属标签已按用户要求隐藏）。
     final isMine = currentTherapistId != null &&
         patient.assignedTherapistId == currentTherapistId;
-    final isUnassigned = patient.assignedTherapistId == null;
     final note = PatientRepository.flattenNote(patient.adminNote);
 
     return ListTile(
@@ -198,8 +198,13 @@ class _PatientTile extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
-          if (isMine) const _Tag(text: '我的', tone: _TagTone.primary),
-          if (isUnassigned) const _Tag(text: '未分配', tone: _TagTone.neutral),
+          // ★ 2026-10-06 用户要求：「在患者页的患者名后面，隐藏掉归属标签」。
+          //
+          // 原来这里会标「我的」/「未分配」。**归属仍然影响排序**（我的 →
+          // 未分配 → 其他，由服务端算），只是不再用标签把它写在名字后面 ——
+          // 治疗师要的是"我最近治过谁排在前面"，而不是被贴一个归属身份。
+          //
+          // 「暂停」是**患者状态**、不是归属，所以保留。
           if (patient.isPaused) const _Tag(text: '暂停', tone: _TagTone.warn),
         ],
       ),

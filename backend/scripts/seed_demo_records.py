@@ -311,7 +311,7 @@ def main() -> int:
                         record_date=str(start - timedelta(days=args.initial_days_ago)),
                         discipline=d,
                         kind="initial", body=make_body(rng, d, "initial"),
-                        status="submitted",
+                        status="submitted", log_change=True,
                     )
                     made += 1
 
@@ -332,7 +332,7 @@ def main() -> int:
                             conn, patient_no=pno, therapist_id=tid,
                             record_date=day, discipline=d, kind="reassessment",
                             body=make_body(rng, d, "reassessment"),
-                            status="submitted",
+                            status="submitted", log_change=True,
                         )
                         made += 1
 
@@ -348,7 +348,7 @@ def main() -> int:
                             treatment_model.create_record(
                                 conn, patient_no=pno, therapist_id=tid,
                                 record_date=day, discipline=d, kind="daily",
-                                body=make_body(rng, d, "daily"), status="submitted",
+                                body=make_body(rng, d, "daily"), status="submitted", log_change=True,
                             )
                         except Exception as exc:            # noqa: BLE001
                             # 同日额度已被复评占掉一条时，第 2 条会超限 —— 属预期，静默跳过

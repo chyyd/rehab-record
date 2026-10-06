@@ -152,13 +152,16 @@ class _PatientDetailPageState extends ConsumerState<PatientDetailPage>
               const SizedBox(height: 16),
 
               _InfoRow(label: '诊断', value: p.diagnosis ?? '—'),
-              _InfoRow(label: '状态', value: _statusLabel(p.status)),
-              _InfoRow(
-                label: '归属',
-                // 优先显示**姓名**（服务端解析），拿不到才退回 id、再退回"未分配"。
-                // 三级兜底写在 `PatientView.ownerLabel` 里，列表页也用同一口径。
-                value: p.ownerLabel,
-              ),
+              // ★ 2026-10-06 用户要求：「在患者详情页，隐藏掉归属和状态」。
+              //
+              // 所以这里不再显示「状态」「归属」两行。
+              //
+              // 两件事都还在、只是不占这两行：
+              //  · 状态仍是**权威信息**，只是改用别处表达 —— 出院/待出院由
+              //    `_DischargedNotice` 代替「记录治疗」区域提示（见下），
+              //    在院患者没有标签，也就不需要一行文字说明。
+              //  · 归属仍影响患者列表的排序（服务端算），详情页不再重复它。
+              // 需要在排障时看这两个值，直接查 `/patients/{no}` 的响应即可。
 
               const Divider(height: 32),
               Text('记录治疗', style: theme.textTheme.titleMedium),
@@ -245,13 +248,10 @@ class _PatientDetailPageState extends ConsumerState<PatientDetailPage>
     );
   }
 
-  static String _statusLabel(String status) => switch (status) {
-        'in_hospital' => '在院',
-        'paused' => '暂停',
-        'pending_discharge' => '待出院（已提交出院小结）',
-        'discharged' => '已出院',
-        _ => status,
-      };
+  // 2026-10-06：`_statusLabel()` 随「状态」那一行一起删掉了。
+  // 患者状态仍由 `_DischargedNotice`（待出院/已出院）表达 —— 那才是治疗师
+  // 真正需要被拦住的地方；在院/暂停不需要一行文字去说明。
+  // 想看原始 `status` 值就查 `/patients/{no}` 的响应。
 
   /// 打开一条既有记录继续编辑（用户：「在原始记录上进行修改」）。
   void _openExisting(BuildContext context, local.TreatmentRecord row) {

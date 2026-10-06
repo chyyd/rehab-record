@@ -290,7 +290,8 @@ MAX_PULL_LIMIT    = 500                               # 单次最多 500 条
      "revision": 3, "actor_user_id": 2, "payload": { "...": "完整实体快照" },
      "created_at": "2027-03-01T02:00:00.000Z"}
   ],
-  "has_more": false
+  "has_more": false,
+  "stale_cursor": false
 }
 ```
 
@@ -298,6 +299,22 @@ MAX_PULL_LIMIT    = 500                               # 单次最多 500 条
 - **无新变更时 `cursor` 不前移**（与请求值相同），客户端不要自己推进。
 - `has_more=true` 表示还有未拉取的变更（含"因 `entities` 过滤而留下的其它实体变更"），
   客户端应**继续拉**直到 `false`。
+- **`stale_cursor=true`**（★ 2026-10-06 新增）表示**客户端游标领先服务端** ——
+  即本地记的 `last_cursor` 大于服务端 `change_log` 的最大 id。这只会在服务端的
+  变更日志被**重建/清空**过时发生（灾备恢复、开发时重置库、造数脚本清表）。
+
+  客户端收到它必须**丢掉本地游标并重新走一次全量**（`pullInitial`），
+  否则会**静默空转**：`id > 931` 查不到任何行，服务端永远回 `changes: []` +
+  `has_more: false`，客户端以为已经同步完，从此再也拉不到新数据 ——
+  而且**没有任何报错可查**。
+
+  > 这个字段是踩过坑之后加的：造数脚本清空 `change_log` 却只重写业务表，
+  > 结果服务端有 288 条记录、客户端本地只剩 3 条还坚称"已同步"。
+  > **服务端不会自动重置客户端游标**（它不知道客户端本地有多少未推送的离线改动），
+  > 只负责**如实报告**这个事实，由客户端决定重建。
+  >
+  > 重建只归零游标，**不删本地记录**：`pullInitial` 是按服务端 id 的幂等 upsert，
+  > 本地已有的行会被同一份快照覆盖而不是插重复；`change_queue` 里的离线改动也不受影响。
 
 ### 5.3 `entities` 过滤的语义（易错）
 
@@ -386,7 +403,7 @@ treatment_record(id PK, patient_no, therapist_id, record_date, discipline, kind,
                  client_uuid, sync_status)
                  -- ✅ 2026-10-05：**已落地**（Drift schemaVersion 4 → 5：重建
                  --   `treatment_records`、删掉 `record_items` 表），payload 换成 `body`；
-                 --   **130 个本地测试全部通过**。
+                 --   **131 个本地测试全部通过**。
                  -- ★ 与本地表有**两处刻意的差异**，不是笔误：
                  --   · 本地**多留** `is_temporary` / `original_therapist_id` 两列 ——
                  --     旧列的列位，服务端已于迁移 011 删除（`is_temporary` 改为查询时推导）。
@@ -416,7 +433,7 @@ sync_state(key PK, value)     -- last_cursor / last_patient_sync_at / last_full_
    （删除整张表 + 删除 `treatment_records.appointment_id` 列）；2026-10-05 再升到 **4**
    （删除 `patients.visibility_state` 列 —— 临时指派删除后该列已退化）。
    **本轮（SOAP 改造）已升到 5**：`treatment_records` 换成上面的新列、
-   删掉 `record_items` 表 —— 这一步**已落地**（**130 个本地测试全部通过**）。
+   删掉 `record_items` 表 —— 这一步**已落地**（**131 个本地测试全部通过**）。
    2026-10-05 稍后再升到 **6**：`patients` 加 `assigned_therapist_name`
    （归属治疗师姓名，服务端解析后下发；详情页不再显示「治疗师 #2」这种原始 id）。
 6. `scope=temp` **已删除**（2026-10-05）：服务端患者列表的 `Scope` 只剩
@@ -568,5 +585,5 @@ access token 只放内存。自签 CA 用 Dart 层 `SecurityContext` 注入，**
 | 3 | `docs/api.md` / `docs/data-model.md` | 仍未创建；接口契约可直接用 `/openapi.json` 导出 |
 | 4 | 冲突解决 UI 形态 | **已落地**（App 冲突列表 +「保留我的 / 采用服务端」两向裁决，见 `CHANGELOG.md`）；文案与交互仍以现场反馈为准 |
 | 5 | 患者离线认领 | 当前推送 `patient` 会 422；床旁现场认领是否要离线支持待定 |
-| 6 | **安卓端（`app/`）已适配 SOAP 契约 —— 已完成** | 本地 Drift 表升到 **schemaVersion 6**（5：`treatment_records` 换成 §7.2 的新列、`record_items` 表**删掉**；6：`patients` 加 `assigned_therapist_name`）、同步 payload 换成 `body`、记录页改为一屏 chip；**130 个本地测试全部通过**（`flutter analyze` 无问题、`flutter build apk --debug` 成功） |
+| 6 | **安卓端（`app/`）已适配 SOAP 契约 —— 已完成** | 本地 Drift 表升到 **schemaVersion 6**（5：`treatment_records` 换成 §7.2 的新列、`record_items` 表**删掉**；6：`patients` 加 `assigned_therapist_name`）、同步 payload 换成 `body`、记录页改为一屏 chip；**131 个本地测试全部通过**（`flutter analyze` 无问题、`flutter build apk --debug` 成功） |
 | 7 | `conflict_policy` 里的 `"dictionary"` 残留键 | 见 §10 的 2026-10-05（第三步）说明；需改 `app/schemas/sync.py` |

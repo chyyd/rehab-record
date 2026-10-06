@@ -79,6 +79,13 @@ class SyncPullResponse(BaseModel):
     )
     changes: list[SyncChangeOut] = Field(default_factory=list)
     has_more: bool = Field(description="为 true 时还有未拉取的变更，客户端应继续拉")
+    # ★ 2026-10-06：客户端游标**领先**服务端（服务端的 change_log 被重建/清空过）。
+    # 为 true 时客户端必须丢掉本地游标、走一次全量 `pullInitial`，
+    # 否则它会在"changes 永远为空"里静默空转、再也拉不到新数据。
+    stale_cursor: bool = Field(
+        default=False,
+        description="为 true 时本地游标已作废（服务端变更日志被重建过），应重新全量同步",
+    )
 
 
 class SyncInfoOut(BaseModel):

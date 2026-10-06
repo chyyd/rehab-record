@@ -23,6 +23,20 @@ class ScriptedAdapter implements HttpClientAdapter {
   /// 按顺序记录请求，便于断言"带没带 Authorization"、"重放了几次"。
   final List<RequestOptions> seen = [];
 
+  /// **有序脚本**：第 n 次命中该路径的请求返回第 n 个响应。
+  ///
+  /// 与 [responses]（按路径给固定响应）互补 —— 有些行为只在"同一个接口先返回 A、
+  /// 再返回 B"时才验证得了。典型例子是 `/sync/pull`：服务端先说"你的游标作废了"
+  ///（`stale_cursor: true`），客户端丢掉游标**再拉一次**，第二次才是真正的快照。
+  /// 固定响应表达不了这种两段式。
+  ///
+  /// 用完之后继续复用最后一个响应（不越界、不报错），
+  /// 免得测试因为"多拉了一次"而莫名其妙地 404。
+  final Map<String, List<(int, Object?)>> sequences = {};
+
+  /// 每条路径各自消耗到第几个（与 [sequences] 配合）。
+  final Map<String, int> _sequenceCursor = {};
+
   /// 为真时，**第一次之后的**请求把 401 改成 200，用来测静默刷新 + 重放。
   bool succeedAfterRefresh = false;
 
@@ -46,6 +60,15 @@ class ScriptedAdapter implements HttpClientAdapter {
     if (binary != null) {
       final (status, bytes) = binary;
       return ResponseBody.fromBytes(bytes, status, headers: binaryHeaders);
+    }
+
+    // 有序脚本优先：同一个路径要"先 A 后 B"时用它。
+    final script = sequences[options.path];
+    if (script != null && script.isNotEmpty) {
+      final idx = (_sequenceCursor[options.path] ?? 0).clamp(0, script.length - 1);
+      _sequenceCursor[options.path] = idx + 1;
+      final (status, body) = script[idx];
+      return ResponseBody.fromString(jsonEncode(body), status, headers: jsonHeaders);
     }
 
     final entry = responses[options.path];
