@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
     一键启动 / 停止 康复科治疗过程记录系统（后端 API + 管理后台前端）。
 
@@ -24,7 +24,8 @@
     端口，默认 8000 / 5173。
 
 .EXAMPLE
-    .\start.ps1                 # 启动并打开浏览器
+    .\start.ps1                 # 启动并打开浏览器（只绑本机）
+    .\start.ps1 -Lan            # 额外让**内网其它客户端**访问（IPv4，放行防火墙）
     .\start.ps1 -NoBrowser      # 只启动
     .\start.ps1 stop            # 停止（含看门狗）
     .\start.ps1 status          # 看状态
@@ -33,6 +34,10 @@
     首次运行若提示脚本被禁止执行，用其中任一种方式：
       powershell -ExecutionPolicy Bypass -File .\start.ps1
       Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+
+    `-Lan` 会把后端绑到 `0.0.0.0` 并放行防火墙入站端口（这一步可能需要
+    **管理员**权限；没有权限时脚本会打印要手动执行的命令）。
+    只监听 **IPv4**，不监听 IPv6。
 #>
 
 [CmdletBinding()]
@@ -42,6 +47,15 @@ param(
     [string]$Action = 'start',
 
     [switch]$NoBrowser,
+    # ★ 只绑本机回环，还是会**一并给内网其它客户端**用（2026-10-06）。
+    #
+    # 默认**不开**：把服务开到局域网上应该是一个显式选择，不该是"悄悄发生"的
+    # —— 这个后台没有 TLS、也没有额外的访问控制，能连上就能用。
+    #
+    # 加了它之后：后端绑 `0.0.0.0`（IPv4 全接口），内网其它机器可以用
+    # `http://<本机IPv4>:5173` 访问管理后台（Vite 会把 `/api` 反代到本机后端）。
+    # 只用 IPv4、**不监听 IPv6**。
+    [switch]$Lan,
     # 仅与 clean 配合：连开发数据库一起删
     [switch]$IncludeData,
     [int]$BackendPort = 8000,
@@ -73,6 +87,21 @@ $LogDir      = Join-Path $Root '.run\logs'
 $BackendUrl  = "http://127.0.0.1:$BackendPort"
 $FrontendUrl = "http://localhost:$FrontendPort"
 $LoginUrl    = "$FrontendUrl/login"
+
+# 设备无关的 IPv4 网卡地址（内网客户端用这个访问）。
+# 排除 169.254.*（APIPA，没拿到 DHCP 时的自分配地址，连不通）。
+function Get-LanIPv4 {
+    try {
+        $ips = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction Stop |
+            Where-Object { $_.IPAddress -ne '127.0.0.1' -and $_.IPAddress -notlike '169.254.*' } |
+            Select-Object -ExpandProperty IPAddress
+        return @($ips)
+    } catch {
+        return @()
+    }
+}
+# `-Lan` 时后端绑 0.0.0.0；否则只绑回环。
+$BackendHost = if ($Lan) { '0.0.0.0' } else { '127.0.0.1' }
 
 function Write-Head([string]$Text) {
     Write-Host ''
@@ -561,10 +590,10 @@ function Invoke-Start {
     }
 
     # -- 起后端 --
-    Write-Step "启动后端 uvicorn（端口 $BackendPort）…"
+    Write-Step "启动后端 uvicorn（监听 $BackendHost，端口 $BackendPort）…"
     $backend = Start-ServiceWindow -Title '康复系统 - 后端 API' `
         -FilePath $python `
-        -ArgumentList @('-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', "$BackendPort") `
+        -ArgumentList @('-m', 'uvicorn', 'app.main:app', '--host', $BackendHost, '--port', "$BackendPort") `
         -WorkingDirectory $BackendDir `
         -ExtraEnv @{ PYTHONIOENCODING = 'utf-8'; PYTHONUTF8 = '1' }
 
@@ -589,17 +618,54 @@ function Invoke-Start {
 
     # -- 起前端 --
     Write-Step "启动管理后台（端口 $FrontendPort）…"
+    # ⚠ **不要通过 `npm run dev --` 传 `--port` / `--host`**：
+    # npm 会把它们当成自己的参数吞掉（实测报 `Unsupported URL Type` 或
+    # `Unused args: 5173`），真正生效的是 `admin/vite.config.ts` 里的 `server.host/port`。
+    # 那里已绑 `0.0.0.0`（IPv4 全接口）+ 固定端口，内网与本机都能访问。
     # npm 是 .ps1/.cmd 包装，交给 cmd.exe 起更稳（避免 PowerShell 执行策略干扰）
     $frontend = Start-ServiceWindow -Title '康复系统 - 管理后台' `
         -FilePath 'cmd.exe' `
-        -ArgumentList @('/c', 'npm', 'run', 'dev', '--', '--port', "$FrontendPort", '--strictPort') `
+        -ArgumentList @('/c', 'npm', 'run', 'dev') `
         -WorkingDirectory $AdminDir `
-        -ExtraEnv @{ VITE_API_TARGET = $BackendUrl }
+        -ExtraEnv @{
+            VITE_API_TARGET = $BackendUrl
+            # `KB_LAN=1` 让 `admin/vite.config.ts` 把 Vite 绑到全 IPv4 接口；
+            # 否则只绑回环（见那里的说明）。
+            KB_LAN = if ($Lan) { '1' } else { '0' }
+        }
 
     if (-not (Wait-HttpOk -Url $FrontendUrl -TimeoutSec 90 -Name '前端')) {
         Write-Warn '前端未在预期时间内就绪，可能仍在编译。稍等片刻后刷新浏览器即可。'
     } else {
         Write-Ok '管理后台已就绪'
+    }
+
+    # -- `-Lan`：放行防火墙（否则内网连不上，而"连不上"很难自己排查出来）--
+    #
+    # 为什么必须显式做：`backend/scripts/run_on_emulator.ps1` 的注释里就记过这个坑 ——
+    # 「Windows 防火墙入站默认阻止，而 uvicorn 没有对应的放行规则」，
+    # 当时是靠 `adb reverse` 绕过去的。内网客户端绕不过去，只能放行。
+    #
+    # 只放行**入站 TCP** 的这两个端口，且规则名固定（重复运行会复用，不会越积越多）。
+    if ($Lan) {
+        $ports = @($FrontendPort, $BackendPort) | Sort-Object -Unique
+        foreach ($port in $ports) {
+            $ruleName = "康复系统 $port (TCP-In)"
+            try {
+                $existing = Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue
+                if ($existing) {
+                    Write-Ok "防火墙规则已存在：$ruleName"
+                } else {
+                    New-NetFirewallRule -DisplayName $ruleName -Direction Inbound -Action Allow `
+                        -Protocol TCP -LocalPort $port -Profile Any -ErrorAction Stop | Out-Null
+                    Write-Ok "已放行防火墙入站：$ruleName"
+                }
+            } catch {
+                Write-Warn "放行防火墙失败（$ruleName）：$($_.Exception.Message)"
+                Write-Host "        需要**管理员** PowerShell 手动执行一次：" -ForegroundColor Yellow
+                Write-Host "          New-NetFirewallRule -DisplayName '康复系统 $port (TCP-In)' -Direction Inbound -Action Allow -Protocol TCP -LocalPort $port -Profile Any" -ForegroundColor Yellow
+            }
+        }
     }
 
     Save-State @{
@@ -610,6 +676,8 @@ function Invoke-Start {
         frontendPort  = $FrontendPort
         python        = $python
         loginUrl      = $LoginUrl
+        lan           = [bool]$Lan
+        backendHost   = $BackendHost
     }
 
     # -- 提示账号密码 --
@@ -631,6 +699,25 @@ function Invoke-Start {
     Write-Host '        停止服务 : ' -NoNewline -ForegroundColor Gray
     Write-Host '.\start.ps1 stop' -ForegroundColor White
     Write-Host ''
+    if ($Lan) {
+        # 把内网地址直接打出来 —— 让用户去 `ipconfig` 里翻是一件很烦的事。
+        $lanIps = Get-LanIPv4
+        if ($lanIps.Count -gt 0) {
+            Write-Host '        内网访问（其它客户端） : ' -NoNewline -ForegroundColor Gray
+            Write-Host "http://$($lanIps[0]):$FrontendPort" -ForegroundColor Green
+            foreach ($ip in $lanIps | Select-Object -Skip 1) {
+                Write-Host "                                   http://${ip}:$FrontendPort" -ForegroundColor DarkGray
+            }
+        } else {
+            Write-Warn '没有找到可用的 IPv4 网卡地址，内网客户端可能连不上（检查网络连接）。'
+        }
+        Write-Host '        （只监听 IPv4；防火墙入站已放行。改回只绑本机：去掉 -Lan）' -ForegroundColor DarkGray
+        Write-Host ''
+    } else {
+        Write-Host '        只绑本机（127.0.0.1）。要让内网其它客户端访问，用：' -ForegroundColor DarkGray
+        Write-Host '          .\start.ps1 -Lan' -ForegroundColor DarkGray
+        Write-Host ''
+    }
     Write-Host '        后端与管理后台各在一个独立窗口里运行；关闭那些窗口也会停止服务。' -ForegroundColor DarkGray
     Write-Host ''
 

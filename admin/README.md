@@ -8,7 +8,7 @@ React + Vite + Ant Design（`开发计划.md` D02 定稿形态）。独立于安
 ```powershell
 cd admin
 npm install                     # 首次
-npm run dev                     # 开发：http://127.0.0.1:5173
+npm run dev                     # 开发：http://127.0.0.1:5173（只绑本机）
 npm run build                   # 生产构建 → dist/
 npm run preview                 # 本地预览构建产物
 ```
@@ -19,6 +19,35 @@ npm run preview                 # 本地预览构建产物
 ```powershell
 $env:VITE_API_TARGET='http://127.0.0.1:9000'; npm run dev
 ```
+
+### 让内网其它客户端访问（`KB_LAN=1`）
+
+默认**只绑本机回环**。科室局域网里要让别的机器打开这个后台，用仓库根目录的：
+
+```powershell
+.\start.ps1 -Lan          # 后端绑 0.0.0.0 + 放行防火墙入站 + 打印内网地址
+```
+
+它会设 `KB_LAN=1`，`vite.config.ts` 据此把 Vite 绑到 `0.0.0.0`
+（**只监听 IPv4**，不监听 IPv6），并从 `start.ps1` 拿到内网访问地址。
+
+手工起也可以：
+
+```powershell
+$env:KB_LAN='1'; npm run dev
+```
+
+⚠ 两个必须知道的点：
+
+1. **`host` 只能写在 `vite.config.ts` 里**，不要用 `npm run dev -- --host 0.0.0.0 …` ——
+   npm 会把 `--host` / `--port` 当成自己的参数吞掉（实测报 `Unused args: 5173`）。
+2. **Windows 防火墙入站默认阻止**，光绑 `0.0.0.0` 内网还是连不上。
+   放行需要**管理员**权限（`start.ps1 -Lan` 会尝试，失败时打印要手动执行的命令）：
+   ```powershell
+   New-NetFirewallRule -DisplayName '康复系统 5173 (TCP-In)' -Direction Inbound `
+     -Action Allow -Protocol TCP -LocalPort 5173 -Profile Any
+   ```
+   后端本身不必对外：内网客户端只连 5173，`/api` 由 Vite 在**本机**转发到 `127.0.0.1:8000`。
 
 先起后端（在 `backend/` 下）：
 
