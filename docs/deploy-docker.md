@@ -108,16 +108,31 @@ docker compose push
 推送目标由 `.env` 里的**完整镜像名**决定（不是前缀拼接）：
 
 ```
+# 跟随最新（简单，但看名字不知道是哪版）
 BACKEND_IMAGE=chyyd/kf-record-backend:latest
 ADMIN_IMAGE=chyyd/kf-record-admin:latest
+
+# 指定日期标签（**生产部署建议用这个**：版本一目了然，也便于回退）
+BACKEND_IMAGE=chyyd/kf-record-backend:2026-10-06
+ADMIN_IMAGE=chyyd/kf-record-admin:2026-10-06
 ```
 
 > ⚠ 这里刻意写**完整名**。曾经用 `${IMAGE_PREFIX}/backend` 去拼，而实际仓库叫
 > `chyyd/kf-record-backend`，拼出来是 `chyyd/kf-record/backend` —— 对不上，
 > 而报错只是 `pull access denied ... repository does not exist`，看着像"没登录"。
 
-> 想带版本号：改成 `chyyd/kf-record-backend:2026-10-06` 再 build/push。
-> **别只用 `latest`** —— 回滚时无从下手。
+> **版本标签**：本项目用**日期标签**（`2026-10-06` 这种），不用 SemVer ——
+> CHANGELOG 至今只有 `[未发布]`，从未正式发版，维护一个手写的语义化版本号没有收益；
+> 而"哪天发的"是一眼能看懂、也不会忘记递增的信息。
+>
+> 日期标签与 `latest` 指向**同一份内容**（digest 相同），两者都保留：
+> `latest` 方便"就要最新的"，日期标签让历史可读、可指名。
+>
+> 实际影响其实没有想象中大：**镜像 digest 本身就是内容地址**，标签换掉之后
+> 旧 digest 仍然拉得回来（`docker pull chyyd/kf-record-backend@sha256:...`）。
+> 日期标签真正的价值是**可读**——出问题时要拿"上周二那版"复现，
+> 你得先知道上周二的 digest 是多少，而 `2026-09-29` 不用查。
+
 
 ### 不想用仓库？也可以直接搬 tar
 
