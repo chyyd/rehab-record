@@ -55,17 +55,25 @@ docker compose version  # 应显示 v2.x
 > 想换到 D 盘：Docker Desktop → Settings → Resources → "Disk image location" → 改成
 > `D:\DockerData`。**在第一次拉大镜像之前改**，之后改要重建虚拟盘。
 
-### 3. 登录镜像仓库（轩辕镜像）
+### 3. 登录镜像仓库（Docker Hub）
+
+⚠ **轩辕镜像不能用来存我们自己的镜像** —— 它只支持 pull、**不支持 push**
+（[官方 FAQ](https://xuanyuan.cloud/faq/docker-push-not-supported)）。
+实测 `docker compose push` 到 `docker.xuanyuan.run/kf-record/...` 直接 `denied`。
+
+所以：
+- **基础镜像**从轩辕拉（`docker.xuanyuan.run/library/...`）—— 这是它的用途；
+- **我们自己的两个镜像**推到 Docker Hub。
 
 ```powershell
-docker login docker.xuanyuan.run
-# Username: 15094690223
-# Password: （你的镜像密码）
+docker login
+# Username: chyyd
+# Password: （Docker Hub 的 **Access Token**，见下）
 ```
 
-登录成功后凭据存在 Windows 凭据管理器里，`docker push` / `docker pull` 会直接用。
-
-> ⚠ 这个密码已经在对话里出现过，建议改用**访问令牌**（如果轩辕支持）或在推完后改一次密码。
+> **建议用 Access Token 而不是账号密码**：Docker Hub → Account Settings →
+> Personal access tokens → 生成一个（权限选 Read & Write）。用账号密码虽然也能登录，
+> 但 Token 可以单独吊销、且不会泄露主密码。
 
 ---
 
@@ -79,11 +87,11 @@ cd admin
 npm run build
 cd ..
 
-# 2) 准备 .env（compose 会读它来拼镜像名与数据目录）
+# 2) 准备 .env
 copy .env.example .env
 #    默认值就能跑：密钥会**自动生成**到数据目录的 secrets\ 下，不用手填。
-#    要确认/改的只有 KB_DATA_DIR（默认 D:/kf-record-data）与 ADMIN_PORT（默认 8080）。
-#    IMAGE_PREFIX 默认已是 docker.xuanyuan.run/kf-record
+#    一般只需确认 KB_DATA_DIR（默认 D:/kf-record-data）与 ADMIN_PORT（默认 8080）。
+#    镜像名默认已是 chyyd/kf-record-*；换成你自己的仓库就改 BACKEND_IMAGE / ADMIN_IMAGE。
 
 # 3) 构建
 docker compose build
@@ -97,14 +105,36 @@ docker compose push
 > 把基础镜像做成了 build arg，默认带镜像前缀。要用官方地址就在 `.env` 里设
 > `BASE_IMAGE=python:3.13-slim` 与 `NGINX_IMAGE=nginx:1.27-alpine`。
 
-`docker compose push` 会按 `.env` 里的 `IMAGE_PREFIX`/`IMAGE_TAG` 推到：
+推送目标由 `.env` 里的**完整镜像名**决定（不是前缀拼接）：
+
 ```
-docker.xuanyuan.run/kf-record/backend:latest
-docker.xuanyuan.run/kf-record/admin:latest
+BACKEND_IMAGE=chyyd/kf-record-backend:latest
+ADMIN_IMAGE=chyyd/kf-record-admin:latest
 ```
 
-> 想带版本号：把 `.env` 里的 `IMAGE_TAG` 改成 `2026-10-06`（或 `v1`）再 build/push。
+> ⚠ 这里刻意写**完整名**。曾经用 `${IMAGE_PREFIX}/backend` 去拼，而实际仓库叫
+> `chyyd/kf-record-backend`，拼出来是 `chyyd/kf-record/backend` —— 对不上，
+> 而报错只是 `pull access denied ... repository does not exist`，看着像"没登录"。
+
+> 想带版本号：改成 `chyyd/kf-record-backend:2026-10-06` 再 build/push。
 > **别只用 `latest`** —— 回滚时无从下手。
+
+### 不想用仓库？也可以直接搬 tar
+
+不依赖任何 registry（走 U 盘 / 网盘 / 文件共享）：
+
+```powershell
+# 打包机
+docker save -o D:\kf-record-images\backend.tar chyyd/kf-record-backend:latest
+docker save -o D:\kf-record-images\admin.tar   chyyd/kf-record-admin:latest
+
+# 目标机（compose.yml 里的 BACKEND_IMAGE/ADMIN_IMAGE 要与 tar 里的名字一致）
+docker load -i backend.tar
+docker load -i admin.tar
+docker compose up -d
+```
+
+实测两个 tar 合计约 **95 MB**（backend 74.3 MB + admin 20.5 MB）。
 
 ---
 

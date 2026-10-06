@@ -31,7 +31,14 @@ name: kf-record
 
 services:
   backend:
-    image: ${IMAGE_PREFIX:-docker.xuanyuan.run/kf-record}/backend:${IMAGE_TAG:-latest}
+    # ★ 直接写**完整镜像名**，不用"前缀 + 服务名"去拼。
+    #
+    # 踩过的坑：原来是 `${IMAGE_PREFIX}/backend:${IMAGE_TAG}`，而实际推到
+    # Docker Hub 的仓库名是 `chyyd/kf-record-backend` —— 拼出来成了
+    # `chyyd/kf-record/backend`，**对不上**。而且失败时不会报"名字错了"，
+    # 只会 `pull access denied ... repository does not exist`，
+    # 看起来像"没登录/没权限"。直接写全名就没有这种歧义。
+    image: ${BACKEND_IMAGE:-chyyd/kf-record-backend:latest}
     build:
       context: .
       dockerfile: Dockerfile.backend
@@ -80,7 +87,7 @@ services:
     networks: [kf]
 
   admin:
-    image: ${IMAGE_PREFIX:-docker.xuanyuan.run/kf-record}/admin:${IMAGE_TAG:-latest}
+    image: ${ADMIN_IMAGE:-chyyd/kf-record-admin:latest}
     build:
       context: .
       dockerfile: Dockerfile.admin
