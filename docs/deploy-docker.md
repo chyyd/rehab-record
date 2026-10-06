@@ -79,9 +79,10 @@ cd admin
 npm run build
 cd ..
 
-# 2) 准备 .env（compose 会读它来拼镜像名）
+# 2) 准备 .env（compose 会读它来拼镜像名与数据目录）
 copy .env.example .env
-#    编辑 .env，至少填：KB_JWT_SECRET、KB_ADMIN_PASSWORD
+#    默认值就能跑：密钥会**自动生成**到数据目录的 secrets\ 下，不用手填。
+#    要确认/改的只有 KB_DATA_DIR（默认 D:/kf-record-data）与 ADMIN_PORT（默认 8080）。
 #    IMAGE_PREFIX 默认已是 docker.xuanyuan.run/kf-record
 
 # 3) 构建
@@ -90,6 +91,11 @@ docker compose build
 # 4) 推上去
 docker compose push
 ```
+
+> **基础镜像走的是轩辕镜像**（`docker.xuanyuan.run/library/...`）。
+> 国内直连 Docker Hub 的 `auth.docker.io` 实测反复超时，所以 Dockerfile 里
+> 把基础镜像做成了 build arg，默认带镜像前缀。要用官方地址就在 `.env` 里设
+> `BASE_IMAGE=python:3.13-slim` 与 `NGINX_IMAGE=nginx:1.27-alpine`。
 
 `docker compose push` 会按 `.env` 里的 `IMAGE_PREFIX`/`IMAGE_TAG` 推到：
 ```
@@ -128,34 +134,60 @@ docker compose up -d
 ### 首次启动会发生什么
 
 `backend/docker-entrypoint.sh` 依次做：
-1. 建库 + 应用迁移（幂等）；
-2. 若设了 `KB_ADMIN_PASSWORD` 且该管理员**不存在** → 创建它；
-3. 提醒是否还在用开发用的 JWT 默认密钥；
-4. 启动 uvicorn。
+1. 准备数据目录、把**密钥落成文件**（见下）；
+2. 建库 + 应用迁移（幂等）；
+3. 该管理员**不存在**时创建它，并把密码打印出来；
+4. 提醒是否还在用开发用的 JWT 默认密钥；
+5. 启动 uvicorn。
+
+### 数据落在哪（用户要求：D 盘一个目录，便于备份）
+
+**绑挂**到宿主机目录（不是 Docker 具名卷）—— 这样你随时能在资源管理器里看到、拷贝：
+
+```
+D:\kf-record-data\                 ← .env 里的 KB_DATA_DIR
+├── db\
+│   ├── kf.db                      SQLite 数据库
+│   ├── kf.db-wal / kf.db-shm      WAL 文件（运行时产生，备份时一起拷）
+└── secrets\
+    ├── admin_password.txt         管理员密码（**可以直接打开看**）
+    └── jwt_secret.txt             JWT 签名密钥（64 字符）
+```
+
+- **备份 = 把这个目录整个拷走。** 恢复 = 拷回来再 `docker compose up -d`。
+- 密码不需要你设：首次启动自动生成 12 位随机密码，写进
+  `secrets\admin_password.txt`，同时**打印在后端日志里**：
+
+  ```powershell
+  docker compose logs backend | Select-String '管理员'
+  ```
+
+- **管理员已存在时不会重置密码** —— 避免"容器一重启密码就变回去"。
+  要主动重置：改 `secrets\admin_password.txt`（或 `.env` 里的 `KB_ADMIN_PASSWORD`）
+  再 `docker compose up -d`。
 
 ### 想带上现有数据（可选）
 
-容器用的是**具名卷 `kf-data`**，不是宿主机的 `data\kf.db`。
-想把本机 DB 带过去：
+容器用的是 `D:\kf-record-data\db\kf.db`，不是仓库里的 `data\kf.db`。
+想把这边的数据带进容器 —— 直接**拷文件**就行（绑挂的好处）：
 
 ```powershell
-# 打包机：先停后端（或接受一个稍旧的快照），把 db 复制进卷
-docker compose up -d
-docker compose cp .\data\kf.db backend:/data/kf.db
-docker compose restart backend
+docker compose stop backend
+copy .\data\kf.db D:\kf-record-data\db\kf.db
+docker compose start backend
 ```
 
-> ⚠ 覆盖会**丢掉卷里已有的数据**。只想留一份就要先备份卷（见下）。
+> ⚠ 会**覆盖**容器里已有的数据。先按上面那段备份一次更稳。
 
-### 备份 / 查看数据卷
+### 备份
 
 ```powershell
-# 看卷里有什么
-docker compose exec backend ls -l /data
+# 最直接：整个目录拷走（容器不用停，SQLite 是 WAL 模式，一致性够用；
+# 要绝对一致就先 docker compose stop backend）
+Copy-Item D:\kf-record-data "E:\backup\kf-record-data-$(Get-Date -Format yyyyMMdd)" -Recurse
 
-# 导出整个卷
-docker run --rm -v kf-record_kf-data:/data -v ${PWD}:/backup alpine `
-  tar czf /backup/kf-data-$(Get-Date -Format yyyyMMdd).tgz -C /data .
+# 或者看容器内视角
+docker compose exec backend ls -l /data /data/secrets
 ```
 
 ---
@@ -177,7 +209,22 @@ refresh token 走 httpOnly Cookie，`SameSite=lax` 只在**同源**下发送。
 
 ### 重启容器后所有人被踢下线
 
-`KB_JWT_SECRET` 没设（用的开发默认值）。在 `.env` 里设一个随机长字符串后重建。
+正常不会：密钥自动生成在 `secrets\jwt_secret.txt`，重启会复用（已实测）。
+真发生了就查两件事：
+
+1. **`secrets\jwt_secret.txt` 被删了或变成空文件** ——
+   那样 entrypoint 会重新生成一个新密钥，旧 token 全部失效；
+2. **`.env` 里填了 `KB_JWT_SECRET`** —— 填了就会**覆盖**文件里的值
+   （刻意如此，让配置能跟着 `.env` 走）。想回到"自动生成"就清空它再 up。
+
+无论哪种，重新登录一次即可，**数据不受影响**。
+
+### 启动时改过的密码没生效
+
+entrypoint **只在管理员不存在时创建**，不会重置已存在的密码
+（这是为了不让"每次重启都把密码改回去"）。要主动重置：
+改 `secrets\admin_password.txt` 或 `.env` 里的 `KB_ADMIN_PASSWORD`，再
+`docker compose up -d`。
 
 ### 页面能开但接口 502
 
@@ -208,6 +255,6 @@ docker compose ps
 argon2-cffi/APScheduler）、迁移 SQL、`templates/*.json`、Nginx + 前端静态产物。
 
 **没有**（刻意的）：
-- **数据库**：在具名卷里，不在镜像里（否则每次重建都会覆盖真实病历）；
+- **数据库**：在你绑挂的宿主机目录里（默认 `D:\kf-record-data`），不在镜像里（否则每次重建都会覆盖真实病历）；
 - **镜像里不含测试**：`pytest` 等 dev 依赖没装；
 - **安卓 App**：客户端，不打包。

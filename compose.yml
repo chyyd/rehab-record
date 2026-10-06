@@ -1,22 +1,31 @@
 # 康复科治疗过程记录系统 — 一键部署（后端 + 管理后台）
 #
-# 用法（在这台机器上，仓库根目录）：
-#   copy .env.example .env      # 然后编辑 .env：至少设 KB_JWT_SECRET 与 KB_ADMIN_PASSWORD
+# 用法（仓库根目录）：
+#   copy .env.example .env      # 只需确认 KB_DATA_DIR（其余留空，密钥会自动生成）
 #   docker compose up -d
 #   浏览器打开 http://localhost:8080
 #
 # 换一台机器（只带走镜像，不带源码）：
-#   在打包机上：  docker compose build && docker compose push
-#   在目标机上：  只需要 .env + compose.yml，然后 `docker compose up -d` 就会拉镜像
-#   （`image:` 与 `build:` 同时存在时，有镜像就**不**重新构建；
-#     要强制重建用 `docker compose up -d --build`。）
+#   打包机：  docker compose build && docker compose push
+#   目标机：  只需要 compose.yml + .env，`docker compose up -d` 会拉镜像
+#   （`image:` 与 `build:` 同时存在时，有镜像就**不**重建；强制重建用 --build。）
 #
-# ## 端口说明
-#   - 只有**前端**映射到宿主机（`${ADMIN_PORT}`，默认 8080）。
+# ## 数据落在哪（用户 2026-10-06 要求：D 盘一个目录，便于备份）
+#
+#   ${KB_DATA_DIR}/                    默认 D:\kf-record-data
+#   ├── db/kf.db                       SQLite 数据库（含 -wal/-shm）
+#   └── secrets/
+#       ├── jwt_secret.txt             JWT 签名密钥（**丢了所有人要重新登录**）
+#       └── admin_password.txt         管理员密码（可以直接打开看）
+#
+# **备份 = 把这个目录整个拷走**；恢复 = 拷回来再 `docker compose up -d`。
+#
+# ## 端口
+#   - 只有**前端**映射到宿主机（${ADMIN_PORT}，默认 8080）。
 #     内网其它客户端访问的就是 http://<本机IP>:8080 。
-#   - 后端**不映射**到宿主机：它只活在 compose 网络里，由 Nginx 反代
+#   - 后端**不映射**到宿主机：它只在 compose 网络里，由 Nginx 反代
 #     `/api` → `http://backend:8000`。这样后端不会直接暴露在局域网上。
-#     要用 Swagger 调接口时走 http://localhost:8080/docs（Nginx 已反代）。
+#     要调接口走 http://localhost:8080/docs（Nginx 已反代）。
 
 name: kf-record
 
@@ -26,18 +35,24 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.backend
+      args:
+        # 基础镜像。默认走轩辕镜像 —— 国内直连 Docker Hub 的 auth 经常超时
+        # （实测反复失败）。要用官方地址就在 .env 里设成 python:3.13-slim。
+        BASE_IMAGE: ${BASE_IMAGE:-docker.xuanyuan.run/library/python:3.13-slim}
     restart: unless-stopped
     environment:
-      # 数据落在卷里；容器重建不会丢
-      KB_DB_PATH: /data/kf.db
-      KB_TEMPLATES_DIR: /app/templates
       TZ: Asia/Shanghai
 
-      # ★ 必须设置（否则每次重启都会让所有人掉线；默认值是开发用的）
-      KB_JWT_SECRET: ${KB_JWT_SECRET:?请在 .env 里设置 KB_JWT_SECRET（随机长字符串）}
+      # 数据根目录（容器内视角）。真正落盘到哪由下面的 volumes 决定。
+      KB_DATA_DIR: /data
+      # 数据库放 db/ 子目录 —— 与 secrets/ 分开，备份时一目了然
+      KB_DB_PATH: /data/db/kf.db
+      KB_TEMPLATES_DIR: /app/templates
 
-      # 首次启动用来建管理员；账号已存在时**不会**被重置
-      # （只有值变化才会重新执行 —— 见 backend/docker-entrypoint.sh 的说明）
+      # ★ 这两个**留空即可**：entrypoint 会在 secrets/ 下生成随机值、写文件，
+      #   之后一直复用。想让配置跟着 .env 走再填（填了会覆盖文件）。
+      #   ⚠ 填 KB_JWT_SECRET 会换签名密钥 → 已登录用户全部掉线。
+      KB_JWT_SECRET: ${KB_JWT_SECRET:-}
       KB_ADMIN_PASSWORD: ${KB_ADMIN_PASSWORD:-}
       KB_ADMIN_EMPLOYEE_NO: ${KB_ADMIN_EMPLOYEE_NO:-A001}
       KB_ADMIN_NAME: ${KB_ADMIN_NAME:-科室管理员}
@@ -51,8 +66,13 @@ services:
       KB_REFRESH_COOKIE_SAMESITE: ${KB_REFRESH_COOKIE_SAMESITE:-lax}
       KB_REFRESH_COOKIE_SECURE: ${KB_REFRESH_COOKIE_SECURE:-false}
     volumes:
-      - kf-data:/data
-    # 后端不映射到宿主机（见文件顶部说明）。真需要直连调试时取消下面两行注释：
+      # ★ 绑挂到宿主机目录（不是具名卷）—— 用户要求能直接看到并备份。
+      #   必需可写：SQLite 要写 -wal/-shm，只读会直接报
+      #   "attempt to write a readonly database"。
+      - type: bind
+        source: ${KB_DATA_DIR:-D:/kf-record-data}
+        target: /data
+    # 后端不映射到宿主机（见文件顶部说明）。要直连调试时取消注释：
     # ports:
     #   - "${BACKEND_DEBUG_PORT:-8000}:8000"
     expose:
@@ -64,6 +84,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.admin
+      args:
+        NGINX_IMAGE: ${NGINX_IMAGE:-docker.xuanyuan.run/library/nginx:1.27-alpine}
     restart: unless-stopped
     depends_on:
       backend:
@@ -75,13 +97,10 @@ services:
       - "${ADMIN_PORT:-8080}:80"
     networks: [kf]
 
-volumes:
-  kf-data:
-    # 具名卷。要看/备份数据库文件：
-    #   docker compose exec backend ls -l /data
-    #   docker run --rm -v kf-record_kf-data:/data -v ${PWD}:/backup alpine \
-    #     tar czf /backup/kf-data-$(date +%Y%m%d).tgz -C /data .
-
 networks:
   kf:
     driver: bridge
+
+# 说明：**没有顶层 volumes 段** —— 数据用宿主机绑挂目录，不是 Docker 具名卷。
+# 这样随时能在资源管理器里看到、拷贝、备份。
+# （具名卷要 `docker run --rm -v ...` 才能导出，对"以后备份"这件事不够直接。）

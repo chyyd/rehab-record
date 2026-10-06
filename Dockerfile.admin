@@ -15,7 +15,13 @@
 # 所以：构建阶段直接用宿主机现有的 `admin/dist`。
 #   前提：构建前先在宿主机跑 `cd admin && npm run build`（README 里有）。
 #   好处：镜像构建**不需要联网装 npm 包**，几秒钟就能出来。
-FROM nginx:1.27-alpine
+#
+# ## 基础镜像走镜像源（NGINX_IMAGE）
+#
+# 同 Dockerfile.backend：国内直连 Docker Hub 的 `auth.docker.io` 经常超时，
+# 默认值带 `docker.xuanyuan.run/library/` 前缀；compose 里可覆盖回官方地址。
+ARG NGINX_IMAGE=docker.xuanyuan.run/library/nginx:1.27-alpine
+FROM ${NGINX_IMAGE}
 
 ENV TZ=Asia/Shanghai
 RUN apk add --no-cache tzdata \

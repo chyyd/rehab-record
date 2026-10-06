@@ -14,8 +14,15 @@
 # 容器内布局（与仓库的本地布局**不同**，所以模板路径要走 KB_TEMPLATES_DIR）：
 #   /app/backend/    ← backend/ 的内容（工作目录）
 #   /app/templates/  ← 仓库根的 templates/
-#   /data/           ← SQLite 数据卷挂载点
-FROM python:3.13-slim
+#   /data/           ← SQLite 数据目录（宿主机绑挂进来）
+#
+# ## 基础镜像走镜像源（BASE_IMAGE）
+#
+# 默认值带 `docker.xuanyuan.run/library/` 前缀 —— 国内直连 Docker Hub 的
+# `auth.docker.io` 经常超时（实测反复失败），而轩辕镜像的"登录方式"就是**给镜像名加前缀**。
+# compose 里可以通过 build args 覆盖回官方地址（见 compose.yml）。
+ARG BASE_IMAGE=docker.xuanyuan.run/library/python:3.13-slim
+FROM ${BASE_IMAGE}
 
 # 时区：后端按 Asia/Shanghai 算"今天"（半日制、跨零点判定都依赖它）。
 # 不加 tzdata 的话 `TZ=Asia/Shanghai` 会被容器当成本地时间却是 UTC。
@@ -33,19 +40,30 @@ RUN apt-get update \
 
 WORKDIR /app/backend
 
-# 先只拷依赖描述再装 —— 这样改代码不会让依赖层失效（构建缓存的关键）
-COPY backend/pyproject.toml ./
-# 只装运行期依赖 + auth/ops 两组可选依赖。
-# ⚠ 用 `.[auth,ops]` 会连 dev 一起拉吗？不会：dev 在 optional-dependencies 里，
-#   只有显式写 `[dev]` 才装。
+# ⚠ **必须先 COPY 源码，再 pip install** —— 不能只拷 pyproject.toml。
+#
+# 原因：`pyproject.toml` 里声明了
+#   [tool.setuptools] packages = ["app", "app.core", ...]
+# 于是 `pip install .` 会先让 setuptools "发现包"，而那时 `app/` 还不存在
+# → `error: package directory 'app' does not exist`，构建失败。
+#
+# 试过的"两全"写法都不可行：
+#   - `pip install --no-build-isolation .`：仍需要包目录存在；
+#   - 用 `python -c` 解析出依赖列表再装：多一层脆弱逻辑，不值。
+#
+# 代价：改后端代码会让依赖层缓存失效，重装一次依赖（几分钟）。
+# 换来的是**构建一定成功**，以及逻辑一眼看得懂 —— 对"偶尔打个包"的场景这笔交易划算。
+COPY backend/ ./
 RUN pip install --no-cache-dir ".[auth,ops]"
 
-COPY backend/ ./
 COPY templates/ /app/templates/
 
-# 模板目录：容器里 templates/ 与 backend/ 不再同级，必须显式告诉它
-ENV KB_TEMPLATES_DIR=/app/templates \
-    KB_DB_PATH=/data/kf.db
+# 模板目录：容器里 templates/ 与 backend/ 不再同级，必须显式告诉它。
+#
+# ⚠ **不要在这里写死 `KB_DB_PATH`**：数据库路径由 compose / 运行时决定
+#   （绑挂目录下的 `db/` 子目录）。写死在这里会**覆盖** compose 传进来的值，
+#   表现为"数据库没落到我指定的目录里"，而且不会有任何报错。
+ENV KB_TEMPLATES_DIR=/app/templates
 
 # 用非 root 跑。
 #

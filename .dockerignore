@@ -6,8 +6,12 @@
 # 最要紧的一条是 `admin/node_modules`：它有几百 MB / 上万个文件，
 # 而两个镜像都**不需要**它 —— 后端只 COPY `backend/`，前端只 COPY `admin/dist/`。
 # 不排除的话每次构建都要白白传几分钟。
+#
+# ⚠ **`admin/dist` 绝不能排除**：`Dockerfile.admin` 正是靠 `COPY admin/dist/`
+#   拿前端产物的。早期这个文件里写了 `admin/dist`（当时设想在容器里构建前端），
+#   构建报 `"/admin/dist": not found` —— 而且要到 COPY 那一步才报，不容易
+#   联想到是 .dockerignore 干的。
 **/node_modules
-admin/dist
 
 # 版本库与本地运行时产物
 .git
