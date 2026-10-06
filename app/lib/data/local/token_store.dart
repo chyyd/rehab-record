@@ -18,6 +18,7 @@ class TokenStore {
   final FlutterSecureStorage _storage;
 
   static const String _kRefreshToken = 'kb_refresh_token';
+  static const String _kCachedUser = 'kb_cached_user';
 
   /// 内存中的 access token。**不落盘。**
   String? _accessToken;
@@ -27,6 +28,27 @@ class TokenStore {
 
   /// 记录登录响应里的 access token（仅内存）。
   void setAccessToken(String? token) => _accessToken = token;
+
+  /// 缓存"上次登录的是谁"，供**离线冷启动**使用。
+  ///
+  /// 2026-10-06：治疗师下班回家、脱离内网后点开 App，如果只能靠 `/auth/refresh`
+  /// 才知道自己是谁，就会**在离线时被登出** —— 而他明明有本地数据、也能离线记录。
+  /// 所以把用户的四个字段（id / 工号 / 姓名 / 角色）落盘。
+  ///
+  /// 不是凭证：它不能用来访问任何接口，只是"离线时先把界面画出来"。
+  /// 服务端一旦可达就会用 `/auth/me` 的真实结果覆盖它。
+  Future<void> saveCachedUser(String? json) async {
+    if (json == null || json.isEmpty) {
+      await _storage.delete(key: _kCachedUser);
+      return;
+    }
+    await _storage.write(key: _kCachedUser, value: json);
+  }
+
+  Future<String?> readCachedUser() async {
+    final value = await _storage.read(key: _kCachedUser);
+    return (value == null || value.isEmpty) ? null : value;
+  }
 
   /// 保存 refresh token。
   ///
@@ -49,8 +71,12 @@ class TokenStore {
   }
 
   /// 退出登录：清空内存与安全存储。服务端会话吊销由调用方负责。
+  ///
+  /// **缓存用户也一并清掉**：那是"我上次登录过"的证据，
+  /// 主动退出后不该还能靠它离线进主界面（否则等于退不掉）。
   Future<void> clear() async {
     _accessToken = null;
     await _storage.delete(key: _kRefreshToken);
+    await _storage.delete(key: _kCachedUser);
   }
 }
