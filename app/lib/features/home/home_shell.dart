@@ -8,6 +8,7 @@ import 'package:rehab_app/features/settings/settings_page.dart';
 import 'package:rehab_app/features/sync/conflict_providers.dart';
 import 'package:rehab_app/features/sync/conflicts_page.dart';
 import 'package:rehab_app/features/timeline/timeline_page.dart';
+import 'package:rehab_app/sync/auto_sync.dart';
 
 /// 主界面外壳：底部导航 + 顶部同步状态。
 ///
@@ -24,6 +25,31 @@ class _HomeShellState extends ConsumerState<HomeShell> {
   int _index = 0;
 
   static const _titles = ['患者', '时间轴', '我的'];
+
+  /// ★ 2026-10-06：主动定时同步。
+  ///
+  /// 挂在这里而不是各页面：主界面外壳只在**登录后**存在，
+  /// 生命周期与"有人正在用这个 App"一致 —— 登录页不需要同步，
+  /// 退出登录后也不该继续跑（`dispose` 会停表）。
+  late final AutoSync _autoSync = AutoSync(
+    tick: () =>
+        ref.read(patientSyncControllerProvider.notifier).refreshQuietly(),
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    // 等首帧再启动：`initState` 里读 provider 会撞上"服务图尚未就绪"。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _autoSync.start();
+    });
+  }
+
+  @override
+  void dispose() {
+    _autoSync.stop();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {

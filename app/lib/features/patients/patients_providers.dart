@@ -199,11 +199,23 @@ final disciplineSummariesProvider =
 
 /// 同步动作的结果，供 UI 提示。
 class PatientSyncState {
-  const PatientSyncState({this.syncing = false, this.message, this.isError = false});
+  const PatientSyncState({
+    this.syncing = false,
+    this.message,
+    this.isError = false,
+    this.lastFailed = false,
+  });
 
   final bool syncing;
   final String? message;
   final bool isError;
+
+  /// 上一次同步是否**因故障失败**（离线/服务端不可达）。
+  ///
+  /// 与 [isError] 分开：`isError` 是**给用户看的**（冲突也算"需要注意"），
+  /// 而 [lastFailed] 只用于**决定要不要退避**。
+  /// 冲突不该让定时同步退避 —— 那只是有一条要人处理，网络是好的。
+  final bool lastFailed;
 }
 
 /// 手动/自动刷新：先把本地队列推出去，再拉患者列表与游标增量。
@@ -211,11 +223,32 @@ class PatientSyncController extends Notifier<PatientSyncState> {
   @override
   PatientSyncState build() => const PatientSyncState();
 
+  /// 正在进行的同步。**必须防重入**。
+  ///
+  /// 加了 30 秒定时同步之后（2026-10-06），并发调用从"可能"变成了"必然"：
+  /// 定时器到点时用户可能正好点了同步按钮、或刚从详情页返回触发了 `didPopNext`。
+  ///
+  /// 不加防护的后果不只是浪费流量：`pushPending` 会**重推整个离线队列**，
+  /// 两条并发链路可能对同一条记录各推一次 —— 服务端靠 `client_uuid` 幂等能挡住，
+  /// 但两条链路的 `pullIncremental` 会互相覆盖游标，还会把 UI 状态刷成"已更新"，
+  /// 让人以为同步成功了（其实另一条失败了）。
+  ///
+  /// 所以这里让**后来者等待同一次同步**（而不是各自再跑一遍，也不是直接丢弃）——
+  /// 调用方拿到的结果始终是"一次真实的同步结果"。
+  Future<void>? _inFlight;
+
   /// **顺序很重要：先 push 再 pull。**
   ///
   /// 反过来的话，刚在本地录的记录会立刻被服务端返回的旧快照覆盖
   /// （拉回来的 payload 版本更低），表现为"我录的东西没了"。
-  Future<void> refresh({bool pushFirst = true}) async {
+  Future<void> refresh({bool pushFirst = true}) {
+    // 已有同步在跑 → 共用它（并发调用拿到的是同一个结果）
+    return _inFlight ??= _runRefresh(pushFirst: pushFirst).whenComplete(() {
+      _inFlight = null;
+    });
+  }
+
+  Future<void> _runRefresh({required bool pushFirst}) async {
     final services = ref.read(appServicesProvider).requireValue;
     state = const PatientSyncState(syncing: true);
     try {
@@ -240,10 +273,21 @@ class PatientSyncController extends Notifier<PatientSyncState> {
       state = PatientSyncState(
         syncing: false,
         isError: e.code != 'NETWORK_ERROR',
+        lastFailed: true,
         // 离线不是错误状态，文案要中性（离线优先）。
         message: e.code == 'NETWORK_ERROR' ? '离线中，显示本地数据' : e.message,
       );
     }
+  }
+
+  /// 定时同步用：**不抛异常**，只回报成败（失败已写进 [state]）。
+  ///
+  /// 不能让 `refresh()` 本身抛：它的调用方（`initState` 的 post-frame、
+  /// `didPopNext`、按钮 `onPressed`）都**没有 catch** —— 抛出会变成未处理异常，
+  /// 在 Flutter 里是一条刺眼的红屏日志，而不是一次安静的失败重试。
+  Future<bool> refreshQuietly() async {
+    await refresh();
+    return !state.lastFailed;
   }
 
   void clearMessage() => state = const PatientSyncState();

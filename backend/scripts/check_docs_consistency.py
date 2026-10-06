@@ -956,6 +956,17 @@ check("app/README.md 不再描述排期页/排期表",
       not [line for line in APP_README.splitlines()
            if any(t in line for t in ("排期", "schedule", "appointment"))
            and not any(m in line for m in DEPRECATED_MARKERS)])
+# ★ 2026-10-06：主动定时同步。原文档只写了"事件触发"的时机，
+# 缺"什么都没发生时"的那条路径 —— 而全科共享视图恰恰靠它
+#（别人记了一条，你停在列表上不动，不 pull 就永远看不到）。
+check("app/README.md 写明主动定时同步的间隔（30 秒）",
+      "30 秒" in APP_README and "定时" in APP_README)
+check("app/README.md 写明定时同步失败要退避（离线时不能硬打）",
+      "退避" in APP_README and "120" in APP_README)
+check("app/README.md 写明并发同步要防重入（定时器让并发成为必然）",
+      "防重入" in APP_README)
+check("app/README.md 写明回到前台立刻同步、进后台停表",
+      "回到前台" in APP_README and "停表" in APP_README)
 
 for _route in ADMIN_MODULE_ROUTES:
     check(f"admin 路由表有 {_route}", f'path="{_route.lstrip("/")}"' in ADMIN_ROUTES)

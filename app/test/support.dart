@@ -76,6 +76,18 @@ class ScriptedAdapter implements HttpClientAdapter {
       return ResponseBody.fromString('{}', 404, headers: jsonHeaders);
     }
     var (status, body) = entry;
+    // 状态码 0 = **模拟连不上**（不是 HTTP 错误）。
+    //
+    // 抛 `DioException` 而不是回一个 4xx：`ApiClient` 只把 DioException 归成
+    // `NETWORK_ERROR`，而 4xx 会走 `AppError.fromBody` —— 两者在离线优先的逻辑里
+    // 走完全不同的分支（`NETWORK_ERROR` 是"照常用本地数据"，4xx 是"真出错了"）。
+    // 想测离线路径就必须让它真的像网络故障。
+    if (status == 0) {
+      throw DioException.connectionError(
+        requestOptions: options,
+        reason: '测试：模拟连不上服务器',
+      );
+    }
     if (status == 401 && succeedAfterRefresh && seen.length > 1) {
       status = 200;
       body = const {'ok': true};
