@@ -1,11 +1,13 @@
 import 'dart:convert';
 
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:rehab_app/core/api_endpoints.dart';
 import 'package:rehab_app/core/date_utils.dart';
 import 'package:rehab_app/data/remote/timeline_dto.dart';
 import 'package:rehab_app/data/repo/timeline_repository.dart';
+import 'package:rehab_app/features/timeline/patient_summary_page.dart';
 import 'package:rehab_app/features/timeline/timeline_providers.dart';
 
 import 'support.dart';
@@ -209,6 +211,79 @@ void main() {
           reason: '临时治疗要能识别出来（记录人 ≠ 患者归属人）');
       expect(s.days.single.records.single.isTemporary, isTrue);
       expect(s.days.single.texts.single, contains('康复初始评定'));
+    });
+  });
+
+  group('患者汇总页的标签（2026-10-06 用户要求去掉临时治疗之类）', () {
+    /// 用户原话：「患者详情的患者汇总页，去掉临时治疗之类的标签」。
+    ///
+    /// 数据里**故意**带上 `temporary: true` 与 `is_temporary: 1` ——
+    /// 这样"标签已去掉"才是真的被验证，而不是因为没数据才看不到。
+    ///
+    /// ⚠ 关键：`_DayCard` 是 `ExpansionTile`，**默认折叠**。
+    /// 每份文书上的「（临时治疗）」标记在 `children` 里，折叠时根本没被构建 ——
+    /// 我第一版没展开就断言，结果**把标签加回去也照样通过**（假阳性）。
+    /// 所以这里**先展开**，再断言；并且**同时**覆盖标题行里的徽标与文书里的标记。
+    Future<void> pumpPage(WidgetTester tester) async {
+      final summary = PatientDailySummary.fromJson(patientDailyJson());
+      // 前提校验：数据确实带标记，否则整条测试没有意义。
+      expect(summary.days.single.temporary, isTrue);
+      expect(summary.days.single.records.single.isTemporary, isTrue);
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            patientDailySummaryProvider('S2B').overrideWith((ref) async => summary),
+          ],
+          child: const MaterialApp(
+            home: PatientSummaryPage(inpatientNo: 'S2B'),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // 展开当天的卡片，让 `children`（各份文书）真正被构建。
+      await tester.tap(find.byType(ExpansionTile).first);
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('★ 展开后页面上不出现「临时治疗」字样（即使数据里带该标记）', (tester) async {
+      await pumpPage(tester);
+
+      // 展开确实生效：文书正文必须已经渲染出来 ——
+      // 否则下面的 `findsNothing` 只是因为"什么都没构建"，等于没测。
+      expect(
+        find.textContaining('康复初始评定'),
+        findsWidgets,
+        reason: '展开后应能看到文书正文（这也是"展开生效"的证据）',
+      );
+      expect(
+        find.textContaining('临时治疗'),
+        findsNothing,
+        reason: '「临时治疗」徽标与「（临时治疗）」标记都应已去掉',
+      );
+    });
+
+    testWidgets('对照：把标签加回来时，上面的断言确实会失败', (tester) async {
+      // 这条是**反身校验**：不依赖实现，直接确认 finder 本身有效 ——
+      // 往同一个页面里塞一个「临时治疗」文本，`findsNothing` 必须能发现它。
+      final summary = PatientDailySummary.fromJson(patientDailyJson());
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            patientDailySummaryProvider('S2B').overrideWith((ref) async => summary),
+          ],
+          child: const MaterialApp(
+            home: Scaffold(body: Center(child: Text('临时治疗'))),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining('临时治疗'),
+        findsOneWidget,
+        reason: 'finder 必须能发现「临时治疗」—— 否则上一条测试的 findsNothing 毫无意义',
+      );
     });
   });
 

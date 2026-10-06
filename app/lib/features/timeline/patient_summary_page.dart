@@ -142,17 +142,16 @@ class _DayCard extends StatelessWidget {
               Text(chips,
                   style: TextStyle(fontSize: 11, color: theme.colorScheme.outline)),
             ],
-            if (day.temporary) ...[
-              const SizedBox(width: 6),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-                decoration: BoxDecoration(
-                  color: theme.colorScheme.tertiaryContainer,
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: const Text('临时治疗', style: TextStyle(fontSize: 10)),
-              ),
-            ],
+            // ★ 2026-10-06 用户：「患者详情的患者汇总页，去掉临时治疗之类的标签」。
+            //
+            // 原来这里有一个「临时治疗」小徽标（`day.temporary`）。
+            // 去掉的理由不只是"用户不要"：它的**来源已经消失** ——
+            // 「临时指派」在迁移 009 就删掉了，`is_temporary` 现在只是拿
+            // `patient_assignment_history` 回溯"记录人 ≠ 当时的归属人"，
+            // 一旦患者转手，历史记录就会显示成"临时治疗"，而治疗师对此
+            // 既无法理解也无法处理。标签于是变成噪音。
+            //
+            // 后端仍在下发这个字段（PDF 与后台列表还用），这里只是不显示。
           ],
         ),
         subtitle: Text(
@@ -172,10 +171,8 @@ class _DayCard extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  if (row.isTemporary)
-                    Text('（临时治疗）',
-                        style: TextStyle(
-                            fontSize: 11, color: theme.colorScheme.tertiary)),
+                  // ★ 2026-10-06：每份文书上面的「（临时治疗）」标记也按用户要求去掉
+                  // （原来是 `row.isTemporary` 时加一行小字）。
                   SelectableText(
                     row.renderedText.isEmpty ? '（无内容）' : row.renderedText,
                     style: const TextStyle(fontSize: 12, height: 1.5),
