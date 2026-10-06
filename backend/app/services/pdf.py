@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import io
+import re
 from datetime import UTC, datetime
 from typing import Any
 
@@ -33,8 +34,10 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.cidfonts import UnicodeCIDFont
 from reportlab.platypus import KeepTogether, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
+from app.services import record_template
+
 # 科室名：抬头固定展示。真实部署时可由配置覆盖。
-DEFAULT_DEPT_NAME = "康复医学科"
+DEFAULT_DEPT_NAME = "虎林市中医医院康复医学科"
 
 FONT_NAME = "STSong-Light"
 FONT_REGISTERED = False
@@ -88,14 +91,45 @@ def _soap_paragraph(text: str, style: dict[str, ParagraphStyle]) -> Paragraph:
     return Paragraph(_escape(text.strip()), style["soap"])
 
 
-def _soap_block(text: str, style: dict[str, ParagraphStyle]) -> list[Any]:
-    """一条记录 = 一段 SOAP 文本 + 一条细分隔线（视觉上区分两份文书，但不强制分页）。"""
+def _soap_block(
+    text: str,
+    style: dict[str, ParagraphStyle],
+    *,
+    therapist_name: str | None = None,
+) -> list[Any]:
+    """一条记录 = 一段 SOAP 文本 + 一条细分隔线（视觉上区分两份文书，但不强制分页）。
+
+    [therapist_name] 给定时，把文书末尾的签名占位符换成**治疗师姓名**。
+    用户 2026-10-06：「将每次记录中的『治疗师签名：______』改成自动带入治疗师姓名」。
+
+    ⚠ 为什么在**这里**替换、而不是在 `record_template.render` 里：
+      `rendered_text` 是**生成那一刻冻结**的（病历是法律文书，措辞不该随模板改版而变），
+      而治疗师姓名是打印时才需要的展示信息。写进冻结文本会让"谁写的"这一栏
+      随着记录被改而漂移，也会把两个关注点混在一起。
+      打印时替换还有个好处：同一份记录在**按日期汇总**与**按患者汇总**里
+      都能正确带上各自那份的打印视图。
+    """
     content = text.strip()
     if not content:
         return []
+    if therapist_name:
+        content = _fill_signature(content, therapist_name)
     rule = Table([[""]], colWidths=["100%"], rowHeights=[0.5])
     rule.setStyle(TableStyle([("LINEBELOW", (0, 0), (-1, -1), 0.3, colors.HexColor("#cccccc"))]))
     return [KeepTogether([_soap_paragraph(content, style), Spacer(1, 1 * mm), rule, Spacer(1, 3 * mm)])]
+
+
+# 签名占位符：模板 `footer` 里写的是 `治疗师签名：__________`（10 个下划线）。
+# 允许多于/少于 10 个，避免以后手改模板时把这里改坏。
+_SIGNATURE_RE = re.compile(r"(治疗师签名：)\s*_{2,}")
+
+
+def _fill_signature(text: str, therapist_name: str) -> str:
+    """把签名占位符换成治疗师姓名；没有占位符就原样返回（不硬塞一行）。"""
+    name = therapist_name.strip()
+    if not name:
+        return text
+    return _SIGNATURE_RE.sub(lambda m: f"{m.group(1)}{name}", text)
 
 
 def _build(
@@ -145,12 +179,23 @@ def _build(
 
 
 def _kv_table(pairs: list[tuple[str, Any]], style: dict[str, ParagraphStyle], *, columns: int = 2) -> Table:
-    """键值信息表：按 columns 列排布，奇数项补空。"""
+    """键值信息表：按 columns 列排布，奇数项补空。
+
+    值的三态：
+
+    - `None` → **刻意留白**（既不是"—"也不是空字符串）。用于「治疗师」这类
+      **手写签名栏**：那里要的是真正能落笔的空白，给一条横线反而不像留白。
+    - `""` → 渲染成 `—`（字段存在但**没有值**，如未填的注意事项）。
+    - 其它 → 原样输出。
+    """
     cells: list[list[Any]] = []
     row: list[Any] = []
     for key, value in pairs:
         row.append(Paragraph(f"<b>{key}</b>", style["cell"]))
-        row.append(Paragraph("—" if value in (None, "") else str(value), style["cell"]))
+        if value is None:
+            row.append(Paragraph("", style["cell"]))
+        else:
+            row.append(Paragraph("—" if value == "" else str(value), style["cell"]))
         if len(row) >= columns * 2:
             cells.append(row)
             row = []
@@ -257,7 +302,11 @@ def patient_summary_pdf(
         meta = _record_meta(record, style)
         if meta is not None:
             story.append(meta)
-        story.extend(_soap_block(str(record.get("rendered_text") or ""), style))
+        story.extend(_soap_block(
+            str(record.get("rendered_text") or ""),
+            style,
+            therapist_name=str(record.get("therapist_name") or ""),
+        ))
 
     return _build(
         story,
@@ -292,7 +341,11 @@ def date_summary_pdf(summary: dict[str, Any], *, dept_name: str = DEFAULT_DEPT_N
             meta = _record_meta(row, style, with_patient=True)
             if meta is not None:
                 story.append(meta)
-            story.extend(_soap_block(str(row.get("rendered_text") or ""), style))
+            story.extend(_soap_block(
+                str(row.get("rendered_text") or ""),
+                style,
+                therapist_name=str(row.get("therapist_name") or ""),
+            ))
         story.append(Spacer(1, 3 * mm))
 
     if not summary["groups"]:
@@ -311,7 +364,19 @@ def date_summary_pdf(summary: dict[str, Any], *, dept_name: str = DEFAULT_DEPT_N
 # 3. 按患者每日汇总 PDF
 # --------------------------------------------------------------------------- #
 def patient_daily_pdf(daily: dict[str, Any], *, dept_name: str = DEFAULT_DEPT_NAME) -> bytes:
-    """按患者每日汇总（`设计.md` 3.8）：每天的全部文书 SOAP 文本，**由早到晚往下排**。"""
+    """按患者每日汇总（`设计.md` 3.8）：每天的全部文书 SOAP 文本，**由早到晚往下排**。
+
+    用户 2026-10-06 对这份模板的改动（原话）：
+      「第二行康复治疗按患者每日汇总改成康复治疗记录。统计区间改成治疗师，
+        后面的那个单元格留空，用来治疗师手动签字。汇总改成四大类各多少次。
+        去掉日期加归属行。」
+
+    所以抬头第二行是「康复治疗记录」；信息表里
+      · 「统计区间」→「**治疗师**」，值**留空**（给治疗师手签）；
+      · 「汇总」→ **四大类各多少次**（不再是一个总次数）；
+      · **不再有「日期」行与「归属」行**（日期已由每天的日期小标题逐日体现，
+        归属对打印件没有意义 —— 用户此前也已在 App 里要求隐藏归属）。
+    """
     style = _styles()
     patient = daily["patient"]
     story: list[Any] = []
@@ -323,8 +388,11 @@ def patient_daily_pdf(daily: dict[str, Any], *, dept_name: str = DEFAULT_DEPT_NA
                 ("姓名", patient.get("name")),
                 ("诊断", patient.get("diagnosis")),
                 ("注意事项", patient.get("admin_note")),
-                ("统计区间", f"{daily.get('date_from') or '不限'} ~ {daily.get('date_to') or '不限'}"),
-                ("汇总", f"{daily['totals']['record_count']} 次"),
+                # 「治疗师」后面留空：这是**手写签名栏**，不是数据字段。
+                # 传 `None`（而不是 `""`）—— 那会让 `_kv_table` 真正留白，
+                # 而不是画一条 "—"。
+                ("治疗师", None),
+                ("汇总", _discipline_totals(daily["totals"])),
             ],
             style,
         )
@@ -344,18 +412,47 @@ def patient_daily_pdf(daily: dict[str, Any], *, dept_name: str = DEFAULT_DEPT_NA
         if therapists:
             head += f"　{therapists}"
         story.append(Paragraph(f"<b>{_escape(head)}</b>", style["heading"]))
-        texts = [str(t) for t in (day.get("texts") or []) if str(t).strip()]
-        if not texts:
+        records = day.get("records") or []
+        if not records:
             story.append(Paragraph("（当天无已提交记录）", style["body"]))
-        for text in texts:
-            story.extend(_soap_block(text, style))
+        for rec in records:
+            text = str(rec.get("rendered_text") or "")
+            if not text.strip():
+                continue
+            story.extend(_soap_block(
+                text,
+                style,
+                therapist_name=str(rec.get("therapist_name") or ""),
+            ))
 
     return _build(
         story,
-        title="康复治疗按患者每日汇总",
+        title="康复治疗记录",
         subtitle=f"{patient.get('name')}　{patient.get('inpatient_no')}",
         dept_name=dept_name,
     )
+
+
+def _discipline_totals(totals: dict[str, Any]) -> str:
+    """「汇总」栏的文字：**四大类各多少次**。
+
+    用户 2026-10-06：「汇总改成四大类各多少次」。
+
+    只列**有记录的大类**，并为每个大类带上它的中文名（如「运动 23 次」）。
+    固定四行会让"只做了两个大类"的打印件里出现两个刺眼的「0 次」；
+    而治疗师真正要看的是"这个患者各做了多少次"。
+    没有任何日常记录时如实写「无」。
+    """
+    counts = totals.get("discipline_counts") or {}
+    if not counts:
+        return "无"
+    # 按模板里大类的固定顺序（`order` 字段）排，保证同一患者每次打印顺序一致；
+    # `discipline_counts` 的键是服务端下发的**中文名**，所以用 name → order 反查。
+    # 认不出的大类排到最后（`order` 默认 99），而不是被丢掉。
+    order = {str(d.get("name")): int(d.get("order") or 99)
+             for d in record_template.load_disciplines()}
+    items = sorted(counts.items(), key=lambda kv: (order.get(str(kv[0]), 99), str(kv[0])))
+    return "　".join(f"{name} {int(n)} 次" for name, n in items)
 
 
 __all__ = [

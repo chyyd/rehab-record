@@ -1,7 +1,7 @@
 # 环境搭建与运行（setup）
 
 **当前状态**：阶段 0–5 后端、管理后台与安卓 App 均已交付并验证（**355 个测试通过、0 skip**；
-端到端 275 项、跨文档一致性由 `check_docs_consistency.py` 自报（379 项）、浏览器 UI 验收 60 项）。
+端到端 275 项、跨文档一致性由 `check_docs_consistency.py` 自报（380 项）、浏览器 UI 验收 60 项）。
 
 **2026-10-05（第三步）：治疗记录从「参数表格」改成「SOAP 模板驱动」** —— 迁移 011 重建
 `treatment_record`（19 列，含 `body_json` / `rendered_text`），012 删掉字典 / 选项集 / 患者反应定义
@@ -132,7 +132,7 @@ cd backend
 **方案：`reportlab` + 内置 CID 字体 `STSong-Light`**，不用 WeasyPrint。
 
 - 该字体是 reportlab **自带的**，不依赖任何系统字体文件，Windows 开发机与 Linux 容器都一样可用；
-- 实测渲染中文后，用 `pypdf` 反向提取文本，`康复医学科`/`主观资料：`/`本次训练项目`/`张三`
+- 实测渲染中文后，用 `pypdf` 反向提取文本，`虎林市中医医院康复医学科`/`主观资料：`/`本次训练项目`/`张三`
   全部命中；
 - 因此**不需要**在容器里打包 `fonts-noto-cjk`，也避开了 WeasyPrint 的 GTK/Pango 原生依赖。
 

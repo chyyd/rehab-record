@@ -423,12 +423,39 @@ class TestPdfRendering(SummaryTestCase):
         self.assertNotIn("康复初始评定", text, "按日期汇总只印日常记录（评估文书不占次数）")
 
     def test_patient_daily_pdf(self) -> None:
+        """按患者每日汇总的模板（用户 2026-10-06 逐条指定）。
+
+        ⚠ 断言要**逐字**写，不能用宽泛的子串：
+        原来这条断言 `"康复医学科"`，而新抬头是「虎林市中医医院康复医学科」——
+        子串匹配会让测试**继续通过**，等于没守住这次的改动。
+        """
         self.write_record(day="2027-03-01")
         self.write_record(day="2027-03-03")
         daily = summary_service.summarize_patient_daily(self.conn, patient_no="ZY001")
         text = pdf_text(pdf_service.patient_daily_pdf(daily))
-        for expected in ("康复医学科", "患者甲", "每日汇总", "2027-03-01", "2027-03-03", "主观资料"):
-            self.assertIn(expected, text)
+
+        # ① 第一行：医院 + 科室
+        self.assertIn("虎林市中医医院康复医学科", text, "抬头第一行应是医院全名")
+        # ② 第二行：不再是「康复治疗按患者每日汇总」
+        self.assertIn("康复治疗记录", text)
+        self.assertNotIn("按患者每日汇总", text, "旧的标题文案必须消失")
+
+        # ③ 「统计区间」→「治疗师」，右侧**留空**（手写签名栏）
+        self.assertNotIn("统计区间", text, "「统计区间」按用户要求去掉")
+        self.assertIn("治疗师", text)
+        # ④ 「汇总」→ 按大类分别报次数（这里只有 PT 运动）
+        self.assertIn("运动 2 次", text, "汇总栏要按大类报次数")
+
+        # ⑤ 不再有「归属」行（「日期」由每日小标题逐日体现，不再单列一行）
+        self.assertNotIn("归属", text, "「归属」行按用户要求去掉")
+        self.assertIn("2027-03-01", text)
+        self.assertIn("2027-03-03", text)
+
+        # ⑥ 签名自动带入治疗师姓名（模板里是 `治疗师签名：__________`）
+        self.assertIn("治疗师签名：张三", text, "签名应自动带入治疗师姓名")
+        self.assertNotIn("治疗师签名：_", text, "不应再留下划线占位符")
+
+        # 多日记录仍按时间升序往下排
         positions = [text.index(day) for day in ("2027-03-01", "2027-03-03")]
         self.assertEqual(positions, sorted(positions), "多日记录按时间升序往下排")
 

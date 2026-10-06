@@ -753,7 +753,15 @@ check("打印：页脚含打印时间", "打印时间：" in PDF_PY)
 check("打印：不绘制签名栏（Q10）",
       not any(marker in PDF_PY for marker in (
           'drawString(0, 0, "签名', 'drawString(0, 0, "患者签字', '"签名："', "'签名：'")))
-check("设计.md Q10 明确不做签名栏", "签名栏" in DESIGN and "**无**" in DESIGN)
+# 2026-10-06：用户要求「按患者每日汇总」的信息表里加一格「治疗师」留空**手签**。
+# 所以不再是"完全没有签名栏" —— 现在的口径是：
+#   · **不采集患者签字**（1.4 的原意，没变）；
+#   · 「治疗师」那一格是**留白给人手写**，系统不采集、不落库。
+check("设计.md 写明 Q10 的签名栏口径（不采集患者签字 + 治疗师格留白手签）",
+      "签名栏" in DESIGN and "手写签字" in DESIGN and "不采集**患者**签字" in DESIGN)
+check("打印：治疗师签名由打印时带入（不写进冻结的 rendered_text）",
+      "def _fill_signature(" in PDF_PY and "_SIGNATURE_RE" in PDF_PY
+      and PDF_PY.count('therapist_name=str(') >= 3)
 check("打印：正文用冻结的 rendered_text（不是表格）",
       "rendered_text" in PDF_PY and "_soap_paragraph" in PDF_PY)
 check("打印：多日按时间顺序连排、不分页、不一天一张",
