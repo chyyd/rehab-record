@@ -24,6 +24,27 @@ class RecordFormPatientOut(BaseModel):
     status: str
 
 
+class OptionUsageItemOut(BaseModel):
+    """一个选项被用过的次数。"""
+
+    value: str
+    count: int
+
+
+class OptionUsageOut(BaseModel):
+    """多选字段的选项使用排行（2026-10-06）。
+
+    App 用它把「最常用的 N 项」置顶、其余折叠 ——
+    用户：「58项太多了，能不能将所有人最常用的10个放在前面，后面的可以折叠」。
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    discipline: str
+    field: str
+    items: list[OptionUsageItemOut] = Field(default_factory=list)
+
+
 class RecordFormOut(BaseModel):
     """App 渲染一次录入所需的全部信息（详见 `services/records.py::build_form`）。"""
 
@@ -54,6 +75,13 @@ class RecordFormOut(BaseModel):
     pending_document_label: str | None = None
     template_version: int = 1
     soap: list[dict[str, Any]] = Field(default_factory=list, description="四段字段定义，直接渲染")
+    frequent_options: dict[str, list[str]] = Field(
+        default_factory=dict,
+        description=(
+            "最常用选项：字段名 → 按使用次数倒序的取值。"
+            "App 用它把长列表的前 N 项置顶、其余折叠（2026-10-06）"
+        ),
+    )
     prefill: dict[str, Any] = Field(default_factory=dict)
     prefill_source: dict[str, str] = Field(default_factory=dict)
     footer: list[str] = Field(default_factory=list)

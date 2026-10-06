@@ -204,6 +204,7 @@ class PatientSyncState {
     this.message,
     this.isError = false,
     this.lastFailed = false,
+    this.messageSeq = 0,
   });
 
   final bool syncing;
@@ -216,6 +217,13 @@ class PatientSyncState {
   /// 而 [lastFailed] 只用于**决定要不要退避**。
   /// 冲突不该让定时同步退避 —— 那只是有一条要人处理，网络是好的。
   final bool lastFailed;
+
+  /// 消息序号：**每出现一条新提示就 +1**。
+  ///
+  /// 顶部横幅靠它做 `ValueKey`，从而"每条新消息重新计时渐隐"。
+  /// 用 `message` 本身当 key 是不行的：同一个文案（如连续两次「已更新 6 名患者」）
+  /// 会被当成同一条，横幅不再重新计时，第二次就"闪一下就没"甚至不显示。
+  final int messageSeq;
 }
 
 /// 手动/自动刷新：先把本地队列推出去，再拉患者列表与游标增量。
@@ -248,6 +256,9 @@ class PatientSyncController extends Notifier<PatientSyncState> {
   /// 所以连续失败到一定次数后**不再更新提示**（同步照跑，只是不吵），
   /// 直到成功或用户主动同步为止。
   int _consecutiveFailures = 0;
+
+  /// 每出现一条新提示就 +1（见 [PatientSyncState.messageSeq]）。
+  int _messageSeq = 0;
 
   /// 连续失败多少次后不再提示。
   static const int quietAfterFailures = 3;
@@ -294,10 +305,13 @@ class PatientSyncController extends Notifier<PatientSyncState> {
       ref.invalidate(lastPatientSyncProvider);
 
       _consecutiveFailures = 0;
+      final successMessage = conflictNote ?? (announce ? '已更新 $count 名患者' : null);
+      if (successMessage != null) _messageSeq += 1;
       state = PatientSyncState(
         syncing: false,
         // 冲突永远报；成功只在"用户主动要反馈"时报。
-        message: conflictNote ?? (announce ? '已更新 $count 名患者' : null),
+        message: successMessage,
+        messageSeq: _messageSeq,
         isError: conflictNote != null,
       );
     } on AppError catch (e) {
@@ -307,12 +321,15 @@ class PatientSyncController extends Notifier<PatientSyncState> {
       // 连续失败够多就**不再提示**（同步照跑）。用 `null` 而不是空串：
       // 空串会让横幅渲染成一条空白条，比不显示更难看。
       final quiet = offline && _consecutiveFailures > quietAfterFailures;
+      final failMessage = quiet ? null : (offline ? '离线中，显示本地数据' : e.message);
+      if (failMessage != null) _messageSeq += 1;
       state = PatientSyncState(
         syncing: false,
         isError: !offline,
         lastFailed: true,
         // 离线不是错误状态，文案要中性（离线优先）。
-        message: quiet ? null : (offline ? '离线中，显示本地数据' : e.message),
+        message: failMessage,
+        messageSeq: _messageSeq,
       );
     }
   }

@@ -121,6 +121,16 @@ def _therapy_options(discipline: str) -> list[str]:
     raise TemplateError(f"disciplines.json 里没有大类 {discipline!r}")
 
 
+def discipline_keys() -> list[str]:
+    """全部大类 key（`PT` / `OT` / `ST_SW` / `ST_SP`）。
+
+    供接口校验参数用 —— `_therapy_options` 内部那个查找失败时抛的是
+    `TemplateError`（500），不适合拿来校验用户输入。
+    """
+    data = _load_json(TEMPLATES_DIR / "disciplines.json")
+    return [str(d["key"]) for d in data.get("disciplines", [])]
+
+
 _JSON_CACHE: dict[Path, Any] = {}
 
 

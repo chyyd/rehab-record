@@ -197,6 +197,25 @@ def build_form(
         _initial, on_date, done_dates=_done
     )
 
+    # ★ 2026-10-06：多选字段的**最常用选项**置顶（用户：「58项太多了，能不能将
+    #   所有人最常用的10个放在前面，后面的可以折叠」）。
+    #
+    # 只对**确实很长**的选项列表这么做：3 个选项的字段再置顶/折叠只是徒增点击。
+    # 阈值写在模板侧（`collapsible_after`），因为"多长算长"是模板作者的决定。
+    frequent: dict[str, list[str]] = {}
+    for section in template.soap:
+        for field in section.get("fields", []):
+            after = field.get("collapsible_after")
+            options = field.get("options") or []
+            if not isinstance(after, int) or after <= 0 or len(options) <= after:
+                continue
+            ranked = treatment_model.option_usage(
+                conn, discipline=discipline, field_key=str(field["key"]), limit=after
+            )
+            values = [str(r["value"]) for r in ranked if str(r["value"]) in options]
+            if values:
+                frequent[str(field["key"])] = values
+
     return {
         "patient": {
             "inpatient_no": patient["inpatient_no"],
@@ -219,6 +238,8 @@ def build_form(
         "pending_document_label": treatment_model.pending_document_label(pending),
         "template_version": template.version,
         "soap": template.soap,
+        # 最常用选项（字段名 → 按使用次数倒序的取值）。空表示该表单没有需要置顶的字段。
+        "frequent_options": frequent,
         "prefill": filled,
         "prefill_source": sources,
         "footer": list(template.footer),

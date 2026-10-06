@@ -186,7 +186,8 @@
           "type": "multi",
           "label": "本次训练项目",
           "required": true,
-          "options_source": "therapy_options"
+          "options_source": "therapy_options",
+          "collapsible_after": 10
         },
         {
           "key": "plan_items",

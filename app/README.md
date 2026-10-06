@@ -10,6 +10,14 @@
 > 提交体换成 `body`，Drift 本地库 **schemaVersion 4 → 5**（**删除** `RecordItems` 表与
 > `session_period` / `duration_min` / `patient_response_json` 三列 —— 均随旧模型一并删除），
 > 时间轴/汇总改用 `rendered_text`（SOAP 纯文本，不再拼表格）。详见下文「记录页：SOAP 模板驱动」。
+>
+> ✅ **2026-10-06：长选项列表「最常用置顶 + 其余折叠」。**
+> 用户：「客观资料中的本次训练项目，58 项太多了，能不能将所有人最常用的 10 个
+> 放在前面，后面的可以折叠」。
+> 选项顺序现在是**三层**：本机「最近用过」→ 全科「最常用」（服务端按全部历史记录
+> 统计，`frequent_options`）→ 模板原序；超过模板标的 `collapsible_after`（如 10）
+> 时默认只显示前 N 项，其余折叠在「展开其余 M 项」后面。**搜索始终搜全部**，
+> 折叠不会让人搜不到东西。
 
 ---
 
@@ -75,7 +83,7 @@ lib/
 │  ├─ local/     Drift：patient / treatment_record 镜像表
 │  │             + change_queue（client_uuid, entity, op, base_revision, sync_status）
 │  │             + sync_state（last_cursor）+ ref_cache（**记录页表单缓存** +
-│  │               多选字段的"最近用过"顺序；字典/选项集/反应定义已随迁移 011/012 删除）
+│  │               多选字段的"最近用过"+"全科最常用"顺序；字典/选项集/反应定义已随迁移 011/012 删除）
 │  ├─ remote/    Dio 客户端、DTO（表单 DTO 是 SOAP 模板驱动的）
 │  └─ repo/      仓库层（本地优先）
 ├─ sync/         同步引擎：推送（幂等、≤200/批）、拉取（游标、≤500/次）、冲突处理、

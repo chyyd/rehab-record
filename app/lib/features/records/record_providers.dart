@@ -334,21 +334,42 @@ class RecordEditorController extends Notifier<RecordEditorState> {
     setValue(field, selected.toList());
   }
 
-  /// 界面上该字段的选项顺序：**最近用过的排最前**，其余保持模板顺序。
+  /// 界面上该字段的选项顺序，**三层**（2026-10-06）：
+  ///
+  /// 1. **本机最近用过**（`state.recent`）—— 治疗师自己每天重复的那几项；
+  /// 2. **全科最常用**（服务端按全部历史记录统计，`frequentOptions`）——
+  ///    用户要的"所有人最常用的 10 个放在前面"，新设备/新人也因此受益；
+  /// 3. 其余保持**模板原序**。
+  ///
+  /// 前两层各自去重，且不重复出现在后面。
+  ///
+  /// ⚠ 顺序有意如此：自己的习惯优先于科室的整体习惯 ——
+  /// 一个只做言语的治疗师不该被"全科最常用"里别的项目的排序影响。
   List<String> orderedOptions(SoapField field) {
-    final used = state.recent[field.key] ?? const <String>[];
-    if (used.isEmpty) return field.options;
-    final head = [
-      for (final value in used)
-        if (field.options.contains(value)) value,
-    ];
-    if (head.isEmpty) return field.options;
+    final options = field.options;
+    final head = <String>[];
+
+    void add(String value) {
+      if (options.contains(value) && !head.contains(value)) head.add(value);
+    }
+
+    for (final value in state.recent[field.key] ?? const <String>[]) {
+      add(value);
+    }
+    for (final value in _frequentFor(field.key)) {
+      add(value);
+    }
+    if (head.isEmpty) return options;
     return [
       ...head,
-      for (final option in field.options)
+      for (final option in options)
         if (!head.contains(option)) option,
     ];
   }
+
+  /// 服务端给的"全科最常用"（表单没加载出来时为空）。
+  List<String> _frequentFor(String fieldKey) =>
+      state.form?.frequentOptions[fieldKey] ?? const <String>[];
 
   bool isRecent(SoapField field, String option) =>
       (state.recent[field.key] ?? const <String>[]).contains(option);

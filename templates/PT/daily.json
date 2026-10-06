@@ -75,7 +75,9 @@
           "label": "本次训练项目",
           "required": true,
           "options_source": "therapy_options",
-          "prefill": "last_daily"
+          "prefill": "last_daily",
+          "collapsible_after": 10,
+          "collapsible_after": 10
         },
         {
           "key": "vital_signs",

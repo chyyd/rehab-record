@@ -554,6 +554,13 @@ class _ChipRowState extends State<_ChipRow> {
   /// 超过这个数量就给搜索框（吞咽只有 4 项，搜索框反而是干扰）。
   static const int _searchThreshold = 10;
 
+  /// 长列表是否已展开（2026-10-06）。
+  ///
+  /// 默认折叠：只显示前 `field.collapsibleAfter` 项（服务端已按使用频次排好），
+  /// 其余藏在「展开其余 M 项」后面。用户原话：
+  /// 「58项太多了，能不能将所有人最常用的10个放在前面，后面的可以折叠」。
+  bool _expanded = false;
+
   @override
   void dispose() {
     _search.dispose();
@@ -565,9 +572,17 @@ class _ChipRowState extends State<_ChipRow> {
     final field = widget.field;
     final ordered = widget.controller.orderedOptions(field);
     final query = _query.trim();
-    final visible = query.isEmpty
-        ? ordered
-        : ordered.where((o) => o.toLowerCase().contains(query.toLowerCase())).toList();
+
+    // 折叠点：模板标的（如 10）。没标、或选项本来就不够多 → 不折叠。
+    final after = field.collapsibleAfter;
+    final collapsible = after != null && after > 0 && ordered.length > after;
+
+    // 搜索时**始终搜全部**：折叠状态不该让人搜不到东西。
+    final searching = query.isNotEmpty;
+    final visible = searching
+        ? ordered.where((o) => o.toLowerCase().contains(query.toLowerCase())).toList()
+        : (collapsible && !_expanded ? ordered.take(after).toList() : ordered);
+    final hiddenCount = ordered.length - (collapsible ? after : ordered.length);
     final showSearch = widget.isMulti && ordered.length > _searchThreshold;
     // 单选也可能很多（如"本次训练项目"以外的长清单），一样给搜索。
     final showSingleSearch = !widget.isMulti && ordered.length > _searchThreshold;
@@ -629,6 +644,30 @@ class _ChipRowState extends State<_ChipRow> {
                       ),
             ],
           ),
+        // 折叠/展开。搜索时不给（那时显示的是搜索结果，不是"其余 N 项"）。
+        if (collapsible && !searching) ...[
+          const SizedBox(height: 4),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: () => setState(() => _expanded = !_expanded),
+              icon: Icon(
+                _expanded ? Icons.unfold_less : Icons.unfold_more,
+                size: 16,
+              ),
+              label: Text(
+                _expanded
+                    ? '收起（只留最常用的 $after 项）'
+                    : '展开其余 $hiddenCount 项',
+                style: const TextStyle(fontSize: 12),
+              ),
+              style: TextButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+              ),
+            ),
+          ),
+        ],
       ],
     );
   }

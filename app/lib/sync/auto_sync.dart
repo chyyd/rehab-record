@@ -17,9 +17,9 @@ import 'package:flutter/widgets.dart';
 ///
 /// ## 节奏（故意简单，且不引人依赖）
 ///
-/// - 前台每 **30 秒**一次；
-/// - 失败后**退避** 30 → 60 → 120 秒（上限 120），成功立刻回到 30 秒。
-///   退避是必须的：离线时 30 秒硬打会导致整场治疗都在重试，
+/// - 前台每 **2 分钟**一次（2026-10-06 用户：「间隔30秒太短了，2分钟比较合适」）；
+/// - 失败后**退避** 2 → 4 → 8 分钟（上限 8 分钟），成功立刻回到 2 分钟。
+///   退避是必须的：离线时按基础间隔硬打会让整场治疗都在重试，
 ///   而治疗师在床旁本来就常常没有信号；
 /// - 只在前台跑：一进后台就停表（后台网络在国产 ROM 上会被杀，
 ///   与其留着一条"看起来在同步"的死表，不如明确停掉）。
@@ -34,8 +34,8 @@ import 'package:flutter/widgets.dart';
 class AutoSync with WidgetsBindingObserver {
   AutoSync({
     required Future<bool> Function() tick,
-    Duration interval = const Duration(seconds: 30),
-    Duration maxBackoff = const Duration(seconds: 120),
+    Duration interval = const Duration(minutes: 2),
+    Duration maxBackoff = const Duration(minutes: 8),
   })  : _tick = tick,
         _interval = interval,
         _maxBackoff = maxBackoff;
@@ -106,12 +106,12 @@ class AutoSync with WidgetsBindingObserver {
 /// 退避间隔：`base × 2^failures`，上限 [maxBackoff]；`failures == 0` 时就是 [base]。
 ///
 /// 抽成纯函数是为了**能测**：`AutoSync` 内部靠真定时器，
-/// 在单测里等 30 秒不现实。退避策略本身是这个功能里最该被钉住的部分
+/// 在单测里等 2 分钟不现实。退避策略本身是这个功能里最该被钉住的部分
 ///（算错会变成"离线时疯狂重试"或"再也不重试"）。
 Duration backoffInterval(
   Duration base,
   int failures, {
-  Duration maxBackoff = const Duration(seconds: 120),
+  Duration maxBackoff = const Duration(minutes: 8),
 }) {
   if (failures <= 0) return base;
   // 左移位数封顶，避免 failures 很大时把整数撑爆（<< 31 以上在 Dart 里会溢出到负）。

@@ -30,6 +30,7 @@ class SoapField {
     this.hint,
     this.allowOther = false,
     this.auto = false,
+    this.collapsibleAfter,
   });
 
   /// 提交时 `body` 的键。
@@ -59,6 +60,18 @@ class SoapField {
   /// 自动生成的字段（如出院小结的「治疗过程汇总」）：只读，由服务端算好。
   final bool auto;
 
+  /// 长选项列表的**折叠点**（2026-10-06）。
+  ///
+  /// 非空且 `options.length > collapsibleAfter` 时，界面只显示前 N 项
+  /// （由服务端按使用频次排好），其余折叠在「展开其余 M 项」后面。
+  ///
+  /// 用户原话：「客观资料中的本次治疗项目，58项太多了，能不能将所有人最常用的
+  /// 10个放在前面，后面的可以折叠」。
+  ///
+  /// 由**模板**决定（`collapsible_after`），不是界面上写死的阈值 ——
+  /// "多长算长"是模板作者对该字段的判断。
+  final int? collapsibleAfter;
+
   bool get isSingle => type == 'single';
   bool get isMulti => type == 'multi';
   bool get isNumber => type == 'number';
@@ -79,6 +92,7 @@ class SoapField {
         allowOther: json['allow_other'] == true,
         // `auto` 是字符串（如 `latest_vs_initial`）而不是布尔，凡非空即自动字段。
         auto: json['auto'] != null && json['auto'] != false,
+        collapsibleAfter: (json['collapsible_after'] as num?)?.toInt(),
       );
 
   Map<String, dynamic> toJson() => {
@@ -336,6 +350,7 @@ class RecordFormData {
     this.pendingDocumentLabel,
     this.templateVersion = 1,
     this.soap = const [],
+    this.frequentOptions = const {},
     this.prefill = const {},
     this.prefillSource = const {},
     this.footer = const [],
@@ -385,6 +400,12 @@ class RecordFormData {
 
   /// 四段字段定义，**直接渲染**。
   final List<SoapSection> soap;
+
+  /// 最常用选项：字段名 → 按使用次数倒序的取值（2026-10-06）。
+  ///
+  /// 服务端按**全部历史记录**统计（不是本机"最近用过"），
+  /// 所以新设备、新入职的人也能直接受益。
+  final Map<String, List<String>> frequentOptions;
 
   /// 服务端预填的答案（`{field_key: value}`）。
   final Map<String, dynamic> prefill;
@@ -472,6 +493,15 @@ class RecordFormData {
           .whereType<Map>()
           .map((e) => SoapSection.fromJson(Map<String, dynamic>.from(e)))
           .toList(),
+      // 容错：服务端理论上给 `{field: [值, ...]}`，但**畸形数据不该让页面崩**。
+      // 直接写 `(v as List?)` 会在值为数字/字符串时抛类型错（我的测试就是这么抓到的），
+      // 而这一字段只是"选项排序的提示"，坏了顶多顺序不对，不该是致命的。
+      frequentOptions: {
+        for (final entry in ((json['frequent_options'] as Map?) ?? const {}).entries)
+          '${entry.key}': (entry.value is List)
+              ? (entry.value as List).map((e) => '$e').toList()
+              : const <String>[],
+      },
       prefill: Map<String, dynamic>.from((json['prefill'] as Map?) ?? const {}),
       prefillSource: ((json['prefill_source'] as Map?) ?? const {})
           .map((k, v) => MapEntry('$k', '$v')),

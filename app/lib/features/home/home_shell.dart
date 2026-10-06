@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -58,10 +60,15 @@ class _HomeShellState extends ConsumerState<HomeShell> {
     final conflictCount = ref.watch(conflictCountProvider).value ?? 0;
 
     // 冲突优先显示：它需要治疗师做决定，不能被"已更新 N 名患者"这种消息盖住。
+    //
+    // `autoFade`：**只有成功提示自己消失**（用户 2026-10-06：「显示"已更新X名患者"后，
+    // 2 秒后渐隐」）。冲突与报错要留到人处理 —— 自己消失等于把问题藏起来。
     final banner = conflictCount > 0
         ? (
             text: '有 $conflictCount 条改动冲突待处理',
             isError: true,
+            seq: 0,
+            autoFade: false,
             onTap: () => Navigator.of(context).push(
               MaterialPageRoute<void>(builder: (_) => const ConflictsPage()),
             ),
@@ -72,6 +79,9 @@ class _HomeShellState extends ConsumerState<HomeShell> {
             : (
                 text: sync.message!,
                 isError: sync.isError,
+                seq: sync.messageSeq,
+                // 成功 → 渐隐；离线/报错 → 留着
+                autoFade: !sync.isError,
                 onTap: null,
                 onDismiss: () =>
                     ref.read(patientSyncControllerProvider.notifier).clearMessage(),
@@ -118,11 +128,22 @@ class _HomeShellState extends ConsumerState<HomeShell> {
             ? null
             : PreferredSize(
                 preferredSize: const Size.fromHeight(28),
-                child: _SyncBanner(
-                  text: banner.text,
-                  isError: banner.isError,
-                  onTap: banner.onTap,
-                  onDismiss: banner.onDismiss,
+                child: FadeOutAfter(
+                  // ★ 用 `messageSeq` 当 key（而不是 `text`）：每条**新**提示
+                  //   重新计时渐隐。用文案当 key 的话，连续两次
+                  //   「已更新 6 名患者」会被当成同一条，第二次不再重新计时。
+                  key: ValueKey(banner.seq),
+                  // 冲突/报错要留到人处理，不能自己消失。
+                  duration: banner.autoFade
+                      ? const Duration(seconds: 2)
+                      : Duration.zero,
+                  onFaded: banner.onDismiss,
+                  child: _SyncBanner(
+                    text: banner.text,
+                    isError: banner.isError,
+                    onTap: banner.onTap,
+                    onDismiss: banner.onDismiss,
+                  ),
                 ),
               ),
       ),
@@ -156,6 +177,86 @@ class _HomeShellState extends ConsumerState<HomeShell> {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// 显示 [duration] 后**渐隐并回调** [onFaded]；[duration] 为零则常驻。
+///
+/// 2026-10-06 用户：「显示"已更新X名患者"后，2 秒后渐隐」。
+///
+/// 抽成独立 widget 而不是写在 `_SyncBanner` 里，是为了**能单测**：
+/// 渐隐靠定时器 + 动画，混在业务页面里只能靠肉眼看。
+class FadeOutAfter extends StatefulWidget {
+  const FadeOutAfter({
+    super.key,
+    required this.child,
+    required this.duration,
+    required this.onFaded,
+  });
+
+  final Widget child;
+
+  /// 停留多久后开始渐隐；[Duration.zero] 表示**不**自动消失。
+  final Duration duration;
+
+  /// 渐隐结束后调用（通常用来清掉上层状态，让横幅真正移除）。
+  final VoidCallback onFaded;
+
+  @override
+  State<FadeOutAfter> createState() => _FadeOutAfterState();
+}
+
+class _FadeOutAfterState extends State<FadeOutAfter> {
+  /// 渐隐动画时长。与 [FadeOutAfter.duration]（停留时间）是两件事：
+  /// 先「完整显示 2 秒」，再「用 300ms 淡出」。
+  static const Duration _fade = Duration(milliseconds: 300);
+
+  double _opacity = 1;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _schedule();
+  }
+
+  @override
+  void didUpdateWidget(FadeOutAfter oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // key 变了会走新的 State，所以这里只需处理"同一个实例 duration 变了"。
+    if (oldWidget.duration != widget.duration) {
+      _timer?.cancel();
+      _opacity = 1;
+      _schedule();
+    }
+  }
+
+  void _schedule() {
+    if (widget.duration == Duration.zero) return;
+    _timer = Timer(widget.duration, () {
+      if (!mounted) return;
+      setState(() => _opacity = 0);
+      // 等淡出动画跑完再回调，避免"还没淡完就被移除"的突兀感。
+      Future<void>.delayed(_fade, () {
+        if (mounted) widget.onFaded();
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.duration == Duration.zero) return widget.child;
+    return AnimatedOpacity(
+      opacity: _opacity,
+      duration: _fade,
+      child: widget.child,
     );
   }
 }

@@ -32,12 +32,13 @@ from fastapi import Depends, Query, status
 from app.api.pagination import Page, page_params
 from app.api.router import ApiRouter
 from app.core.db_dep import get_db
-from app.core.errors import ForbiddenError, NotFoundError
+from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
 from app.core.security_deps import AdminUser, CurrentUser, is_admin
 from app.models import patient as patient_model
 from app.models import treatment as treatment_model
 from app.models import user as user_model
 from app.schemas.records import (
+    OptionUsageOut,
     RecordCreateRequest,
     RecordEnumsOut,
     RecordFormOut,
@@ -46,12 +47,26 @@ from app.schemas.records import (
     RecordUpdateRequest,
     TimelineOut,
 )
+from app.services import record_template, visibility
 from app.services import records as records_service
 from app.services import sync as sync_service
-from app.services import visibility
 from app.services.audit import write_audit
 
 router = ApiRouter(prefix="/records", tags=["治疗记录"])
+
+
+def _require_discipline(discipline: str) -> None:
+    """校验大类取值。
+
+    不校验的后果不是报错而是**静默空结果**：统计 SQL 查一个不存在的大类会返回
+    空列表，看起来像"这项没人用过"，而不是"你传错参数了"。
+    """
+    if discipline not in record_template.discipline_keys():
+        raise BadRequestError(
+            "UNKNOWN_DISCIPLINE",
+            "未知大类",
+            details={"discipline": discipline, "allowed": record_template.discipline_keys()},
+        )
 
 
 def _require_patient_visible(conn: sqlite3.Connection, user: dict[str, Any], patient_no: str) -> None:
@@ -110,6 +125,41 @@ def record_enums(user: CurrentUser) -> dict[str, Any]:
         "statuses": list(treatment_model.STATUSES),
         "kinds": list(treatment_model.KINDS),
         "disciplines": treatment_model.discipline_options(),
+    }
+
+
+@router.get(
+    "/option-usage",
+    response_model=OptionUsageOut,
+    summary="多选字段的选项使用排行（供表单把最常用的置顶）",
+)
+def option_usage(
+    user: CurrentUser,
+    conn: Annotated[sqlite3.Connection, Depends(get_db)],
+    discipline: str = Query(..., description="PT / OT / ST_SW / ST_SP"),
+    field: str = Query(
+        "therapy_items", description="多选字段名（模板里的 key，如 therapy_items）"
+    ),
+    limit: int = Query(10, ge=1, le=200, description="取前几名"),
+) -> dict[str, Any]:
+    """统计某大类里一个多选字段各取值被用过多少次，按次数倒序。
+
+    2026-10-06 用户：「客观资料中的本次治疗项目，58项太多了，能不能将所有人
+    最常用的10个放在前面，后面的可以折叠」。
+
+    按**全部历史记录**统计（不是本地"最近用过"）：本地那份是每台设备各自的，
+    新入职或换设备的人置顶会是空的 —— 而那恰恰是最需要置顶的人。
+
+    ⚠ **只统计 `daily`**：首评/复评的字段口径不同（首评没有"本次训练项目"），
+    混进来会把统计带偏。
+    """
+    _require_discipline(discipline)
+    return {
+        "discipline": discipline,
+        "field": field,
+        "items": treatment_model.option_usage(
+            conn, discipline=discipline, field_key=field, limit=limit
+        ),
     }
 
 

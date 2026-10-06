@@ -45,6 +45,7 @@ App 与后端共用同一份判定），本模块只负责把它接到数据库�
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from typing import Any
 
@@ -895,6 +896,59 @@ def submitted_discharge_summary(
     return record
 
 
+def option_usage(
+    conn: sqlite3.Connection,
+    *,
+    discipline: str,
+    field_key: str,
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    """统计某大类里一个**多选字段**各取值被用过多少次，按次数倒序。
+
+    2026-10-06 用户：「康复治疗记录的pt运动记录，客观资料中的本次治疗项目，
+    58项太多了，能不能将所有人最常用的10个放在前面，后面的可以折叠」。
+
+    ## 为什么按"全部历史记录"统计而不是本地"最近用过"
+
+    本地那份「最近用过」（`record_repository.recentOptions`）是**每台设备各自的**：
+    新入职的治疗师、或换了一台机器，置顶就是空的 —— 而那恰恰是最需要置顶的人。
+    按全部记录统计与设备无关，人也一样受益。
+
+    ## 实现
+
+    `body_json` 里多选字段存成字符串数组，用 SQLite 的 `json_each` 直接展开计数：
+
+    - **只统计 `daily`**：首评/复评/出院小结的字段口径不同（首评没有"本次训练项目"），
+      混进来会把统计带偏；
+    - **跳过空值**：`json_each` 对 `null` / 非数组会报错或给出空行，
+      所以先在 `json_type` 上过滤；
+    - 只返回**次数 > 0** 的，调用方自己补"没统计到的选项"（保持模板原序）。
+
+    [field_key] 直接拼进 SQL —— 它是**模板里的固定字段名**（如 `therapy_items`），
+    不是用户输入，所以没有注入面。但为了以后不被误用，这里显式校验一下。
+    """
+    if not re.fullmatch(r"[a-z_][a-z0-9_]*", field_key):
+        raise Invalid("字段名不合法", details={"field": field_key})
+    limit = max(1, min(int(limit), 200))
+    rows = conn.execute(
+        f"""
+        SELECT je.value AS value, COUNT(*) AS n
+          FROM treatment_record tr,
+               json_each(tr.body_json, '$.{field_key}') je
+         WHERE tr.discipline = ?
+           AND tr.kind = 'daily'
+           AND json_type(tr.body_json, '$.{field_key}') = 'array'
+           AND je.value IS NOT NULL
+           AND TRIM(je.value) <> ''
+         GROUP BY je.value
+         ORDER BY n DESC, je.value ASC
+         LIMIT ?
+        """,
+        (discipline, limit),
+    ).fetchall()
+    return [{"value": str(r["value"]), "count": int(r["n"])} for r in rows]
+
+
 __all__ = [
     "ASSESSMENT_KINDS",
     "COLUMN_NAMES",
@@ -915,6 +969,7 @@ __all__ = [
     "get_record",
     "get_record_or_raise",
     "has_initial",
+    "option_usage",
     "initial_date",
     "last_assessment_body",
     "last_assessment_date",
